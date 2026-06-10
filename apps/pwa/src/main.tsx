@@ -25,6 +25,13 @@ import '@/index.css';
 // browser kills capture on reload) by marking it `interrupted`. Fire-and-forget.
 void markStaleSessionsInterrupted();
 
+// Dev-only console harness for the classification foundation. Dynamically
+// imported behind the DEV guard so production builds never bundle it and
+// `globalThis.__stillpoint` stays undefined in production.
+if (import.meta.env.DEV) {
+  void import('@/dev/console-harness').then((module) => module.installDevConsole());
+}
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Root element #root not found');

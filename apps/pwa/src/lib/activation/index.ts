@@ -10,6 +10,7 @@ import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
 import { CHUNK_INTERVAL_MS, DEFAULT_CAPTURE_MODE } from '@/lib/capture/config';
 import { LocationTracker, type GeoFix } from '@/lib/geolocation/location-tracker';
+import { beginSession } from '@/lib/transcript-buffer';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
@@ -93,6 +94,10 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
       void appendLocation({ sessionId, ...fix });
     }
     bufferedFixes.length = 0;
+
+    // Initialize the transcript buffer for this session. Nothing populates it in
+    // W3; W4 routes Web Speech fragments here via transcript-buffer.append().
+    beginSession(newSessionId);
 
     let sequence = 0;
     const capture = new MediaCapture({

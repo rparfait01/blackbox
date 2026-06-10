@@ -31,6 +31,14 @@ export interface RecordingChunk {
   blob: Blob;
 }
 
+/** Append-only. Keyed by [sessionId, sequence]; one transcript fragment. */
+export interface TranscriptFragment {
+  sessionId: string;
+  sequence: number;
+  text: string;
+  timestamp: number; // epoch ms when the fragment was captured
+}
+
 /** Append-only. Keyed by [sessionId, timestamp]; never mutated once written. */
 export interface LocationPoint {
   sessionId: string;

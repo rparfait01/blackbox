@@ -6,8 +6,15 @@ import {
   STORE_SESSIONS,
   STORE_RECORDINGS,
   STORE_LOCATIONS,
+  STORE_TRANSCRIPTS,
 } from './db';
-import type { LocationPoint, RecordingChunk, SessionRecord, SessionStatus } from './types';
+import type {
+  LocationPoint,
+  RecordingChunk,
+  SessionRecord,
+  SessionStatus,
+  TranscriptFragment,
+} from './types';
 
 export type {
   ActivationSource,
@@ -16,6 +23,7 @@ export type {
   RecordingChunk,
   SessionRecord,
   SessionStatus,
+  TranscriptFragment,
 } from './types';
 
 /**
@@ -123,6 +131,31 @@ export async function getSessionLocations(sessionId: string): Promise<LocationPo
     return points.sort((a, b) => a.timestamp - b.timestamp);
   } catch (error) {
     log.error('getSessionLocations failed', error);
+    return [];
+  }
+}
+
+export async function appendTranscriptFragment(fragment: TranscriptFragment): Promise<void> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_TRANSCRIPTS, 'readwrite');
+    await promisifyRequest(tx.objectStore(STORE_TRANSCRIPTS).add(fragment));
+    await transactionDone(tx);
+  } catch (error) {
+    log.error('appendTranscriptFragment failed', error);
+  }
+}
+
+export async function getTranscriptFragments(sessionId: string): Promise<TranscriptFragment[]> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_TRANSCRIPTS, 'readonly');
+    const index = tx.objectStore(STORE_TRANSCRIPTS).index('bySession');
+    const fragments = await promisifyRequest<TranscriptFragment[]>(index.getAll(sessionId));
+    await transactionDone(tx);
+    return fragments.sort((a, b) => a.sequence - b.sequence);
+  } catch (error) {
+    log.error('getTranscriptFragments failed', error);
     return [];
   }
 }
