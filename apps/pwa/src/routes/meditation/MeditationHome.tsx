@@ -4,8 +4,7 @@ import { Gear } from '@phosphor-icons/react';
 
 import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
-import { log } from '@/lib/log';
-import { isSessionActive, triggerActivation } from '@/lib/activation';
+import { triggerActivation } from '@/lib/activation';
 import { BreathingCircles } from './BreathingCircles';
 import { HoldProgressRing } from './HoldProgressRing';
 import { useActivationHold } from './use-activation-hold';
@@ -43,14 +42,10 @@ export function MeditationHome(): JSX.Element {
   });
 
   const endSession = (): void => {
-    if (isSessionActive()) {
-      // A session is active: ending it is a closure request. The pin UI lands
-      // in W6 — for now just log. The meditation view continues unchanged.
-      log.debug('closure requested');
-      return;
-    }
-    // No active session: reset the session timer and keep breathing. No toast,
-    // no confirmation.
+    // Always reset the visible timer — Stillpoint behaves exactly like a normal
+    // meditation app ending a session, every time. Any underlying recording
+    // continues untouched: this does NOT stop capture, geolocation, or the
+    // sessions row. Closure is a separate, non-obvious gesture designed in W6.
     sessionStart.current = performance.now();
     setSessionMs(0);
   };

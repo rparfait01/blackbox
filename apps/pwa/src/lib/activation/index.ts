@@ -9,7 +9,7 @@ import {
 import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
 import { CHUNK_INTERVAL_MS, DEFAULT_CAPTURE_MODE } from '@/lib/capture/config';
-import { LocationTracker } from '@/lib/geolocation/location-tracker';
+import { LocationTracker, type GeoFix } from '@/lib/geolocation/location-tracker';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
@@ -34,28 +34,65 @@ export function isSessionActive(): boolean {
  * stillpoint-press handler; voice and button sources are accepted so W8 can
  * wire them in without changing this signature.
  *
+ * Geolocation note (Fix 1): `watchPosition` is started SYNCHRONOUSLY as the very
+ * first statement, before any `await`, so it runs while the press-and-hold's
+ * user-gesture context is still valid (Chrome drops the gesture after awaits).
+ * Fixes that arrive before the session row exists are buffered in memory and
+ * flushed once it does. If the activation is deduplicated, the watch we just
+ * started is canceled immediately — no leaked watchers under any code path.
+ *
  * Covert by construction: produces no UI output, swallows all errors, and
  * deduplicates repeat triggers within 60s. Returns the session id, or null on
  * failure.
  */
 export async function triggerActivation(source: ActivationSource): Promise<string | null> {
+  let sessionId: string | null = null;
+  const bufferedFixes: GeoFix[] = [];
+
+  const tracker = new LocationTracker({
+    onFix: (fix) => {
+      if (sessionId === null) {
+        // Session row not created yet — buffer until it exists.
+        bufferedFixes.push(fix);
+      } else {
+        void appendLocation({ sessionId, ...fix });
+      }
+    },
+  });
+  // Synchronous, in-gesture watchPosition call. Must be canceled on every exit
+  // path that does not hand the tracker off to a live session.
+  tracker.start();
+
   try {
     if (active) {
       log.debug('activation ignored: session already active', active.sessionId);
+      tracker.stop();
       return active.sessionId;
     }
 
     const existing = await getActiveSession();
-    if (existing && existing.status === 'active' && Date.now() - existing.startTime < DEDUP_WINDOW_MS) {
+    if (
+      existing &&
+      existing.status === 'active' &&
+      Date.now() - existing.startTime < DEDUP_WINDOW_MS
+    ) {
       log.debug('activation deduplicated against recent session', existing.id);
+      tracker.stop();
       return existing.id;
     }
 
-    const sessionId = crypto.randomUUID();
+    const newSessionId = crypto.randomUUID();
     const startTime = Date.now();
     const mode = DEFAULT_CAPTURE_MODE;
 
-    await createSession({ id: sessionId, startTime, status: 'active', source, captureMode: mode });
+    await createSession({ id: newSessionId, startTime, status: 'active', source, captureMode: mode });
+
+    // Session row now exists: adopt the id and flush any buffered fixes.
+    sessionId = newSessionId;
+    for (const fix of bufferedFixes) {
+      void appendLocation({ sessionId, ...fix });
+    }
+    bufferedFixes.length = 0;
 
     let sequence = 0;
     const capture = new MediaCapture({
@@ -65,7 +102,7 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
         const seq = sequence;
         sequence += 1;
         void appendChunk({
-          sessionId,
+          sessionId: newSessionId,
           sequence: seq,
           timestamp: chunk.timestamp,
           mimeType: chunk.mimeType,
@@ -76,30 +113,25 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
       onError: (error) => log.error('capture error', error),
     });
 
-    const tracker = new LocationTracker({
-      onFix: (fix) => {
-        void appendLocation({ sessionId, ...fix });
-      },
-    });
-
-    // Register before awaiting so isSessionActive()/dedup reflect immediately.
-    active = { sessionId, capture, tracker };
+    // Hand the live tracker off to the session before the remaining awaits.
+    active = { sessionId: newSessionId, capture, tracker };
     ensureVisibilityReacquire();
 
     const captureStarted = await capture.start();
     if (captureStarted) {
-      onRecordingStarted(sessionId);
+      onRecordingStarted(newSessionId);
     }
-
-    // Location tracking runs regardless of capture permission — a position
-    // stream is valuable even if mic/camera was denied.
-    tracker.start();
 
     await acquireWakeLock();
 
-    return sessionId;
+    return newSessionId;
   } catch (error) {
     log.error('triggerActivation failed', error);
+    // If the tracker was never handed off to `active`, cancel it so no watcher
+    // leaks. (Once handed off, the live session owns it.)
+    if (active === null || active.tracker !== tracker) {
+      tracker.stop();
+    }
     return null;
   }
 }
