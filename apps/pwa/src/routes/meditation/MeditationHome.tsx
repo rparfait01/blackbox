@@ -4,6 +4,8 @@ import { Gear } from '@phosphor-icons/react';
 
 import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
+import { log } from '@/lib/log';
+import { isSessionActive, triggerActivation } from '@/lib/activation';
 import { BreathingCircles } from './BreathingCircles';
 import { HoldProgressRing } from './HoldProgressRing';
 import { useActivationHold } from './use-activation-hold';
@@ -35,15 +37,20 @@ export function MeditationHome(): JSX.Element {
   }, []);
 
   const { progress, handlers } = useActivationHold(ACTIVATION_HOLD_MS, () => {
-    // Covert trigger fired. No visible output by design — this log is a
-    // development-only verification hook that W2 replaces with the recording
-    // invocation and haptic acknowledgment.
-    // eslint-disable-next-line no-console -- intentional W1 trigger verification
-    console.debug('trigger: stillpoint-press');
+    // Covert trigger fired. Start the recording session. No visible output by
+    // design — the meditation view continues unchanged.
+    void triggerActivation('stillpoint-press');
   });
 
   const endSession = (): void => {
-    // Reset the session timer and keep breathing. No toast, no confirmation.
+    if (isSessionActive()) {
+      // A session is active: ending it is a closure request. The pin UI lands
+      // in W6 — for now just log. The meditation view continues unchanged.
+      log.debug('closure requested');
+      return;
+    }
+    // No active session: reset the session timer and keep breathing. No toast,
+    // no confirmation.
     sessionStart.current = performance.now();
     setSessionMs(0);
   };

@@ -18,7 +18,12 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
 import { router } from '@/app/router';
+import { markStaleSessionsInterrupted } from '@/lib/storage';
 import '@/index.css';
+
+// On launch, reconcile any session left `active` by a previous reload (the
+// browser kills capture on reload) by marking it `interrupted`. Fire-and-forget.
+void markStaleSessionsInterrupted();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
