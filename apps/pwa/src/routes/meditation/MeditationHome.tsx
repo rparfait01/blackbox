@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Gear } from '@phosphor-icons/react';
 
 import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
@@ -15,6 +17,11 @@ import { useActivationHold } from './use-activation-hold';
  * screen change, no toast. The meditation view simply continues. In W1 the
  * completion only logs for development verification; W2 attaches the actual
  * recording invocation and the (network-confirmed) haptic acknowledgment.
+ *
+ * The gear and "End session" controls are ordinary meditation-app affordances.
+ * The gear opens preferences; ending the session resets the timer. In a later
+ * phase (W6) the same end-session control will branch to the closure-pin flow
+ * when a session is active — but in W1 it is a plain timer reset.
  */
 export function MeditationHome(): JSX.Element {
   const sessionStart = useRef<number>(performance.now());
@@ -35,8 +42,22 @@ export function MeditationHome(): JSX.Element {
     console.debug('trigger: stillpoint-press');
   });
 
+  const endSession = (): void => {
+    // Reset the session timer and keep breathing. No toast, no confirmation.
+    sessionStart.current = performance.now();
+    setSessionMs(0);
+  };
+
   return (
     <main className="stillpoint-bg animate-hue-drift motion-reduce:animate-none relative flex h-full w-full select-none flex-col items-center justify-center overflow-hidden p-8 text-med-text">
+      <Link
+        to="/settings"
+        aria-label="Preferences"
+        className="absolute right-6 top-6 p-2 text-med-text/40 transition-colors hover:text-med-text/70"
+      >
+        <Gear size={22} weight="light" />
+      </Link>
+
       <h1 className="mb-12 text-center font-serif text-2xl font-light tracking-[0.1em] text-med-text/70">
         Stillpoint
       </h1>
@@ -60,6 +81,14 @@ export function MeditationHome(): JSX.Element {
           Session in progress
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={endSession}
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 font-serif text-base font-light tracking-[0.2em] text-med-text/40 transition-colors hover:text-med-text/70"
+      >
+        End session
+      </button>
     </main>
   );
 }
