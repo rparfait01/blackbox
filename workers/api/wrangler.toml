@@ -3,5 +3,23 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Bindings (R2 buckets, D1 databases, Durable Objects, KV) are added in W5.
-# Do not deploy this Worker in W1.
+# Principle: no telemetry. Disable Wrangler's anonymous usage metrics.
+send_metrics = false
+
+# Allowed PWA origins for CORS (comma-separated). Override per environment.
+[vars]
+CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173"
+
+# D1 metadata database. Create with `wrangler d1 create blackbox` and paste the
+# returned database_id here before deploying. Local dev (`wrangler dev`) uses a
+# local SQLite simulation and does not need a real id.
+[[d1_databases]]
+binding = "DB"
+database_name = "blackbox"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# R2 media bucket. Create with `wrangler r2 bucket create blackbox-media`.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "blackbox-media"

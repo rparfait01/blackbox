@@ -15,6 +15,13 @@ import { LocationTracker, type GeoFix } from '@/lib/geolocation/location-tracker
 import { TranscriptionService } from '@/lib/transcription';
 import { ToneAnalyzer } from '@/lib/tone';
 import { append, beginSession, getBuffer } from '@/lib/transcript-buffer';
+import {
+  registerUploadSession,
+  uploadChunk,
+  uploadClassification,
+  uploadLocation,
+  uploadTranscript,
+} from '@/lib/upload';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
@@ -69,6 +76,7 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
         bufferedFixes.push(fix);
       } else {
         void appendLocation({ sessionId, ...fix });
+        uploadLocation(sessionId, fix);
       }
     },
   });
@@ -104,12 +112,13 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
     sessionId = newSessionId;
     for (const fix of bufferedFixes) {
       void appendLocation({ sessionId, ...fix });
+      uploadLocation(sessionId, fix);
     }
     bufferedFixes.length = 0;
 
-    // Initialize the transcript buffer for this session. Nothing populates it in
-    // W3; W4 routes Web Speech fragments here via transcript-buffer.append().
+    // Initialize the transcript buffer and register the session for uploads.
     beginSession(newSessionId);
+    registerUploadSession({ sessionId: newSessionId, source, startTime });
 
     let sequence = 0;
     const capture = new MediaCapture({
@@ -126,6 +135,7 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
           byteSize: chunk.blob.size,
           blob: chunk.blob,
         });
+        uploadChunk(newSessionId, seq, chunk.blob, chunk.mimeType);
       },
       onError: (error) => log.error('capture error', error),
     });
@@ -133,7 +143,10 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
     // Final transcript fragments flow into the buffer; the classifier reads the
     // buffer (+ latest interim + tone) on its interval.
     const transcription = new TranscriptionService({
-      onFinal: (text, timestamp) => append(newSessionId, text, timestamp),
+      onFinal: (text, timestamp) => {
+        const seq = append(newSessionId, text, timestamp);
+        uploadTranscript(newSessionId, seq, text);
+      },
       lang: navigator.language,
     });
     const classifier = new LocalClassifier();
@@ -242,6 +255,7 @@ async function runClassifyTick(session: ActiveSession): Promise<void> {
     const classification = await session.classifier.classify(transcript, context);
     if (classification) {
       await appendClassification(session.sessionId, classification);
+      uploadClassification(session.sessionId, classification);
     }
   } catch (error) {
     log.error('classify tick failed', error);

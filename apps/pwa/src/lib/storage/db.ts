@@ -5,13 +5,14 @@ import { log } from '@/lib/log';
  * reads as a meditation app's storage in browser DevTools — facade consistency.
  */
 export const DB_NAME = 'stillpoint';
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export const STORE_SESSIONS = 'sessions';
 export const STORE_RECORDINGS = 'recordings';
 export const STORE_LOCATIONS = 'locations';
 export const STORE_TRANSCRIPTS = 'transcripts';
 export const STORE_CLASSIFICATIONS = 'classifications';
+export const STORE_UPLOAD_QUEUE = 'upload_queue';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -66,6 +67,16 @@ function openDB(): Promise<IDBDatabase> {
           keyPath: ['sessionId', 'timestamp'],
         });
         classifications.createIndex('bySession', 'sessionId', { unique: false });
+      }
+
+      // Added in v4. Pending backend uploads, drained with retry/backoff and
+      // resumed on launch. Auto-increment key preserves FIFO order.
+      if (!db.objectStoreNames.contains(STORE_UPLOAD_QUEUE)) {
+        const queue = db.createObjectStore(STORE_UPLOAD_QUEUE, {
+          keyPath: 'id',
+          autoIncrement: true,
+        });
+        queue.createIndex('bySession', 'sessionId', { unique: false });
       }
     };
 

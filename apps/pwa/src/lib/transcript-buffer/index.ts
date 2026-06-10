@@ -25,8 +25,8 @@ export function beginSession(sessionId: string): void {
   }
 }
 
-/** Append a transcript fragment to the in-memory buffer and persist it. */
-export function append(sessionId: string, fragment: string, timestamp: number): void {
+/** Append a transcript fragment to the in-memory buffer and persist it; returns its sequence. */
+export function append(sessionId: string, fragment: string, timestamp: number): number {
   let list = buffers.get(sessionId);
   if (!list) {
     list = [];
@@ -35,6 +35,7 @@ export function append(sessionId: string, fragment: string, timestamp: number): 
   const sequence = list.length;
   list.push({ sequence, text: fragment, timestamp });
   void appendTranscriptFragment({ sessionId, sequence, text: fragment, timestamp });
+  return sequence;
 }
 
 /** Current in-memory buffer contents for a session. */

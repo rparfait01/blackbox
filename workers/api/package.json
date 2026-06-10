@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@blackbox/shared": "workspace:*",
     "hono": "^4.6.16"
   },
   "devDependencies": {

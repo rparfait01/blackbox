@@ -19,11 +19,15 @@ import '@fontsource/ibm-plex-mono/700.css';
 
 import { router } from '@/app/router';
 import { markStaleSessionsInterrupted } from '@/lib/storage';
+import { resumeUploads } from '@/lib/upload';
 import '@/index.css';
 
 // On launch, reconcile any session left `active` by a previous reload (the
 // browser kills capture on reload) by marking it `interrupted`. Fire-and-forget.
 void markStaleSessionsInterrupted();
+
+// Resume draining any uploads queued by a previous (possibly offline) session.
+void resumeUploads();
 
 // Dev-only console harness for the classification foundation. Dynamically
 // imported behind the DEV guard so production builds never bundle it and

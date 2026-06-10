@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@blackbox/classifier": "workspace:*",
+    "@blackbox/shared": "workspace:*",
     "@fontsource/cormorant-garamond": "^5.1.0",
     "@fontsource/ibm-plex-mono": "^5.1.1",
     "@fontsource/ibm-plex-sans": "^5.1.1",

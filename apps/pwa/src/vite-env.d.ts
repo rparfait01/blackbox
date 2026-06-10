@@ -3,6 +3,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_REVEAL_HOLD_MS?: string;
+  readonly VITE_API_BASE_URL?: string;
 }
 
 interface ImportMeta {

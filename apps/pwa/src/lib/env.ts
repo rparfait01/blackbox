@@ -23,3 +23,11 @@ function resolveHoldMs(): number {
 }
 
 export const ACTIVATION_HOLD_MS = resolveHoldMs();
+
+/**
+ * Backend Worker base URL. When unset, the upload pipeline is a silent no-op —
+ * recording stays entirely local and the app behaves exactly as before (covert:
+ * a missing/unreachable backend never changes anything on screen).
+ */
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+export const uploadsEnabled = API_BASE_URL.length > 0;

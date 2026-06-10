@@ -24,6 +24,25 @@ export interface SessionRecord {
   status: SessionStatus;
   source: ActivationSource;
   captureMode: CaptureMode;
+  // Backend linkage (W5), set once the event is created on the Worker.
+  eventId?: string;
+  hmacSecret?: string;
+}
+
+export type UploadKind = 'chunk' | 'locations' | 'classifications' | 'transcripts' | 'close';
+
+/** A pending upload, persisted so uploads survive offline windows and reloads. */
+export interface UploadQueueItem {
+  id?: number; // auto-increment key
+  sessionId: string;
+  kind: UploadKind;
+  sequence?: number; // chunk sequence
+  mimeType?: string; // chunk mime
+  blob?: Blob; // chunk bytes
+  payload?: unknown; // JSON body for non-chunk kinds
+  attempts: number;
+  nextAttemptAt: number; // epoch ms; do not retry before this
+  createdAt: number;
 }
 
 /** Append-only. Keyed by [sessionId, sequence]; never mutated once written. */

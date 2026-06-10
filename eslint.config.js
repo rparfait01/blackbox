@@ -49,6 +49,11 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.worker },
     },
+    rules: {
+      // The Worker's only logging is structured request logging (requestId,
+      // endpoint, status, latency) — its legitimate server log channel.
+      'no-console': 'off',
+    },
   },
   prettier,
 );

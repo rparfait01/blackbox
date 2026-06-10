@@ -9,6 +9,7 @@ import {
   STORE_LOCATIONS,
   STORE_TRANSCRIPTS,
   STORE_CLASSIFICATIONS,
+  STORE_UPLOAD_QUEUE,
 } from './db';
 import type {
   LocationPoint,
@@ -17,6 +18,7 @@ import type {
   SessionStatus,
   StoredClassification,
   TranscriptFragment,
+  UploadQueueItem,
 } from './types';
 
 export type {
@@ -28,6 +30,8 @@ export type {
   SessionStatus,
   StoredClassification,
   TranscriptFragment,
+  UploadKind,
+  UploadQueueItem,
 } from './types';
 
 /**
@@ -65,6 +69,41 @@ export async function updateSessionStatus(
     await transactionDone(tx);
   } catch (error) {
     log.error('updateSessionStatus failed', error);
+  }
+}
+
+export async function getSession(id: string): Promise<SessionRecord | null> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_SESSIONS, 'readonly');
+    const record = await promisifyRequest<SessionRecord | undefined>(
+      tx.objectStore(STORE_SESSIONS).get(id),
+    );
+    await transactionDone(tx);
+    return record ?? null;
+  } catch (error) {
+    log.error('getSession failed', error);
+    return null;
+  }
+}
+
+/** Persist the backend linkage (event id + per-event HMAC secret) on a session. */
+export async function setSessionBackend(
+  id: string,
+  eventId: string,
+  hmacSecret: string,
+): Promise<void> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_SESSIONS, 'readwrite');
+    const store = tx.objectStore(STORE_SESSIONS);
+    const existing = await promisifyRequest<SessionRecord | undefined>(store.get(id));
+    if (existing) {
+      await promisifyRequest(store.put({ ...existing, eventId, hmacSecret }));
+    }
+    await transactionDone(tx);
+  } catch (error) {
+    log.error('setSessionBackend failed', error);
   }
 }
 
@@ -198,6 +237,58 @@ export async function getLatestClassification(
 ): Promise<StoredClassification | null> {
   const all = await getClassifications(sessionId);
   return all.length > 0 ? all[all.length - 1]! : null;
+}
+
+// --- Upload queue (W5) ---
+
+export async function enqueueUpload(item: UploadQueueItem): Promise<number> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_UPLOAD_QUEUE, 'readwrite');
+    const key = await promisifyRequest(tx.objectStore(STORE_UPLOAD_QUEUE).add(item));
+    await transactionDone(tx);
+    return key as number;
+  } catch (error) {
+    log.error('enqueueUpload failed', error);
+    return -1;
+  }
+}
+
+export async function getQueuedUploads(): Promise<UploadQueueItem[]> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_UPLOAD_QUEUE, 'readonly');
+    const items = await promisifyRequest<UploadQueueItem[]>(
+      tx.objectStore(STORE_UPLOAD_QUEUE).getAll(),
+    );
+    await transactionDone(tx);
+    return items.sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  } catch (error) {
+    log.error('getQueuedUploads failed', error);
+    return [];
+  }
+}
+
+export async function updateQueuedUpload(item: UploadQueueItem): Promise<void> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_UPLOAD_QUEUE, 'readwrite');
+    await promisifyRequest(tx.objectStore(STORE_UPLOAD_QUEUE).put(item));
+    await transactionDone(tx);
+  } catch (error) {
+    log.error('updateQueuedUpload failed', error);
+  }
+}
+
+export async function deleteQueuedUpload(id: number): Promise<void> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_UPLOAD_QUEUE, 'readwrite');
+    await promisifyRequest(tx.objectStore(STORE_UPLOAD_QUEUE).delete(id));
+    await transactionDone(tx);
+  } catch (error) {
+    log.error('deleteQueuedUpload failed', error);
+  }
 }
 
 /**

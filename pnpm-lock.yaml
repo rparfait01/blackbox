@@ -41,6 +41,9 @@ importers:
       '@blackbox/classifier':
         specifier: workspace:*
         version: link:../../packages/classifier
+      '@blackbox/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@fontsource/cormorant-garamond':
         specifier: ^5.1.0
         version: 5.2.11
@@ -130,6 +133,9 @@ importers:
 
   workers/api:
     dependencies:
+      '@blackbox/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       hono:
         specifier: ^4.6.16
         version: 4.12.25
