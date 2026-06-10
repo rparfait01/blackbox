@@ -1,4 +1,5 @@
 import { log } from '@/lib/log';
+import type { Classification } from '@blackbox/classifier';
 import {
   getDB,
   promisifyRequest,
@@ -7,12 +8,14 @@ import {
   STORE_RECORDINGS,
   STORE_LOCATIONS,
   STORE_TRANSCRIPTS,
+  STORE_CLASSIFICATIONS,
 } from './db';
 import type {
   LocationPoint,
   RecordingChunk,
   SessionRecord,
   SessionStatus,
+  StoredClassification,
   TranscriptFragment,
 } from './types';
 
@@ -23,6 +26,7 @@ export type {
   RecordingChunk,
   SessionRecord,
   SessionStatus,
+  StoredClassification,
   TranscriptFragment,
 } from './types';
 
@@ -158,6 +162,42 @@ export async function getTranscriptFragments(sessionId: string): Promise<Transcr
     log.error('getTranscriptFragments failed', error);
     return [];
   }
+}
+
+export async function appendClassification(
+  sessionId: string,
+  classification: Classification,
+): Promise<void> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_CLASSIFICATIONS, 'readwrite');
+    const record: StoredClassification = { sessionId, ...classification };
+    await promisifyRequest(tx.objectStore(STORE_CLASSIFICATIONS).add(record));
+    await transactionDone(tx);
+  } catch (error) {
+    log.error('appendClassification failed', error);
+  }
+}
+
+export async function getClassifications(sessionId: string): Promise<StoredClassification[]> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_CLASSIFICATIONS, 'readonly');
+    const index = tx.objectStore(STORE_CLASSIFICATIONS).index('bySession');
+    const records = await promisifyRequest<StoredClassification[]>(index.getAll(sessionId));
+    await transactionDone(tx);
+    return records.sort((a, b) => a.timestamp - b.timestamp);
+  } catch (error) {
+    log.error('getClassifications failed', error);
+    return [];
+  }
+}
+
+export async function getLatestClassification(
+  sessionId: string,
+): Promise<StoredClassification | null> {
+  const all = await getClassifications(sessionId);
+  return all.length > 0 ? all[all.length - 1]! : null;
 }
 
 /**

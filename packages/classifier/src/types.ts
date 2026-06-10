@@ -1,37 +1,75 @@
 /**
- * Classification types, mirroring BLACKBOX_SOFTWARE_SPEC §3.
+ * Classification types for the local safety-floor classifier.
  *
- * v0 is local-only: the keyword + tone classifier (W4) is the sole intelligence
- * layer. AI/device-native LLM sources are v1, so `ClassificationSource` omits
- * `'ai'` for now.
+ * The classifier is purely DESCRIPTIVE. It never decides whether an alert is
+ * sent — activation is the user's decision, already made. These types describe
+ * what was heard so the contact has situational awareness. `threatLevel` is
+ * metadata for that human, never a gate.
  */
 
 export type ThreatLevel = 'unknown' | 'low' | 'medium' | 'high' | 'critical';
 
-export type ClassificationSource = 'local-keyword' | 'local-tone';
+/** v0 is local-only; AI/device-LLM sources are v1. */
+export type ClassificationSource = 'local';
 
-/** Threat categories the local classifier flags (BLACKBOX_SOFTWARE_SPEC §5/W4). */
 export type ThreatCategory =
   | 'weapon'
   | 'violence'
   | 'restraint'
   | 'compliance'
   | 'fear'
-  | 'medical';
+  | 'pain'
+  | 'medical'
+  | 'disorientation'
+  | 'bargaining'
+  | 'profanity-distress';
+
+/** Acoustic signals surfaced from the tone analyzer. */
+export type ToneIndicator =
+  | 'elevated-volume'
+  | 'whisper'
+  | 'elevated-pitch'
+  | 'multi-speaker'
+  | 'rapid-speech'
+  | 'silence-after-activity';
+
+export type VolumeBand = 'silent' | 'whisper' | 'conversational' | 'elevated';
+
+/** A category that fired, with the dictionary entries that matched. */
+export interface MatchedCategory {
+  category: ThreatCategory;
+  matches: string[];
+  weight: number;
+}
+
+/**
+ * Acoustic snapshot produced by the browser tone analyzer (lib/tone) and
+ * consumed by the pure tone scorer. Plain data — no DOM references — so the
+ * classifier package stays portable and testable.
+ */
+export interface ToneSnapshot {
+  timestamp: number;
+  rms: number; // 0..1 linear
+  volumeBand: VolumeBand;
+  pitchHz: number | null;
+  speechRate: number; // voiced segments per second
+  speakerCount: number; // 0, 1, or 2 (rough)
+  silenceAfterActivity: boolean;
+}
 
 export interface Classification {
   timestamp: number;
   source: ClassificationSource;
+  /** Metadata for the contact's reference — NOT a gate for alert delivery. */
   threatLevel: ThreatLevel;
-  /** Categories matched in the transcript. */
-  categories: ThreatCategory[];
-  speakerCount: number;
-  aggressorDetected: boolean;
-  weaponDetected: boolean;
-  /** Plain-language summary for the contact's view. */
+  matchedCategories: MatchedCategory[];
+  toneIndicators: ToneIndicator[];
+  /** Language codes detected in the transcript (e.g. ['en', 'ja']). */
+  languages: string[];
+  repetitionDetected: boolean;
+  /** Short factual, template-generated description for the contact. */
   summary: string;
-  /** 0–1 confidence in the assessment. */
-  confidence: number;
+  confidence: number; // 0..1
 }
 
 export interface ClassificationContext {
@@ -39,4 +77,6 @@ export interface ClassificationContext {
   localTime?: string;
   priorSummary?: string;
   sessionDurationMs?: number;
+  /** Latest acoustic snapshot, when available. */
+  tone?: ToneSnapshot;
 }

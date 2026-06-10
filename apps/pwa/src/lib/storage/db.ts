@@ -5,12 +5,13 @@ import { log } from '@/lib/log';
  * reads as a meditation app's storage in browser DevTools — facade consistency.
  */
 export const DB_NAME = 'stillpoint';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export const STORE_SESSIONS = 'sessions';
 export const STORE_RECORDINGS = 'recordings';
 export const STORE_LOCATIONS = 'locations';
 export const STORE_TRANSCRIPTS = 'transcripts';
+export const STORE_CLASSIFICATIONS = 'classifications';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -56,6 +57,15 @@ function openDB(): Promise<IDBDatabase> {
           keyPath: ['sessionId', 'sequence'],
         });
         transcripts.createIndex('bySession', 'sessionId', { unique: false });
+      }
+
+      // Added in v3. Same guarded create-if-missing pattern: a v2 -> v3 upgrade
+      // only adds this store; all existing data is preserved.
+      if (!db.objectStoreNames.contains(STORE_CLASSIFICATIONS)) {
+        const classifications = db.createObjectStore(STORE_CLASSIFICATIONS, {
+          keyPath: ['sessionId', 'timestamp'],
+        });
+        classifications.createIndex('bySession', 'sessionId', { unique: false });
       }
     };
 

@@ -35,7 +35,7 @@ function pickMimeType(mode: CaptureMode): string {
  * we do not attempt to suppress it.
  */
 export class MediaCapture {
-  private stream: MediaStream | null = null;
+  private mediaStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
   private readonly options: MediaCaptureOptions;
 
@@ -47,6 +47,14 @@ export class MediaCapture {
     return this.recorder !== null && this.recorder.state === 'recording';
   }
 
+  /**
+   * Read-only access to the live capture stream, so the tone analyzer can attach
+   * to it without a second getUserMedia. Null until `start()` succeeds.
+   */
+  get stream(): MediaStream | null {
+    return this.mediaStream;
+  }
+
   async start(): Promise<boolean> {
     if (this.isRecording) {
       return true;
@@ -56,12 +64,12 @@ export class MediaCapture {
         audio: true,
         video: this.options.mode === 'audio-video' ? { facingMode: 'user' } : false,
       };
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
       const mimeType = pickMimeType(this.options.mode);
       const recorder = mimeType
-        ? new MediaRecorder(this.stream, { mimeType })
-        : new MediaRecorder(this.stream);
+        ? new MediaRecorder(this.mediaStream, { mimeType })
+        : new MediaRecorder(this.mediaStream);
       this.recorder = recorder;
 
       recorder.ondataavailable = (event: BlobEvent) => {
@@ -98,11 +106,11 @@ export class MediaCapture {
       log.error('recorder stop failed', error);
     }
     this.recorder = null;
-    if (this.stream) {
-      for (const track of this.stream.getTracks()) {
+    if (this.mediaStream) {
+      for (const track of this.mediaStream.getTracks()) {
         track.stop();
       }
-      this.stream = null;
+      this.mediaStream = null;
     }
   }
 }

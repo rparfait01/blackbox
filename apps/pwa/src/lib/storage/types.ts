@@ -4,8 +4,13 @@
  * until W5, at which point the canonical types move to `packages/shared`.
  */
 
+import type { Classification } from '@blackbox/classifier';
+
 /** `active` while recording; `interrupted` if a reload killed capture; `closed` after closure (W6). */
 export type SessionStatus = 'active' | 'interrupted' | 'closed';
+
+/** A Classification persisted against its session. Keyed by [sessionId, timestamp]. */
+export type StoredClassification = Classification & { sessionId: string };
 
 /** How a session was triggered. Only `stillpoint-press` is wired in W2; voice/button are W8. */
 export type ActivationSource = 'stillpoint-press' | 'voice' | 'button';

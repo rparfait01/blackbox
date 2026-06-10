@@ -1,6 +1,8 @@
+import { LocalClassifier, type ClassificationContext } from '@blackbox/classifier';
 import { log } from '@/lib/log';
 import {
   appendChunk,
+  appendClassification,
   appendLocation,
   createSession,
   getActiveSession,
@@ -10,16 +12,26 @@ import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
 import { CHUNK_INTERVAL_MS, DEFAULT_CAPTURE_MODE } from '@/lib/capture/config';
 import { LocationTracker, type GeoFix } from '@/lib/geolocation/location-tracker';
-import { beginSession } from '@/lib/transcript-buffer';
+import { TranscriptionService } from '@/lib/transcription';
+import { ToneAnalyzer } from '@/lib/tone';
+import { append, beginSession, getBuffer } from '@/lib/transcript-buffer';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
 const DEDUP_WINDOW_MS = 60_000;
 
+/** How often the descriptive classifier runs over the session so far. */
+const CLASSIFY_INTERVAL_MS = 5000;
+
 interface ActiveSession {
   sessionId: string;
+  startTime: number;
   capture: MediaCapture;
   tracker: LocationTracker;
+  transcription: TranscriptionService;
+  classifier: LocalClassifier;
+  tone: ToneAnalyzer | null;
+  classifyTimer: number | null;
 }
 
 let active: ActiveSession | null = null;
@@ -118,14 +130,47 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
       onError: (error) => log.error('capture error', error),
     });
 
+    // Final transcript fragments flow into the buffer; the classifier reads the
+    // buffer (+ latest interim + tone) on its interval.
+    const transcription = new TranscriptionService({
+      onFinal: (text, timestamp) => append(newSessionId, text, timestamp),
+      lang: navigator.language,
+    });
+    const classifier = new LocalClassifier();
+
     // Hand the live tracker off to the session before the remaining awaits.
-    active = { sessionId: newSessionId, capture, tracker };
+    const session: ActiveSession = {
+      sessionId: newSessionId,
+      startTime,
+      capture,
+      tracker,
+      transcription,
+      classifier,
+      tone: null,
+      classifyTimer: null,
+    };
+    active = session;
     ensureVisibilityReacquire();
+
+    // Transcription uses its own audio path (Web Speech); start it regardless of
+    // capture permission.
+    transcription.start();
 
     const captureStarted = await capture.start();
     if (captureStarted) {
       onRecordingStarted(newSessionId);
+      // Tone analysis attaches to the EXISTING capture stream — no second mic.
+      if (capture.stream) {
+        session.tone = new ToneAnalyzer(capture.stream);
+        session.tone.start();
+      }
     }
+
+    // Run the descriptive classifier every ~5s for the entire active session,
+    // independent of any UI interaction.
+    session.classifyTimer = window.setInterval(() => {
+      void runClassifyTick(session);
+    }, CLASSIFY_INTERVAL_MS);
 
     await acquireWakeLock();
 
@@ -150,8 +195,21 @@ export async function stopActivation(): Promise<void> {
   if (!active) {
     return;
   }
-  const { sessionId, capture, tracker } = active;
+  const { sessionId, capture, tracker, transcription, tone, classifyTimer } = active;
   active = null;
+  if (classifyTimer !== null) {
+    window.clearInterval(classifyTimer);
+  }
+  try {
+    transcription.stop();
+  } catch (error) {
+    log.error('transcription stop failed', error);
+  }
+  try {
+    tone?.stop();
+  } catch (error) {
+    log.error('tone stop failed', error);
+  }
   try {
     capture.stop();
   } catch (error) {
@@ -164,6 +222,30 @@ export async function stopActivation(): Promise<void> {
   }
   await releaseWakeLock();
   await updateSessionStatus(sessionId, 'closed', Date.now());
+}
+
+/** Build the current transcript + tone and persist a descriptive Classification. */
+async function runClassifyTick(session: ActiveSession): Promise<void> {
+  try {
+    const finals = getBuffer(session.sessionId).map((fragment) => fragment.text);
+    const interim = session.transcription.getLatestInterim();
+    const transcript = [...finals, interim]
+      .filter((part) => part.length > 0)
+      .join(' ')
+      .trim();
+    const context: ClassificationContext = {
+      locale: navigator.language,
+      localTime: new Date().toISOString(),
+      sessionDurationMs: Date.now() - session.startTime,
+      tone: session.tone?.getSnapshot(),
+    };
+    const classification = await session.classifier.classify(transcript, context);
+    if (classification) {
+      await appendClassification(session.sessionId, classification);
+    }
+  } catch (error) {
+    log.error('classify tick failed', error);
+  }
 }
 
 function onRecordingStarted(sessionId: string): void {
