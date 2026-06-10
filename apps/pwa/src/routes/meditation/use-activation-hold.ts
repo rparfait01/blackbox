@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 
-export interface RevealGesture {
+export interface ActivationHold {
   /** Hold progress, 0 → 1. */
   progress: number;
   isHolding: boolean;
@@ -15,10 +15,13 @@ export interface RevealGesture {
 /**
  * Press-and-hold gesture on the breathing circle. Fills `progress` over
  * `holdMs`; releasing early resets it. Completing the hold fires `onComplete`
- * once — which reveals the dashboard for inspection. This is NOT an activation
- * trigger; it only navigates the user to their own dashboard.
+ * once.
+ *
+ * This is a covert activation trigger: completion produces no visible output.
+ * The progress ring is the only on-screen feedback, and it reads as part of the
+ * meditation interaction. (Recording + haptic acknowledgment attach in W2.)
  */
-export function useRevealGesture(holdMs: number, onComplete: () => void): RevealGesture {
+export function useActivationHold(holdMs: number, onComplete: () => void): ActivationHold {
   const [progress, setProgress] = useState(0);
   const [isHolding, setIsHolding] = useState(false);
 

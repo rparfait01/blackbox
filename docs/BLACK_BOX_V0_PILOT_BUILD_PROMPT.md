@@ -87,57 +87,63 @@ These shape what gets built across multiple phases. Claude Code needs to interna
 
 Activation must be:
 - **Covert** — invisible to any observer of the phone
-- **Silent** — no sound, no haptic, no visible state change
+- **Silent** — no sound, no visible state change
 - **Background** — works regardless of which app is foreground, whether phone is locked, whether screen is off
-- **Reliable** — the user must trust that speaking the phrase or executing the button sequence will work, because there is no on-device confirmation
+- **Reliable** — the user must trust that speaking the phrase or executing the button sequence will work
 
 When activation fires:
 - **No toast notification** anywhere in the UI
-- **No haptic vibration**
 - **No sound**
 - **No screen change** — the meditation view (or whatever app is foreground) continues unchanged
 - **No status bar indicator from our app**
 - **The OS-level recording indicator** (red dot in iOS status bar, mic icon in Android) WILL appear because the operating system requires it. We do not attempt to suppress it. Onboarding trains the user to expect this and to have plausible cover (the meditation facade uses mic for "breath sensing").
 
-**The user knows activation worked only because the contact phones or texts them within 30–60 seconds.** The acknowledgment loop is external and human. There is no in-app way to verify activation succeeded.
+**The one minimal on-device acknowledgment: two long haptic pulses (network-confirmed only).**
+
+Once the backend confirms that the contact's notification has been successfully delivered (LINE message sent to the bot API and accepted, or Telegram equivalent), the phone vibrates with a specific pattern: **800ms vibrate, 200ms pause, 800ms vibrate** (two distinct long pulses).
+
+This haptic fires ONLY on confirmed network delivery, not on local activation. The user feels these pulses only when help has actually been reached — when there is something to be confirmed about. If the notification fails to deliver (no signal, contact unpaired, etc.), no haptic fires.
+
+Timing: typically 2–5 seconds after activation, depending on network. If no confirmation arrives within 10 seconds, the system retries on additional channels (Telegram, email, web push) and the haptic fires on the first success.
+
+Implementation:
+- Web Vibration API: `navigator.vibrate([800, 200, 800])`
+- Works natively on Android Chrome
+- Requires Capacitor wrapper on iOS (Safari PWA blocks Vibration API) — fully functional from W8 onward
+- During W2-W7 development, Android testing has the haptic working; iOS testing waits for W8
+- User can disable haptic in settings (default: ON). When disabled, the user has no on-device confirmation — they rely entirely on the contact's external call/text.
+
+**The user knows activation worked when they feel the two pulses, OR when the contact phones or texts them.** The pulses are local confirmation that the network leg succeeded; the contact's call is human confirmation that the alert was seen and acted on.
 
 **Trigger mechanisms (implemented in W8 — Capacitor wrapper):**
 
 | Mechanism | Status | Notes |
 |---|---|---|
+| 5-second press on the Stillpoint breathing circle | Primary | The user holding the circle as part of "meditation" — covert, deniable as part of practice. Plausible visible action. |
 | Voice phrase via Siri/Google Assistant | Primary | "Hey Siri, [phrase]" — works from any state. Requires user to have Siri/Google Assistant enabled. Onboarding verifies this. |
-| Covert button sequence | Secondary | Specific quick-press pattern on hardware buttons (volume/power), configurable. Works while app is foregrounded or recently backgrounded. Platform-specific defaults to avoid conflicts with OS bindings (e.g., iOS Emergency SOS). |
+| Covert hardware button sequence | Secondary | Specific quick-press pattern on hardware buttons (volume/power), configurable. Works while app is foregrounded or recently backgrounded. Platform-specific defaults to avoid conflicts with OS bindings (e.g., iOS Emergency SOS). |
 
-Both can fire simultaneously without conflict. The system deduplicates within 60 seconds.
+All three can fire simultaneously without conflict. The system deduplicates within 60 seconds.
 
 **Explicitly NOT activation triggers:**
 - Shake gesture (accidental triggers, observable to aggressor)
 - Drop detection (accidental triggers)
 - Any visible button on screen labeled "activate" or similar
-- The 5-second press on the meditation circle — that gesture serves only to reveal the dashboard for user inspection, not to trigger activation
 
-**For W1 specifically:** No trigger code is implemented. W1 builds only the meditation facade and the dashboard placeholder. The dashboard reveal gesture (5-second press) is wired up so the user can inspect the dashboard, but tapping anything in the dashboard does not trigger activation in W1. Activation mechanisms are W8 scope.
+**For W1 specifically:** The 5-second press on the breathing circle is wired up with progress ring visualization but fires nothing visible on completion. Log a `console.debug` internally on completion so we can verify the trigger fires during development. The actual recording invocation and haptic feedback are W2 scope.
 
-### 2. Dashboard is for inspection only (cuts across W7)
+### 2. Stillpoint is the entire visible interface (cuts across W1, W2, W9)
 
-The dashboard reveal (via 5-second press on the meditation circle) shows the user the BLACK BOX interface for **inspection, configuration, and closure requests** — not for activation.
+There is no dashboard. There is no second screen. There is no armed view. There is no BLACK BOX wordmark anywhere the user can see during normal use.
 
-The dashboard looks **visually identical whether dormant or active**:
-- Same amber pulsing disc (not red during active)
-- Same "ARMED · LISTENING" header text
-- Same layout, same colors, same elements
+The Stillpoint meditation app is the entire visible surface. Always. From install to use to closure.
 
-The ONLY indication of active state visible in the dashboard is in the **history list**: an in-progress entry appears at the top with elapsed time. This is the user's private confirmation channel, available only by deliberately revealing the dashboard.
+The user configures the system once during onboarding (W9). After that, the only visible app is Stillpoint. The 5-second press on the breathing circle is an activation trigger. Voice and button-sequence are alternative triggers. The closure flow is initiated through a "session closeout" interaction within Stillpoint itself — to an observer, the user is ending their meditation session. The pin entry that requests closure looks like a meditation app's "session lock code" or similar innocuous prompt.
 
-The dashboard contains:
-- Status header (visually static regardless of state)
-- Designated Contact info
-- Configured voice phrase reminder
-- History list (showing in-progress entry if active)
-- Settings access (gear icon)
-- During active state only: a "REQUEST CLOSURE" button (3-second hold) that opens the pin entry overlay
-
-There is no "ACTIVATE" button visible anywhere in the dashboard at any time. Activation is voice/covert-button only, handled in W8.
+Anything that would normally live in a settings screen, history view, or admin panel either:
+- Lives only in onboarding (set once, not edited after), OR
+- Lives disguised inside Stillpoint's existing surface (the gear icon opens what looks like meditation preferences but actually configures BLACK BOX), OR
+- Does not exist at all (e.g., history of activations is not shown to the user, because it would either be missing if no activations occurred, or it would be a record the user shouldn't be carrying around)
 
 ### 3. The meditation facade (cuts across W1, W2, W9)
 
@@ -284,20 +290,27 @@ W1 deliverables:
 - pnpm monorepo with workspaces: apps/pwa, workers/api, packages/shared
 - Vite 5 + React 18 + TypeScript (strict) + Tailwind 3 + shadcn/ui in apps/pwa
 - vite-plugin-pwa for service worker
-- Web manifest with icons (192, 512, maskable)
-- Routes: / (meditation home), /dashboard (hidden, accessed via gesture), /settings, /onboarding, /history
-- Home route IS the meditation facade — gradient background, three breathing circles, session timer, "Stillpoint" branding (no BLACK BOX branding visible on this view)
-- 5-second press on breathing circle reveals /dashboard (animated transition)
-- Dashboard shows BLACK BOX wordmark, status disc (amber pulse), "ARMED · LISTENING" text, contact placeholder, voice phrase placeholder, history list (empty for now), settings gear icon top-right. **NO activation button anywhere. The dashboard is inspection-only.**
-- Auto-return to home after 60s inactivity
+- Web manifest named "Stillpoint" with icons (192, 512, maskable) — facade-themed, not safety-themed
+- Routes (minimal): / (Stillpoint meditation) and /settings (empty placeholder for future)
+- There is NO /dashboard route, NO /history route, NO /onboarding route. Stillpoint is the entire visible app.
+- Stillpoint home (/):
+  - Hue-drifting navy → purple gradient background (30s cycle)
+  - Three concentric breathing circles with offset breath animation
+  - "Stillpoint" wordmark + "Breathe" label in Cormorant Garamond serif
+  - Session timer counting up
+  - Press-and-hold gesture on the central breathing circle (5s prod / configurable via VITE_REVEAL_HOLD_MS for dev)
+  - Progress ring visualizes the hold
+  - On completion of the hold: log a console.debug "trigger fired" and produce NO visible output. The screen does not change. There is no navigation. There is no toast. The user sees nothing different. The trigger logic is wired for W2 to attach recording to.
+  - No BLACK BOX wordmark, no safety language, no emergency language anywhere on this surface
+- /settings: empty route placeholder. Will be built in a later phase. Do not implement any UI here in W1.
 - Tailwind config extends design tokens from PWA_INTERFACE_SPEC §2
-- IBM Plex font family loaded via @fontsource for BLACK BOX views
-- Cormorant Garamond loaded for meditation view
-- Hono framework Worker scaffold in workers/api/ with wrangler.toml
+- IBM Plex font family loaded via @fontsource (for future use in onboarding)
+- Cormorant Garamond loaded for Stillpoint
+- Hono framework Worker scaffold in workers/api/ with wrangler.toml and a /health endpoint. Not deployed in W1.
 - packages/shared/ with Zod schemas placeholder
-- LICENSE file: AGPL-3.0
+- LICENSE file: AGPL-3.0 (download from gnu.org, do not generate)
 - README.md with setup instructions, principle citation, contributing guidelines
-- .gitignore appropriate for this stack
+- .gitignore appropriate for Node.js + pnpm + Vite on Windows
 
 Build per the principle: single sale, humanized, people-first. No analytics. No telemetry. No tracking. No retention loops. No engagement metrics.
 

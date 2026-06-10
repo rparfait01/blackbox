@@ -1,7 +1,7 @@
 const RADIUS = 118;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-interface RevealRingProps {
+interface HoldProgressRingProps {
   /** Hold progress, 0 → 1. */
   progress: number;
 }
@@ -11,7 +11,7 @@ interface RevealRingProps {
  * SVG presentation attributes (no inline styles); rotated so it fills from the
  * top.
  */
-export function RevealRing({ progress }: RevealRingProps): JSX.Element {
+export function HoldProgressRing({ progress }: HoldProgressRingProps): JSX.Element {
   const dashOffset = CIRCUMFERENCE * (1 - progress);
 
   return (

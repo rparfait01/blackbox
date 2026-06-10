@@ -38,22 +38,27 @@ A pnpm monorepo:
 | `workers/api`      | Cloudflare Worker API (Hono). Scaffold only in W1.                   |
 | `packages/shared`  | Cross-package TypeScript types and Zod schemas.                      |
 
-The PWA opens to **Stillpoint**, a meditation facade. A deliberate press-and-hold
-gesture on the breathing circle reveals the real BLACK BOX dashboard. This is by
-design — the safety interface stays hidden until the user reveals it.
+**Stillpoint is the entire visible surface of the app.** There is no dashboard, no
+armed view, and no BLACK BOX wordmark anywhere the user can see. From install to use
+to closure, the only visible app is a meditation app. Activation is covert: a deliberate
+press-and-hold on the breathing circle is a trigger that produces no visible output —
+the meditation view simply continues. (Voice phrase and hardware-button triggers arrive
+in a later phase.)
 
 ## Status: W1 — Foundation
 
 This repository is at build phase **W1 (Foundation)**. What works today:
 
-- The Stillpoint meditation home with a functional reveal gesture.
-- The BLACK BOX dashboard (dormant state) revealed via the gesture, with a 60-second
-  inactivity auto-return to the facade.
-- Placeholder routes for settings, onboarding, and history.
-- PWA shell: web manifest, service worker, placeholder icons.
+- The Stillpoint meditation home: hue-drifting gradient, three breathing circles,
+  serif wordmark, and a counting-up session timer.
+- The covert press-and-hold activation trigger on the breathing circle, with a progress
+  ring. On completion it fires a development-only log and produces no visible output —
+  W2 attaches the actual recording invocation and haptic acknowledgment.
+- An empty `/settings` route reserved for a later phase (nothing links to it yet).
+- PWA shell: web manifest (named "Stillpoint"), service worker, placeholder icons.
 - Worker scaffold with a `/health` endpoint (not deployed).
 
-Capture, recording, notifications, and backend logic arrive in later phases (W2+).
+Capture, recording, notifications, triggers, and backend logic arrive in later phases (W2+).
 
 ## Prerequisites
 
@@ -88,11 +93,13 @@ pnpm -F pwa build
 | `pnpm format`         | Prettier write across the repo.               |
 | `pnpm typecheck`      | TypeScript typecheck across all workspaces.   |
 
-### Dev reveal gesture
+### Dev activation hold
 
-In production the reveal gesture requires a **5-second** hold on the breathing circle.
-During development it is shortened to **1.5 seconds** for easier testing. Override it
-with `VITE_REVEAL_HOLD_MS` in `apps/pwa/.env` (see `apps/pwa/.env.example`).
+In production the activation trigger requires a **5-second** hold on the breathing
+circle. During development it is shortened to **1.5 seconds** for easier testing.
+Override it with `VITE_REVEAL_HOLD_MS` in `apps/pwa/.env` (see `apps/pwa/.env.example`).
+In W1 the completed hold only logs `trigger: stillpoint-press` to the console for
+verification — there is no visible effect by design.
 
 ## Contributing
 
@@ -105,8 +112,8 @@ welcome, with a few non-negotiables drawn from the principle:
 - **No fear-based or engagement-driven patterns.** No retention loops, no upsells.
 - TypeScript strict mode everywhere. No `any` without a commented justification.
 - Files are kebab-case; React component files are PascalCase.
-- The meditation facade and the BLACK BOX views stay dependency-separate — they share
-  only design tokens.
+- The visible surface is Stillpoint only — no safety, emergency, or BLACK BOX language
+  appears anywhere the user can see during normal use.
 
 Before opening a PR, run `pnpm lint`, `pnpm typecheck`, and `pnpm format`.
 

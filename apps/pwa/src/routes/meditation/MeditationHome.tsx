@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
-import { REVEAL_HOLD_MS } from '@/lib/env';
+import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
 import { BreathingCircles } from './BreathingCircles';
-import { RevealRing } from './RevealRing';
-import { useRevealGesture } from './use-reveal-gesture';
+import { HoldProgressRing } from './HoldProgressRing';
+import { useActivationHold } from './use-activation-hold';
 
 /**
- * Stillpoint — the meditation facade and default view. Nothing here references
- * BLACK BOX, safety, or emergency. A deliberate press-and-hold on the breathing
- * circle reveals the dashboard for inspection (never for activation).
+ * Stillpoint — the entire visible surface of the app. Nothing here references
+ * BLACK BOX, safety, or emergency.
+ *
+ * A deliberate press-and-hold on the breathing circle is a covert activation
+ * trigger. Completing the hold produces NO visible output: no navigation, no
+ * screen change, no toast. The meditation view simply continues. In W1 the
+ * completion only logs for development verification; W2 attaches the actual
+ * recording invocation and the (network-confirmed) haptic acknowledgment.
  */
 export function MeditationHome(): JSX.Element {
-  const navigate = useNavigate();
-
   const sessionStart = useRef<number>(performance.now());
   const [sessionMs, setSessionMs] = useState(0);
 
@@ -25,8 +27,12 @@ export function MeditationHome(): JSX.Element {
     return () => window.clearInterval(id);
   }, []);
 
-  const { progress, isHolding, handlers } = useRevealGesture(REVEAL_HOLD_MS, () => {
-    navigate('/dashboard');
+  const { progress, handlers } = useActivationHold(ACTIVATION_HOLD_MS, () => {
+    // Covert trigger fired. No visible output by design — this log is a
+    // development-only verification hook that W2 replaces with the recording
+    // invocation and haptic acknowledgment.
+    // eslint-disable-next-line no-console -- intentional W1 trigger verification
+    console.debug('trigger: stillpoint-press');
   });
 
   return (
@@ -39,7 +45,7 @@ export function MeditationHome(): JSX.Element {
         className="relative flex h-60 w-60 touch-none items-center justify-center"
         {...handlers}
       >
-        <RevealRing progress={progress} />
+        <HoldProgressRing progress={progress} />
         <BreathingCircles />
         <span className="animate-breath-label motion-reduce:animate-none relative z-10 font-serif text-lg font-light uppercase tracking-[0.3em] text-med-text">
           Breathe
@@ -54,14 +60,6 @@ export function MeditationHome(): JSX.Element {
           Session in progress
         </div>
       </div>
-
-      <p
-        className={`absolute bottom-8 left-1/2 -translate-x-1/2 font-mono text-[9px] uppercase tracking-[0.2em] text-med-text/40 transition-opacity duration-500 ${
-          isHolding ? 'opacity-100' : 'opacity-0'
-        }`}
-      >
-        Keep holding
-      </p>
     </main>
   );
 }

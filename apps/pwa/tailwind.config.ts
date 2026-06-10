@@ -113,10 +113,6 @@ export default {
           '0%, 100%': { filter: 'hue-rotate(0deg)' },
           '50%': { filter: 'hue-rotate(15deg)' },
         },
-        'bb-pulse': {
-          '0%, 100%': { opacity: '0.5', transform: 'scale(1)' },
-          '50%': { opacity: '1', transform: 'scale(1.02)' },
-        },
         'fade-in': {
           from: { opacity: '0' },
           to: { opacity: '1' },
@@ -126,7 +122,6 @@ export default {
         breathe: 'breathe 10s ease-in-out infinite',
         'breath-label': 'breath-label 10s ease-in-out infinite',
         'hue-drift': 'hue-drift 30s ease-in-out infinite',
-        'bb-pulse': 'bb-pulse 3s ease-in-out infinite',
         'fade-in': 'fade-in 600ms ease both',
       },
     },
