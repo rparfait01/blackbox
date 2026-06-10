@@ -1,0 +1,7 @@
+name = "blackbox-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Bindings (R2 buckets, D1 databases, Durable Objects, KV) are added in W5.
+# Do not deploy this Worker in W1.

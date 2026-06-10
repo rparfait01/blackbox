@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>BLACK BOX — Interface Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ============================
+         DESIGN TOKENS
+         ============================ */
+      :root {
+        --bg-primary: #000000;
+        --bg-surface: #0f0f0f;
+        --bg-elevated: #1a1a1a;
+        --border-subtle: #222222;
+        --border-defined: #333333;
+        --text-primary: #e8e8e8;
+        --text-secondary: #888888;
+        --text-tertiary: #555555;
+        --status-armed: #e89a00;
+        --status-active: #ff3b30;
+        --status-ack: #34c759;
+
+        --font-display: "IBM Plex Sans Condensed", system-ui, sans-serif;
+        --font-body: "IBM Plex Sans", system-ui, sans-serif;
+        --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        background: #1a1a1a;
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        min-height: 100%;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        padding: 24px 16px 64px;
+      }
+
+      /* ============================
+         PAGE LAYOUT
+         ============================ */
+      .preview-header {
+        max-width: 920px;
+        margin: 0 auto 32px;
+        padding: 0 8px;
+      }
+
+      .preview-header .wordmark {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+      }
+
+      .preview-header h1 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 32px;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        margin-bottom: 12px;
+      }
+
+      .preview-header p {
+        font-size: 15px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+        max-width: 60ch;
+      }
+
+      .phones {
+        max-width: 920px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 32px;
+        align-items: start;
+      }
+
+      @media (max-width: 760px) {
+        .phones {
+          grid-template-columns: 1fr;
+          gap: 24px;
+        }
+      }
+
+      .phone-frame {
+        background: #000;
+        border: 1px solid var(--border-defined);
+        border-radius: 36px;
+        padding: 12px;
+        box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
+        position: relative;
+      }
+
+      .phone-screen {
+        background: var(--bg-primary);
+        border-radius: 26px;
+        overflow: hidden;
+        aspect-ratio: 9 / 19.5;
+        position: relative;
+      }
+
+      .phone-label {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        text-align: center;
+        margin-top: 16px;
+      }
+
+      /* ============================
+         SHARED PHONE UI
+         ============================ */
+      .screen {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 24px 18px 18px;
+        font-size: 13px;
+      }
+
+      .status-bar {
+        display: flex;
+        justify-content: space-between;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        letter-spacing: 0.04em;
+        padding-bottom: 6px;
+      }
+
+      .top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 0 0;
+      }
+
+      .wordmark-app {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: 0.04em;
+      }
+
+      .gear {
+        color: var(--text-tertiary);
+        font-size: 14px;
+        font-family: var(--font-mono);
+        letter-spacing: 0.05em;
+      }
+
+      .micro {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+
+      .section {
+        border-top: 1px solid var(--border-subtle);
+        padding: 12px 0;
+      }
+
+      .section-label {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 6px;
+      }
+
+      .section-body {
+        font-size: 12px;
+        color: var(--text-primary);
+        line-height: 1.4;
+      }
+
+      .section-meta {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-secondary);
+        margin-top: 2px;
+      }
+
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+
+      /* ============================
+         DORMANT STATE
+         ============================ */
+      .dormant {
+        background: var(--bg-primary);
+      }
+
+      .dormant .hero {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 32px;
+        padding: 32px 0;
+      }
+
+      .voice-line {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .voice-line--armed {
+        color: var(--status-armed);
+      }
+
+      .voice-line--active {
+        color: var(--status-active);
+      }
+
+      .disc {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .disc-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 1.5px solid var(--status-armed);
+        animation: pulse-dormant 3s ease-in-out infinite;
+      }
+
+      @keyframes pulse-dormant {
+        0%,
+        100% {
+          opacity: 0.5;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.02);
+        }
+      }
+
+      .disc-center {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--status-armed);
+        box-shadow: 0 0 12px var(--status-armed);
+      }
+
+      .tap-cta {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+      }
+
+      /* ============================
+         ACTIVE STATE
+         ============================ */
+      .active {
+        background: var(--bg-primary);
+      }
+
+      .active .top-bar-active {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 0 14px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .recording-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--status-active);
+      }
+
+      .recording-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--status-active);
+        box-shadow: 0 0 8px var(--status-active);
+        animation: pulse-rec 1.2s ease-in-out infinite;
+      }
+
+      @keyframes pulse-rec {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+
+      .elapsed {
+        font-family: var(--font-mono);
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--text-primary);
+        letter-spacing: 0.04em;
+      }
+
+      .active-hero {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        padding: 18px 0 16px;
+      }
+
+      .disc--active {
+        width: 96px;
+        height: 96px;
+      }
+
+      .disc--active .disc-ring {
+        border-color: var(--status-active);
+        animation: none;
+        opacity: 1;
+      }
+
+      .disc--active .disc-center {
+        width: 16px;
+        height: 16px;
+        background: var(--status-active);
+        box-shadow: 0 0 20px var(--status-active);
+      }
+
+      .sonar {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 1.5px solid var(--status-active);
+        opacity: 0;
+        animation: sonar 1.6s ease-out infinite;
+      }
+
+      .sonar:nth-child(2) {
+        animation-delay: 0.4s;
+      }
+
+      .sonar:nth-child(3) {
+        animation-delay: 0.8s;
+      }
+
+      @keyframes sonar {
+        0% {
+          transform: scale(1);
+          opacity: 0.7;
+        }
+        100% {
+          transform: scale(1.8);
+          opacity: 0;
+        }
+      }
+
+      .active-data {
+        flex: 1;
+        overflow-y: auto;
+        padding-top: 4px;
+      }
+
+      .coords {
+        font-family: var(--font-mono);
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-primary);
+        letter-spacing: 0.02em;
+      }
+
+      .transcript-line {
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--text-primary);
+        margin-bottom: 6px;
+      }
+
+      .transcript-line--aggressor {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-style: italic;
+        color: var(--status-active);
+        padding: 4px 0;
+        border-left: 2px solid var(--status-active);
+        padding-left: 8px;
+      }
+
+      .voice-meta {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        color: var(--text-tertiary);
+        letter-spacing: 0.06em;
+        margin-top: 4px;
+      }
+
+      .threat-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 6px;
+      }
+
+      .threat-label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+
+      .threat-value {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--status-active);
+      }
+
+      .contact-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 12px;
+      }
+
+      .contact-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+
+      .contact-dot--ack {
+        background: var(--status-ack);
+        box-shadow: 0 0 6px var(--status-ack);
+      }
+
+      .contact-dot--sent {
+        background: var(--status-active);
+      }
+
+      .contact-dot--pending {
+        background: transparent;
+        border: 1px solid var(--text-tertiary);
+      }
+
+      .contact-name {
+        flex: 1;
+      }
+
+      .contact-status {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-secondary);
+        letter-spacing: 0.04em;
+      }
+
+      .contact-status--ack {
+        color: var(--status-ack);
+      }
+
+      .cancel-bar {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-defined);
+        margin-top: 12px;
+        padding: 14px;
+        text-align: center;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-primary);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .cancel-bar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--status-active);
+        width: 0;
+        transition: width 3s linear;
+        opacity: 0.3;
+      }
+
+      /* ============================
+         FOOTER NOTES
+         ============================ */
+      .notes {
+        max-width: 920px;
+        margin: 48px auto 0;
+        padding: 24px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+      }
+
+      .notes h2 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 18px;
+        margin-bottom: 16px;
+        letter-spacing: -0.01em;
+      }
+
+      .notes-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 20px;
+      }
+
+      .note {
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .note-label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+      }
+
+      .note-body {
+        color: var(--text-primary);
+      }
+
+      .note-body strong {
+        font-weight: 600;
+      }
+
+      .swatch-row {
+        display: flex;
+        gap: 4px;
+        margin-top: 6px;
+      }
+
+      .swatch {
+        width: 22px;
+        height: 22px;
+        border-radius: 2px;
+        border: 1px solid var(--border-subtle);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .disc-ring,
+        .recording-dot,
+        .sonar {
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="preview-header">
+      <div class="wordmark">BLACK BOX · INTERFACE PREVIEW · V1.0</div>
+      <h1>Dormant and Active</h1>
+      <p>
+        The PWA is an instrument, not an app. Almost-black surfaces, IBM Plex
+        typography, one semantic color at a time — amber when armed, red when
+        active. The signature element is the central status disc.
+      </p>
+    </header>
+
+    <main class="phones">
+      <!-- ============================
+           DORMANT
+           ============================ -->
+      <div>
+        <div class="phone-frame">
+          <div class="phone-screen">
+            <div class="screen dormant">
+              <div class="status-bar">
+                <span>06:34</span>
+                <span>● ● ● 84%</span>
+              </div>
+
+              <div class="top-bar">
+                <span class="wordmark-app">BLACK BOX</span>
+                <span class="gear">⚙</span>
+              </div>
+
+              <div class="hero">
+                <div class="voice-line voice-line--armed">ARMED · LISTENING</div>
+                <div class="disc">
+                  <div class="disc-ring"></div>
+                  <div class="disc-center"></div>
+                </div>
+                <div class="tap-cta">TAP TO ACTIVATE</div>
+              </div>
+
+              <div class="section">
+                <div class="section-label">Device</div>
+                <div class="row">
+                  <span class="section-body">Black Box 001</span>
+                  <span class="section-meta">BAT 84%</span>
+                </div>
+                <div class="section-meta">Paired · Last seen 12s ago</div>
+              </div>
+
+              <div class="section">
+                <div class="section-label">Primary Contact</div>
+                <div class="section-body">Ava Tanaka</div>
+                <div class="section-meta">Telegram · Verified · Online</div>
+              </div>
+
+              <div class="section">
+                <div class="section-label">AI</div>
+                <div class="section-body">Anthropic · Claude Sonnet 4.5</div>
+                <div class="section-meta">Key valid</div>
+              </div>
+
+              <div class="section">
+                <div class="section-label">Last Activity</div>
+                <div class="section-body">Self-test passed</div>
+                <div class="section-meta">06:32 JST</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="phone-label">Dormant · Armed</div>
+      </div>
+
+      <!-- ============================
+           ACTIVE
+           ============================ -->
+      <div>
+        <div class="phone-frame">
+          <div class="phone-screen">
+            <div class="screen active">
+              <div class="status-bar">
+                <span>06:38</span>
+                <span>● ● ● 83%</span>
+              </div>
+
+              <div class="top-bar-active">
+                <div class="recording-indicator">
+                  <span class="recording-dot"></span>
+                  <span>Recording</span>
+                </div>
+                <span class="elapsed" id="elapsed">04:32</span>
+              </div>
+
+              <div class="active-hero">
+                <div class="disc disc--active">
+                  <div class="sonar"></div>
+                  <div class="sonar"></div>
+                  <div class="sonar"></div>
+                  <div class="disc-ring"></div>
+                  <div class="disc-center"></div>
+                </div>
+                <div class="voice-line voice-line--active">
+                  TRACKING · NOTIFIED
+                </div>
+              </div>
+
+              <div class="active-data">
+                <div class="section">
+                  <div class="section-label">Location</div>
+                  <div class="coords">26.3344°N · 127.7894°E</div>
+                  <div class="section-meta">±4m · MOVING NORTH · 1.2 m/s</div>
+                </div>
+
+                <div class="section">
+                  <div class="section-label">Live Transcript</div>
+                  <div class="transcript-line">
+                    "Please don't, I'll do whatever you want, please just—"
+                  </div>
+                  <div class="transcript-line transcript-line--aggressor">
+                    — I told you to shut up —
+                  </div>
+                  <div class="voice-meta">VOICE 1 · 0:23 · VOICE 2 · 0:14</div>
+                </div>
+
+                <div class="section">
+                  <div class="section-label">Classification</div>
+                  <div class="section-body">
+                    Two voices · One aggressor<br />
+                    Compliance language detected
+                  </div>
+                  <div class="threat-row">
+                    <span class="threat-label">Threat assessment</span>
+                    <span class="threat-value">HIGH</span>
+                  </div>
+                </div>
+
+                <div class="section">
+                  <div class="section-label">Notified</div>
+                  <div class="contact-row">
+                    <span class="contact-dot contact-dot--ack"></span>
+                    <span class="contact-name">Ava Tanaka</span>
+                    <span class="contact-status contact-status--ack"
+                      >Responding</span
+                    >
+                  </div>
+                  <div class="contact-row">
+                    <span class="contact-dot contact-dot--sent"></span>
+                    <span class="contact-name">Sarah Chen</span>
+                    <span class="contact-status">Reached</span>
+                  </div>
+                  <div class="contact-row">
+                    <span class="contact-dot contact-dot--pending"></span>
+                    <span class="contact-name">Mom</span>
+                    <span class="contact-status">Pending</span>
+                  </div>
+                  <div class="section-meta">Dashboard live · 2 viewers</div>
+                </div>
+              </div>
+
+              <div class="cancel-bar">HOLD 3s TO CANCEL</div>
+            </div>
+          </div>
+        </div>
+        <div class="phone-label">Active · Emergency</div>
+      </div>
+    </main>
+
+    <section class="notes">
+      <h2>Design tokens at a glance</h2>
+      <div class="notes-grid">
+        <div class="note">
+          <div class="note-label">Palette</div>
+          <div class="note-body">
+            <strong>True black</strong> base. One semantic color at a time —
+            amber dormant, red active.
+          </div>
+          <div class="swatch-row">
+            <div class="swatch" style="background: #000"></div>
+            <div class="swatch" style="background: #0f0f0f"></div>
+            <div class="swatch" style="background: #1a1a1a"></div>
+            <div class="swatch" style="background: #e8e8e8"></div>
+            <div class="swatch" style="background: #888888"></div>
+            <div class="swatch" style="background: #e89a00"></div>
+            <div class="swatch" style="background: #ff3b30"></div>
+            <div class="swatch" style="background: #34c759"></div>
+          </div>
+        </div>
+
+        <div class="note">
+          <div class="note-label">Typography</div>
+          <div class="note-body">
+            <strong>IBM Plex</strong> family — Sans Condensed for display,
+            Sans for body, Mono for system voice and data.
+          </div>
+        </div>
+
+        <div class="note">
+          <div class="note-label">Signature</div>
+          <div class="note-body">
+            The <strong>status disc</strong>. Slow amber pulse when armed,
+            expanding red sonar rings when active.
+          </div>
+        </div>
+
+        <div class="note">
+          <div class="note-label">System voice</div>
+          <div class="note-body">
+            Mono, uppercase, deliberate spacing.<br />
+            <code style="font-family: var(--font-mono); font-size: 11px"
+              >ARMED · LISTENING<br />
+              TRACKING · NOTIFIED</code
+            >
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      // Live-counting elapsed timer for visual realism
+      const elapsed = document.getElementById("elapsed");
+      let seconds = 4 * 60 + 32;
+      setInterval(() => {
+        seconds += 1;
+        const m = String(Math.floor(seconds / 60)).padStart(2, "0");
+        const s = String(seconds % 60).padStart(2, "0");
+        elapsed.textContent = `${m}:${s}`;
+      }, 1000);
+    </script>
+  </body>
+</html>

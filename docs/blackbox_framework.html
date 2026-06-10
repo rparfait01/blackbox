@@ -1,0 +1,1441 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>BLACK BOX — Product Framework & Wireframe</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-page: #0a0a0a;
+        --bg-surface: #0f0f0f;
+        --bg-elevated: #1a1a1a;
+        --bg-deep: #050505;
+        --border-subtle: #1f1f1f;
+        --border-defined: #2f2f2f;
+        --border-strong: #3f3f3f;
+        --text-primary: #e8e8e8;
+        --text-secondary: #888888;
+        --text-tertiary: #555555;
+        --status-armed: #e89a00;
+        --status-active: #ff3b30;
+        --status-ack: #34c759;
+        --status-info: #5ac8fa;
+        --status-purple: #af52de;
+
+        --font-display: "IBM Plex Sans Condensed", system-ui, sans-serif;
+        --font-body: "IBM Plex Sans", system-ui, sans-serif;
+        --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body {
+        background: var(--bg-page);
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body { padding: 32px 24px 64px; }
+      .container { max-width: 1440px; margin: 0 auto; }
+
+      /* ============================
+         HEADER
+         ============================ */
+      .doc-header {
+        margin-bottom: 64px;
+        padding-bottom: 32px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .wordmark {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        color: var(--text-secondary);
+        margin-bottom: 16px;
+      }
+      .doc-header h1 {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 40px;
+        letter-spacing: -0.02em;
+        line-height: 1.05;
+        margin-bottom: 16px;
+      }
+      .doc-header h1 .tagline {
+        display: block;
+        font-weight: 500;
+        font-size: 22px;
+        color: var(--text-secondary);
+        margin-top: 8px;
+      }
+      .doc-header p {
+        font-size: 16px;
+        color: var(--text-secondary);
+        max-width: 70ch;
+      }
+
+      /* ============================
+         SECTION STRUCTURE
+         ============================ */
+      .section { margin-bottom: 72px; }
+
+      .section-header {
+        margin-bottom: 32px;
+        display: flex;
+        align-items: baseline;
+        gap: 20px;
+        flex-wrap: wrap;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .section-number {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--status-active);
+      }
+      .section-title {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 28px;
+        letter-spacing: -0.01em;
+      }
+      .section-desc {
+        font-size: 14px;
+        color: var(--text-secondary);
+        max-width: 60ch;
+        margin-left: auto;
+        flex: 1;
+        text-align: right;
+      }
+
+      /* ============================
+         SYSTEM ARCHITECTURE DIAGRAM
+         ============================ */
+      .architecture {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 40px;
+        margin-bottom: 32px;
+      }
+
+      .arch-layer {
+        margin-bottom: 32px;
+      }
+      .arch-layer:last-child { margin-bottom: 0; }
+
+      .arch-layer-label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 12px;
+      }
+
+      .arch-row {
+        display: grid;
+        gap: 16px;
+      }
+
+      .arch-row--triggers {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .arch-row--bridges {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .arch-row--cloud {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .arch-row--outputs {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      @media (max-width: 980px) {
+        .arch-row { grid-template-columns: 1fr !important; }
+      }
+
+      .arch-node {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-defined);
+        border-radius: 6px;
+        padding: 16px;
+        position: relative;
+      }
+
+      .arch-node--trigger { border-left: 3px solid var(--status-armed); }
+      .arch-node--bridge { border-left: 3px solid var(--status-info); }
+      .arch-node--cloud { border-left: 3px solid var(--status-purple); }
+      .arch-node--output { border-left: 3px solid var(--status-active); }
+
+      .arch-node-title {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+
+      .arch-node-meta {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        color: var(--text-tertiary);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+
+      .arch-node-body {
+        font-size: 11px;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+
+      .arch-connector {
+        height: 32px;
+        position: relative;
+        margin: -4px 0;
+      }
+      .arch-connector::before {
+        content: "↓";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        color: var(--border-strong);
+        font-size: 18px;
+      }
+
+      /* ============================
+         PRODUCT TIERS
+         ============================ */
+      .tiers {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      @media (max-width: 980px) {
+        .tiers { grid-template-columns: 1fr; }
+      }
+
+      .tier-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 24px;
+      }
+      .tier-card--lite { border-top: 3px solid var(--status-armed); }
+      .tier-card--sentinel { border-top: 3px solid var(--status-info); }
+      .tier-card--recorder { border-top: 3px solid var(--text-primary); }
+
+      .tier-label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+
+      .tier-name {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 20px;
+        margin-bottom: 4px;
+      }
+
+      .tier-price {
+        font-family: var(--font-mono);
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--status-armed);
+        margin-bottom: 16px;
+      }
+
+      .tier-card--sentinel .tier-price { color: var(--status-info); }
+      .tier-card--recorder .tier-price { color: var(--text-primary); }
+
+      .tier-features { list-style: none; }
+      .tier-features li {
+        font-size: 12px;
+        color: var(--text-primary);
+        padding: 6px 0;
+        border-top: 1px solid var(--border-subtle);
+        display: flex;
+        gap: 8px;
+      }
+      .tier-features li::before {
+        content: "▸";
+        color: var(--text-tertiary);
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+      .tier-features li:first-child { border-top: none; }
+
+      /* ============================
+         ACTOR FLOW DIAGRAM
+         ============================ */
+      .actors {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+      }
+      @media (max-width: 980px) { .actors { grid-template-columns: 1fr 1fr; } }
+      @media (max-width: 580px) { .actors { grid-template-columns: 1fr; } }
+
+      .actor-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 20px;
+      }
+
+      .actor-icon {
+        font-family: var(--font-mono);
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--status-active);
+        margin-bottom: 12px;
+      }
+
+      .actor-label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+
+      .actor-name {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 16px;
+        margin-bottom: 12px;
+      }
+
+      .actor-actions {
+        font-size: 12px;
+        color: var(--text-primary);
+        line-height: 1.5;
+      }
+
+      .actor-actions ul {
+        list-style: none;
+        margin-top: 4px;
+      }
+      .actor-actions li {
+        padding: 3px 0;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .actor-actions li strong {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+
+      /* ============================
+         FULL USER FLOW
+         ============================ */
+      .flow {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 32px;
+      }
+
+      .flow-step {
+        display: grid;
+        grid-template-columns: 60px 1fr;
+        gap: 20px;
+        padding: 16px 0;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .flow-step:last-child { border-bottom: none; }
+
+      .flow-step-num {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 32px;
+        color: var(--status-active);
+        line-height: 1;
+      }
+
+      .flow-step-content h3 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 16px;
+        margin-bottom: 6px;
+      }
+
+      .flow-step-content p {
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+      }
+
+      .flow-step-content .timing {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        color: var(--status-active);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        display: inline-block;
+        background: rgba(255, 59, 48, 0.08);
+        padding: 2px 6px;
+        border-radius: 2px;
+        margin-bottom: 6px;
+      }
+
+      /* ============================
+         WIREFRAME GALLERY
+         ============================ */
+      .wireframes {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+      }
+      @media (max-width: 1200px) {
+        .wireframes { grid-template-columns: repeat(3, 1fr); }
+      }
+      @media (max-width: 900px) {
+        .wireframes { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (max-width: 580px) {
+        .wireframes { grid-template-columns: 1fr; }
+      }
+
+      .wireframe {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 14px;
+      }
+
+      .wireframe-label {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .wireframe-label strong {
+        color: var(--text-primary);
+        font-weight: 700;
+      }
+
+      .wireframe-screen {
+        background: #000;
+        border: 1px solid var(--border-defined);
+        border-radius: 16px;
+        padding: 6px;
+      }
+      .wireframe-screen-inner {
+        background: var(--bg-page);
+        border-radius: 12px;
+        aspect-ratio: 9 / 18;
+        padding: 12px 10px;
+        font-size: 9px;
+        color: var(--text-primary);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        overflow: hidden;
+      }
+
+      .wf-row {
+        display: flex;
+        justify-content: space-between;
+        font-family: var(--font-mono);
+        font-size: 7px;
+        color: var(--text-tertiary);
+        letter-spacing: 0.04em;
+      }
+
+      .wf-title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 11px;
+        margin: 4px 0;
+      }
+
+      .wf-mono {
+        font-family: var(--font-mono);
+        font-size: 7px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .wf-mono--amber { color: var(--status-armed); }
+      .wf-mono--red { color: var(--status-active); }
+      .wf-mono--green { color: var(--status-ack); }
+      .wf-mono--blue { color: var(--status-info); }
+
+      .wf-disc {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        border: 1.5px solid var(--status-armed);
+        margin: 12px auto;
+        position: relative;
+        animation: wf-pulse 3s ease-in-out infinite;
+      }
+
+      .wf-disc--active {
+        border-color: var(--status-active);
+        animation: none;
+      }
+
+      .wf-disc::after {
+        content: "";
+        width: 3px;
+        height: 3px;
+        background: var(--status-armed);
+        border-radius: 50%;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 6px var(--status-armed);
+      }
+
+      .wf-disc--active::after {
+        background: var(--status-active);
+        box-shadow: 0 0 10px var(--status-active);
+        width: 8px;
+        height: 8px;
+      }
+
+      @keyframes wf-pulse {
+        0%, 100% { opacity: 0.5; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.05); }
+      }
+
+      .wf-section {
+        border-top: 1px solid var(--border-subtle);
+        padding-top: 6px;
+        margin-top: 2px;
+      }
+
+      .wf-label {
+        font-family: var(--font-mono);
+        font-size: 6px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 3px;
+      }
+
+      .wf-text {
+        font-size: 8px;
+        line-height: 1.4;
+        color: var(--text-primary);
+      }
+
+      .wf-cta {
+        background: var(--status-active);
+        color: white;
+        text-align: center;
+        padding: 6px;
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        border-radius: 3px;
+        margin-top: auto;
+      }
+
+      .wf-cta--secondary {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-defined);
+        color: var(--text-secondary);
+        margin-top: 4px;
+      }
+
+      .wf-cta--amber {
+        background: var(--status-armed);
+        color: black;
+      }
+
+      .wf-cta--green {
+        background: var(--status-ack);
+        color: black;
+      }
+
+      .wf-map {
+        background: linear-gradient(135deg, #0a1f1a, #0d2a22);
+        height: 50px;
+        border-radius: 3px;
+        margin: 4px 0;
+        position: relative;
+        border: 1px solid var(--border-defined);
+      }
+      .wf-map::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: 
+          linear-gradient(rgba(60,80,70,0.3) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60,80,70,0.3) 1px, transparent 1px);
+        background-size: 8px 8px;
+      }
+      .wf-map::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 6px;
+        height: 6px;
+        background: var(--status-active);
+        border-radius: 50%;
+        box-shadow: 0 0 0 3px rgba(255,59,48,0.3);
+        transform: translate(-50%, -50%);
+      }
+
+      .wf-wave {
+        display: flex;
+        gap: 1.5px;
+        height: 12px;
+        align-items: center;
+        margin: 4px 0;
+      }
+      .wf-wave-bar {
+        flex: 1;
+        background: var(--status-active);
+        border-radius: 0.5px;
+        opacity: 0.7;
+      }
+
+      .wf-share-channels {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        padding: 4px 0;
+      }
+      .wf-share-ch {
+        background: var(--bg-elevated);
+        border-radius: 4px;
+        padding: 6px 2px;
+        text-align: center;
+        font-size: 6px;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .wf-input {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-defined);
+        border-radius: 3px;
+        padding: 4px 6px;
+        font-size: 8px;
+        color: var(--text-tertiary);
+        margin: 3px 0;
+      }
+
+      /* Animations */
+      @media (prefers-reduced-motion: reduce) {
+        * { animation: none !important; }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+
+      <!-- HEADER -->
+      <header class="doc-header">
+        <div class="wordmark">BLACK BOX · PRODUCT FRAMEWORK & WIREFRAME · V1.0</div>
+        <h1>
+          The complete system
+          <span class="tagline">Architecture, actors, flows, screens — everything on one page.</span>
+        </h1>
+        <p>
+          A consolidated framework view of the BLACK BOX ecosystem: how data flows from
+          activation through cloud relay to the dashboard, who interacts with what, and
+          a wireframe gallery of every primary screen across the three product tiers.
+        </p>
+      </header>
+
+      <!-- ============================
+           SECTION 1 — ARCHITECTURE
+           ============================ -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">01</span>
+          <span class="section-title">System architecture</span>
+          <span class="section-desc">
+            Triggers fire signals. Bridges (phone or device) relay them. Cloud workers
+            process and persist. Outputs reach humans through messaging and dashboards.
+          </span>
+        </div>
+
+        <div class="architecture">
+
+          <div class="arch-layer">
+            <div class="arch-layer-label">⚡ Trigger Layer</div>
+            <div class="arch-row arch-row--triggers">
+              <div class="arch-node arch-node--trigger">
+                <div class="arch-node-title">Phone-side</div>
+                <div class="arch-node-meta">Lite tier · always available</div>
+                <div class="arch-node-body">
+                  Manual button, voice keyword, shake, fall detection, check-in timeout.
+                </div>
+              </div>
+              <div class="arch-node arch-node--trigger">
+                <div class="arch-node-title">v0 BLE Button</div>
+                <div class="arch-node-meta">Off-the-shelf · Flic 2 white-label</div>
+                <div class="arch-node-body">
+                  Single-press activation. Coin cell. 12-month battery. $79–99.
+                </div>
+              </div>
+              <div class="arch-node arch-node--trigger">
+                <div class="arch-node-title">v1 Sentinel Cube</div>
+                <div class="arch-node-meta">Custom · branded · deniable</div>
+                <div class="arch-node-body">
+                  Tamper · shock · deadman pin · capacitive squeeze. $129–179.
+                </div>
+              </div>
+              <div class="arch-node arch-node--trigger">
+                <div class="arch-node-title">v2 Recorder Puck</div>
+                <div class="arch-node-meta">Custom · evidence-grade</div>
+                <div class="arch-node-body">
+                  360° camera + 4-mic array + onboard SSD + tamper + last-gasp. $349–499.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-connector"></div>
+
+          <div class="arch-layer">
+            <div class="arch-layer-label">⇄ Bridge Layer</div>
+            <div class="arch-row arch-row--bridges">
+              <div class="arch-node arch-node--bridge">
+                <div class="arch-node-title">PWA on User's Phone</div>
+                <div class="arch-node-meta">Always · capture or relay</div>
+                <div class="arch-node-body">
+                  Captures audio/video/GPS (Lite + v0 + v1).<br/>
+                  Relays high-throughput stream from v2 device.<br/>
+                  Local transcription, BYOK AI classification.
+                </div>
+              </div>
+              <div class="arch-node arch-node--bridge">
+                <div class="arch-node-title">Optional LTE-M (v2 only)</div>
+                <div class="arch-node-meta">Direct-to-cloud fallback</div>
+                <div class="arch-node-body">
+                  When phone is destroyed or out of range, device transmits low-bitrate
+                  audio + GPS directly to cloud via cellular IoT.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-connector"></div>
+
+          <div class="arch-layer">
+            <div class="arch-layer-label">☁ Cloud Layer</div>
+            <div class="arch-row arch-row--cloud">
+              <div class="arch-node arch-node--cloud">
+                <div class="arch-node-title">Cloudflare Workers</div>
+                <div class="arch-node-meta">Edge · routing · auth</div>
+                <div class="arch-node-body">
+                  Event creation, HMAC validation, token minting, AI proxying when needed.
+                </div>
+              </div>
+              <div class="arch-node arch-node--cloud">
+                <div class="arch-node-title">R2 Object Storage</div>
+                <div class="arch-node-meta">Media · zero egress</div>
+                <div class="arch-node-body">
+                  Audio + video chunks. Signed URLs for playback. 10GB free tier.
+                </div>
+              </div>
+              <div class="arch-node arch-node--cloud">
+                <div class="arch-node-title">D1 SQLite</div>
+                <div class="arch-node-meta">Metadata · audit · events</div>
+                <div class="arch-node-body">
+                  Event records, device registry, audit ledger, share tokens.
+                </div>
+              </div>
+              <div class="arch-node arch-node--cloud">
+                <div class="arch-node-title">Durable Objects</div>
+                <div class="arch-node-meta">Realtime · websocket</div>
+                <div class="arch-node-body">
+                  Live dashboard sessions. Each event has its own DO instance for state.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-connector"></div>
+
+          <div class="arch-layer">
+            <div class="arch-layer-label">📡 Output Layer</div>
+            <div class="arch-row arch-row--outputs">
+              <div class="arch-node arch-node--output">
+                <div class="arch-node-title">LINE / Telegram Bots</div>
+                <div class="arch-node-meta">Free · instant · international</div>
+                <div class="arch-node-body">
+                  Rich messages with location, audio preview, dashboard link.
+                </div>
+              </div>
+              <div class="arch-node arch-node--output">
+                <div class="arch-node-title">Live Dashboard</div>
+                <div class="arch-node-meta">PWA · shareable · token-scoped</div>
+                <div class="arch-node-body">
+                  Contact, Authority, Public view tiers. Share button propagates exponentially.
+                </div>
+              </div>
+              <div class="arch-node arch-node--output">
+                <div class="arch-node-title">Web Push + Email + SMS</div>
+                <div class="arch-node-meta">Fallback channels</div>
+                <div class="arch-node-body">
+                  Resend/SES email, Twilio SMS (paid), Web Push (free).
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============================
+           SECTION 2 — PRODUCT TIERS
+           ============================ -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">02</span>
+          <span class="section-title">Product tiers — one ecosystem</span>
+          <span class="section-desc">
+            Same software, three hardware capabilities, three price points, three threat models.
+            Upgrade path is graceful — never relearn the product.
+          </span>
+        </div>
+
+        <div class="tiers">
+
+          <div class="tier-card tier-card--lite">
+            <div class="tier-label">Tier 01 · Software</div>
+            <div class="tier-name">BLACK BOX</div>
+            <div class="tier-price">FREE / $29 Pro</div>
+            <ul class="tier-features">
+              <li>Audio + video + GPS via phone</li>
+              <li>Local transcription + keyword classifier</li>
+              <li>BYOK AI for situational summary</li>
+              <li>LINE / Telegram / Push alerts</li>
+              <li>Live shareable dashboard</li>
+              <li>Trigger: manual / shake / voice</li>
+              <li>No subscription, ever</li>
+            </ul>
+          </div>
+
+          <div class="tier-card tier-card--sentinel">
+            <div class="tier-label">Tier 02 · Hardware Trigger</div>
+            <div class="tier-name">BLACK BOX Sentinel</div>
+            <div class="tier-price">$129–179 one-time</div>
+            <ul class="tier-features">
+              <li>Everything in Lite Pro</li>
+              <li>Square cube · 25×25×10mm</li>
+              <li>CNC 7075-T6 hard anodized</li>
+              <li>Tamper · shock · capacitive</li>
+              <li>Deadman release pin variant</li>
+              <li>IR + visible LED beacon</li>
+              <li>30+ day battery, Qi charging</li>
+              <li>Last-gasp supercap reserve</li>
+            </ul>
+          </div>
+
+          <div class="tier-card tier-card--recorder">
+            <div class="tier-label">Tier 03 · Full Recorder</div>
+            <div class="tier-name">BLACK BOX Recorder</div>
+            <div class="tier-price">$349–499 one-time</div>
+            <ul class="tier-features">
+              <li>Everything in Sentinel</li>
+              <li>Round puck · 40×40×15mm</li>
+              <li>360° dual-fisheye camera</li>
+              <li>4-mic array · 24-bit · DoA</li>
+              <li>64GB encrypted on-device SSD</li>
+              <li>WiFi Direct + optional LTE-M</li>
+              <li>Survives phone destruction</li>
+              <li>2–4h record · 5–10d standby</li>
+            </ul>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============================
+           SECTION 3 — ACTORS
+           ============================ -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">03</span>
+          <span class="section-title">Actors — who interacts with what</span>
+          <span class="section-desc">
+            Four roles. Each sees a different view of the same event. Permissions
+            cascade down the share chain.
+          </span>
+        </div>
+
+        <div class="actors">
+
+          <div class="actor-card">
+            <div class="actor-icon">①</div>
+            <div class="actor-label">Owner</div>
+            <div class="actor-name">The User</div>
+            <div class="actor-actions">
+              <strong>Sees:</strong> Always-dormant home view. Hidden gesture reveals full
+              dashboard.
+              <ul>
+                <li>Configure contacts, AI provider, triggers</li>
+                <li>Activate manually or via device</li>
+                <li>Cancel with hold or duress phrase</li>
+                <li>Review history of activations</li>
+                <li>Revoke any share token</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="actor-card">
+            <div class="actor-icon">②</div>
+            <div class="actor-label">Recipient</div>
+            <div class="actor-name">Designated Contact</div>
+            <div class="actor-actions">
+              <strong>Sees:</strong> LINE/Telegram alert, then full live dashboard.
+              <ul>
+                <li>Receive instant rich notification</li>
+                <li>Open live dashboard via link</li>
+                <li>Listen to audio, see location updating</li>
+                <li>Share to authorities (one-tap)</li>
+                <li>Acknowledge via "I'm responding"</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="actor-card">
+            <div class="actor-icon">③</div>
+            <div class="actor-label">Responder</div>
+            <div class="actor-name">Authority</div>
+            <div class="actor-actions">
+              <strong>Sees:</strong> Dispatch-formatted view. Optimized for CAD entry.
+              <ul>
+                <li>One-line summary copyable to CAD</li>
+                <li>Multi-format coordinates</li>
+                <li>Live audio with timestamp scrub</li>
+                <li>Callback info for witness</li>
+                <li>"I am responding" updates chain</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="actor-card">
+            <div class="actor-icon">④</div>
+            <div class="actor-label">Network</div>
+            <div class="actor-name">Public / Re-shared</div>
+            <div class="actor-actions">
+              <strong>Sees:</strong> Redacted public view. Designed for amplification.
+              <ul>
+                <li>General area (500m radius)</li>
+                <li>Anonymized summary</li>
+                <li>Redacted audio (identifiers muted)</li>
+                <li>Viewer count visible</li>
+                <li>Can flag self as nearby helper</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============================
+           SECTION 4 — END-TO-END FLOW
+           ============================ -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">04</span>
+          <span class="section-title">End-to-end activation flow</span>
+          <span class="section-desc">
+            From trigger to resolution. Each step has a target time. The whole loop
+            from activation to contact-receives-link is under 5 seconds.
+          </span>
+        </div>
+
+        <div class="flow">
+
+          <div class="flow-step">
+            <div class="flow-step-num">01</div>
+            <div class="flow-step-content">
+              <span class="timing">T+0s · trigger</span>
+              <h3>Activation fires</h3>
+              <p>
+                User taps button, shakes phone, pulls deadman pin, or device tamper triggers.
+                Single haptic on the device confirms registration. Phone screen unchanged.
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">02</div>
+            <div class="flow-step-content">
+              <span class="timing">T+0.2s · capture begins</span>
+              <h3>Recording starts immediately</h3>
+              <p>
+                Audio and (where available) video begin recording locally. GPS streaming starts.
+                Local keyword classifier and transcription begin in parallel. BYOK AI receives
+                first text segment within 2 seconds.
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">03</div>
+            <div class="flow-step-content">
+              <span class="timing">T+1s · event opens</span>
+              <h3>Cloud event created, link minted</h3>
+              <p>
+                PWA POSTs to Cloudflare Worker. Worker creates event record in D1, mints the
+                shareable URL (<code style="font-family:var(--font-mono);font-size:11px;color:var(--status-active)">blackbox.app/live/a7f3-8e2c-4d</code>),
+                returns signed upload URLs to PWA.
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">04</div>
+            <div class="flow-step-content">
+              <span class="timing">T+2s · alerts dispatch</span>
+              <h3>LINE / Telegram messages fire</h3>
+              <p>
+                Bot Worker pushes rich Flex Message (LINE) or formatted message (Telegram) to all
+                primary contacts. Includes location, 3-second audio preview, dashboard link, quick
+                reply buttons. Web Push goes to any registered devices.
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">05</div>
+            <div class="flow-step-content">
+              <span class="timing">T+3-5s · contact opens</span>
+              <h3>Contact taps link, dashboard loads</h3>
+              <p>
+                Contact's phone vibrates, they tap. Dashboard PWA opens in browser. Live audio
+                begins playing within 5 seconds total. Map, transcript, AI summary update
+                continuously via Durable Object websocket.
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">06</div>
+            <div class="flow-step-content">
+              <span class="timing">T+5-30s · spread</span>
+              <h3>Contact taps SHARE</h3>
+              <p>
+                Emergency dispatch block sits at top of share sheet. One tap dials 110 (Japan
+                location detected) and copies link to clipboard. Below, share to LINE / SMS /
+                Twitter / family group chats. Each share creates a sub-token.
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">07</div>
+            <div class="flow-step-content">
+              <span class="timing">T+30s-resolution · response</span>
+              <h3>Authorities receive context, respond</h3>
+              <p>
+                Dispatcher opens authority-tier view from clipboard link. Sees structured dispatch
+                summary, coordinates in three formats, live audio, callback to witness. Taps
+                "I am responding" — that ack propagates to all viewers and the user (if they're
+                checking via hidden gesture).
+              </p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-step-num">08</div>
+            <div class="flow-step-content">
+              <span class="timing">resolution · 6h cleanup</span>
+              <h3>Stand down, tokens expire, evidence preserved</h3>
+              <p>
+                User cancels (hold 3s) or authority marks resolved. All share tokens expire
+                automatically 6 hours later. Audio + video + audit ledger preserved per user's
+                retention setting (default 30 days). Cryptographically signed evidence package
+                downloadable.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============================
+           SECTION 5 — WIREFRAME GALLERY
+           ============================ -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">05</span>
+          <span class="section-title">Wireframe gallery — every primary screen</span>
+          <span class="section-desc">
+            Compact wireframes for the complete screen set. Hover over any to read its purpose.
+            Full-resolution versions live in `blackbox_full_preview.html` and `blackbox_mockup.html`.
+          </span>
+        </div>
+
+        <div class="wireframes">
+
+          <!-- WIREFRAME 1: Onboarding step 1 -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Onboarding 1/5</strong>
+              <span>WELCOME</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:34</span><span>● 84%</span></div>
+              <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px;">
+                <div class="wf-title">BLACK BOX</div>
+                <div class="wf-text">A personal safety system. When activated, it records audio and location, and notifies your emergency contacts.</div>
+                <div class="wf-text" style="color: var(--text-secondary);">It is interruption-resistant, not indestructible.</div>
+              </div>
+              <div class="wf-cta">Get Started</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 2: Onboarding step 2 -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Onboarding 2/5</strong>
+              <span>CONTACTS</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:34</span><span>● 84%</span></div>
+              <div class="wf-mono">STEP 2 OF 5</div>
+              <div class="wf-title">Emergency contacts</div>
+              <div class="wf-text" style="color: var(--text-secondary);">Add 1-3 people. They'll get the alert if you activate.</div>
+              <div class="wf-section"><div class="wf-label">Primary</div></div>
+              <div class="wf-input">+ Add contact via LINE</div>
+              <div class="wf-section"><div class="wf-label">Secondary</div></div>
+              <div class="wf-input">+ Add contact</div>
+              <div class="wf-cta">Continue</div>
+              <div class="wf-cta wf-cta--secondary">Skip for now</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 3: Onboarding step 3 -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Onboarding 3/5</strong>
+              <span>AI PROVIDER</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:34</span><span>● 84%</span></div>
+              <div class="wf-mono">STEP 3 OF 5</div>
+              <div class="wf-title">Choose your AI</div>
+              <div class="wf-text" style="color: var(--text-secondary);">Bring your own key. Free providers available.</div>
+              <div class="wf-section">
+                <div class="wf-text">◯ Anthropic (Claude)</div>
+              </div>
+              <div class="wf-text">◯ OpenAI (ChatGPT)</div>
+              <div class="wf-text">◯ Google Gemini · FREE</div>
+              <div class="wf-text">◯ Groq · FREE</div>
+              <div class="wf-text">● Skip · Local-only mode</div>
+              <div class="wf-cta">Continue</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 4: Dormant Home -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Home · Dormant</strong>
+              <span>ARMED</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:34</span><span>● 84%</span></div>
+              <div class="wf-row" style="color: var(--text-primary);"><span>BLACK BOX</span><span>⚙</span></div>
+              <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0;">
+                <div class="wf-mono wf-mono--amber">ARMED · LISTENING</div>
+                <div class="wf-disc"></div>
+                <div class="wf-mono" style="font-size: 6px;">TAP TO ACTIVATE</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Device</div>
+                <div class="wf-text">Sentinel · 94% · Paired</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Primary contact</div>
+                <div class="wf-text">Ava Tanaka · LINE</div>
+              </div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 5: Active Dashboard -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Dashboard · Live</strong>
+              <span>ACTIVE</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:38</span><span>● 83%</span></div>
+              <div class="wf-row" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 4px;">
+                <span class="wf-mono wf-mono--red">● RECORDING</span>
+                <span style="font-family: var(--font-mono); font-size: 9px; color: var(--text-primary);">04:32</span>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Location</div>
+                <div class="wf-map"></div>
+                <div style="font-family: var(--font-mono); font-size: 7px;">26.3344°N · 127.7894°E</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Audio</div>
+                <div class="wf-wave">
+                  <div class="wf-wave-bar" style="height: 40%;"></div>
+                  <div class="wf-wave-bar" style="height: 70%;"></div>
+                  <div class="wf-wave-bar" style="height: 100%;"></div>
+                  <div class="wf-wave-bar" style="height: 60%;"></div>
+                  <div class="wf-wave-bar" style="height: 80%;"></div>
+                  <div class="wf-wave-bar" style="height: 50%;"></div>
+                  <div class="wf-wave-bar" style="height: 90%;"></div>
+                  <div class="wf-wave-bar" style="height: 30%;"></div>
+                </div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Threat</div>
+                <div class="wf-text" style="color: var(--status-active);">HIGH · 2 voices</div>
+              </div>
+              <div class="wf-cta">Share Live Link</div>
+              <div class="wf-cta wf-cta--secondary">Hold 3s · Cancel</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 6: Share Sheet -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Share Sheet</strong>
+              <span>PROPAGATE</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:38</span><span>● 83%</span></div>
+              <div style="background: var(--bg-elevated); border-radius: 8px 8px 0 0; padding: 8px; flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                <div style="width: 24px; height: 2px; background: var(--border-strong); margin: 0 auto 6px; border-radius: 1px;"></div>
+                <div class="wf-title" style="font-size: 10px;">Share live link</div>
+                <div class="wf-input" style="font-family: var(--font-mono); font-size: 6px;">blackbox.app/live/a7f3</div>
+                <div class="wf-mono wf-mono--red">⚠ EMERGENCY</div>
+                <div style="background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.4); border-radius: 4px; padding: 6px;">
+                  <div style="font-size: 8px; color: var(--status-active); font-weight: 700;">Call 110 + copy link</div>
+                </div>
+                <div class="wf-mono">QUICK SEND</div>
+                <div class="wf-share-channels">
+                  <div class="wf-share-ch">LINE</div>
+                  <div class="wf-share-ch">SMS</div>
+                  <div class="wf-share-ch">TG</div>
+                  <div class="wf-share-ch">WA</div>
+                  <div class="wf-share-ch">X</div>
+                  <div class="wf-share-ch">@</div>
+                  <div class="wf-share-ch">FB</div>
+                  <div class="wf-share-ch">⎘</div>
+                </div>
+              </div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 7: Contact LINE message -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>LINE Alert</strong>
+              <span>CONTACT</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner" style="background: white; color: #222; padding: 8px;">
+              <div class="wf-row" style="color: #555;"><span>06:38</span><span>● 83%</span></div>
+              <div style="font-size: 8px; font-weight: 700; padding: 4px 0; border-bottom: 1px solid #eee;">BLACK BOX 緊急通報</div>
+              <div style="background: white; border-radius: 6px; padding: 6px; border: 1px solid #ddd; margin-top: 4px;">
+                <div style="background: var(--status-active); color: white; padding: 4px; font-size: 7px; font-weight: 700; border-radius: 3px 3px 0 0; margin: -6px -6px 6px;">● LIVE · 04:32</div>
+                <div style="height: 28px; background: linear-gradient(135deg, #0a1f1a, #0d2a22); border-radius: 2px; position: relative;">
+                  <div style="position: absolute; top: 50%; left: 35%; width: 5px; height: 5px; background: var(--status-active); border-radius: 50%; box-shadow: 0 0 0 3px rgba(255,59,48,0.3); transform: translate(-50%, -50%);"></div>
+                </div>
+                <div style="font-size: 7px; color: #333; margin: 4px 0;"><strong>Where:</strong> 26.33°N 127.79°E</div>
+                <div style="font-size: 7px; color: #333;"><strong>Detected:</strong> 2 voices</div>
+                <div style="background: var(--status-active); color: white; padding: 6px; text-align: center; font-size: 8px; font-weight: 700; border-radius: 3px; margin-top: 6px;">OPEN LIVE →</div>
+              </div>
+              <div style="display: flex; gap: 3px; margin-top: 6px;">
+                <div style="background: var(--status-active); color: white; padding: 3px 6px; border-radius: 8px; font-size: 6px; font-weight: 700;">I'm responding</div>
+                <div style="background: white; border: 1px solid var(--status-ack); color: var(--status-ack); padding: 3px 6px; border-radius: 8px; font-size: 6px;">Call 110</div>
+              </div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 8: Authority View -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Authority View</strong>
+              <span>DISPATCH</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:38</span><span>● 83%</span></div>
+              <div class="wf-mono wf-mono--red">DISPATCH · LIVE · 04:32</div>
+              <div class="wf-section">
+                <div class="wf-label">Summary</div>
+                <div style="background: rgba(255,59,48,0.08); padding: 4px; border-radius: 2px; font-size: 7px; line-height: 1.4;">Yumi Tanaka, 28, activated 04:32 ago. Moving NE. Knife mentioned.</div>
+                <div class="wf-mono" style="margin-top: 3px;">⎘ COPY FOR CAD</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Coordinates</div>
+                <div style="font-family: var(--font-mono); font-size: 7px;">26.3344°N · 127.7894°E</div>
+                <div style="font-family: var(--font-mono); font-size: 7px;">26°20'03"N 127°47'21"E</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Witness</div>
+                <div class="wf-text">Sarah Chen · +81 90 1234</div>
+                <div class="wf-mono">⎘ CALL WITNESS</div>
+              </div>
+              <div class="wf-cta wf-cta--secondary" style="background: var(--status-info); color: white;">I Am Responding</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 9: Public View -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Public View</strong>
+              <span>AMPLIFY</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:38</span><span>● 83%</span></div>
+              <div class="wf-mono wf-mono--red">LIVE · 147 VIEWERS</div>
+              <div class="wf-section">
+                <div class="wf-label">Public summary</div>
+                <div style="background: rgba(232,154,0,0.1); padding: 4px; border-radius: 2px; font-size: 7px;">BLACK BOX active near Naha. Authorities notified.</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Area</div>
+                <div class="wf-map" style="height: 40px;">
+                  <div style="position: absolute; top: 50%; left: 50%; width: 28px; height: 28px; border: 1px dashed var(--status-active); border-radius: 50%; transform: translate(-50%, -50%);"></div>
+                </div>
+                <div style="font-size: 7px;">Naha Central · 500m radius</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Network</div>
+                <div class="wf-text" style="font-size: 7px;">23 shared · 4 responders nearby</div>
+              </div>
+              <div class="wf-cta wf-cta--amber">Share to Amplify</div>
+              <div class="wf-cta wf-cta--green">I'm Nearby · Can Help</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 10: Settings -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Settings</strong>
+              <span>CONFIG</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:34</span><span>● 84%</span></div>
+              <div class="wf-row" style="color: var(--text-primary);"><span>‹ Settings</span></div>
+              <div class="wf-section">
+                <div class="wf-label">Profile</div>
+                <div class="wf-text">Yumi Tanaka</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Emergency contacts</div>
+                <div class="wf-text">3 configured · 2 verified</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">AI provider</div>
+                <div class="wf-text">Anthropic · Claude</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Triggers</div>
+                <div class="wf-text">Manual · Shake · Voice</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Cancel & duress phrases</div>
+                <div class="wf-text">Set</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Active appearance</div>
+                <div class="wf-text">Standard · No decoy</div>
+              </div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 11: History -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>History</strong>
+              <span>EVENTS</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:34</span><span>● 84%</span></div>
+              <div class="wf-row" style="color: var(--text-primary);"><span>‹ History</span></div>
+              <div class="wf-section">
+                <div class="wf-label">Practice · Today 06:30</div>
+                <div class="wf-text">12 sec · Test alert sent</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Practice · Yesterday</div>
+                <div class="wf-text">45 sec · Full loop tested</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Self-test · Jun 5</div>
+                <div class="wf-text">Passed all channels</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Self-test · Jun 1</div>
+                <div class="wf-text">Passed all channels</div>
+              </div>
+              <div style="margin-top: auto; font-size: 7px; color: var(--text-tertiary); text-align: center;">No real activations yet</div>
+            </div></div>
+          </div>
+
+          <!-- WIREFRAME 12: Hidden Gesture Reveal -->
+          <div class="wireframe">
+            <div class="wireframe-label">
+              <strong>Hidden Reveal</strong>
+              <span>OWNER VIEW</span>
+            </div>
+            <div class="wireframe-screen"><div class="wireframe-screen-inner">
+              <div class="wf-row"><span>06:38</span><span>● 83%</span></div>
+              <div class="wf-mono wf-mono--red">YOUR VIEW · ACTIVE</div>
+              <div class="wf-section" style="border-color: var(--status-active);">
+                <div class="wf-label">Status</div>
+                <div class="wf-text">Recording · 04:32 elapsed</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Who knows</div>
+                <div class="wf-text" style="color: var(--status-ack);">● Ava — Responding</div>
+                <div class="wf-text" style="color: var(--status-active);">● Sarah — Reached</div>
+                <div class="wf-text" style="color: var(--text-tertiary);">○ Mom — Pending</div>
+              </div>
+              <div class="wf-section">
+                <div class="wf-label">Help status</div>
+                <div class="wf-text" style="color: var(--status-info);">Police notified · 4 min ETA</div>
+              </div>
+              <div class="wf-cta wf-cta--secondary">Hold 3s to Stand Down</div>
+              <div style="font-size: 6px; color: var(--text-tertiary); text-align: center; margin-top: 6px;">Returns to dormant in 60s</div>
+            </div></div>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+  </body>
+</html>

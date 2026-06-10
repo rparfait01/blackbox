@@ -1,0 +1,19 @@
+packages:
+  - 'apps/*'
+  - 'workers/*'
+  - 'packages/*'
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
+
+# pnpm blocks dependency build scripts by default. Allow only the ones we
+# trust and need (native binaries) so `pnpm install` runs them cleanly.
+# - esbuild: required by Vite for dev/build
+# - workerd: Cloudflare Workers runtime used by wrangler
+# - sharp:   pulled in transitively (PWA asset tooling); harmless to build
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp
