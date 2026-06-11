@@ -16,11 +16,21 @@ export interface Env {
   ADMIN_TOKEN?: string;
   /** HMAC key signing stateless, read-only magic-link tokens. */
   MAGIC_LINK_SECRET?: string;
+  /** HMAC key signing session + guardian-invite tokens. Falls back to MAGIC_LINK_SECRET. */
+  SESSION_SECRET?: string;
+  /** SendGrid v3 API key (email channel + transactional OTP/invite mail). */
+  SENDGRID_API_KEY?: string;
+  /** Verified sender address for SendGrid. */
+  SENDGRID_FROM_EMAIL?: string;
+  /** Sender display name; defaults to "BLACK BOX". */
+  SENDGRID_FROM_NAME?: string;
 }
 
-/** Hono Variables set by the auth middleware after a valid signature. */
+/** Hono Variables set by the auth middlewares. */
 export interface Vars {
   eventSecret: string;
+  /** Set by requireSession after a valid session token. */
+  userId: string;
 }
 
 /** A contact is a PERSON (NOT a user — no account, no app install). */

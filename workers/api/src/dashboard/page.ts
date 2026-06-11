@@ -345,7 +345,7 @@ const CLIENT_JS = `
   // ---- progressive audio (MSE) with /audio/full fallback ----
   var audio=el('audio'), note=el('audioNote'), startBtn=el('audioStart');
   var knownLatest=S.audio.latestSequence, mime=S.audio.mimeType;
-  function normMime(m){ if(!m) return ''; if(m.indexOf('audio/webm')===0) return 'audio/webm; codecs="opus"'; if(m.indexOf('video/webm')===0) return 'video/webm; codecs="vp8,opus"'; return m; }
+  function normMime(m){ if(!m) return ''; if(m.indexOf('audio/mp4')===0) return 'audio/mp4; codecs="mp4a.40.2"'; if(m.indexOf('audio/webm')===0) return 'audio/webm; codecs="opus"'; if(m.indexOf('video/webm')===0) return 'video/webm; codecs="vp8,opus"'; return m; }
   function tryAutoplay(){ var p=audio.play(); if(p&&p.catch){ p.catch(function(){ startBtn.hidden=false; startBtn.onclick=function(){ audio.play(); startBtn.hidden=true; }; }); } }
   var useMse=false, nm=normMime(mime);
   if(knownLatest!=null && window.MediaSource && nm && window.MediaSource.isTypeSupported(nm)){

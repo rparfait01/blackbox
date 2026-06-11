@@ -70,6 +70,8 @@ export class LineChannel implements NotificationChannel {
   }
 
   pushClosureConfirmation(eventId: string): Promise<boolean> {
+    // The LINE confirmation text is generic; the userDisplayName payload is only
+    // needed by subject-driven channels (email).
     return this.send(eventId, 'closure_confirm', closureConfirmation());
   }
 

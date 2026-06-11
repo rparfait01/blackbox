@@ -15,10 +15,13 @@ export interface MediaCaptureOptions {
 }
 
 function pickMimeType(mode: CaptureMode): string {
+  // Prefer MP4/AAC so the recording is decodable in iOS Safari (which cannot
+  // play webm/opus) on the contact dashboard; fall back to webm/opus on browsers
+  // that only record webm (e.g. older Android Chrome), then the browser default.
   const candidates =
     mode === 'audio-video'
-      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
-      : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      ? ['video/mp4;codecs=h264,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      : ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/webm'];
   for (const type of candidates) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) {
       return type;

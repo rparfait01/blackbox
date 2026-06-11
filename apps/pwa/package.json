@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint src",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "deploy:pages": "wrangler pages deploy dist --project-name=blackbox-pwa"
   },
   "dependencies": {
     "@blackbox/classifier": "workspace:*",
@@ -37,6 +38,7 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
-    "vite-plugin-pwa": "^0.21.1"
+    "vite-plugin-pwa": "^0.21.1",
+    "wrangler": "^3.99.0"
   }
 }

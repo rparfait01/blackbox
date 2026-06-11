@@ -16,7 +16,7 @@ import { dispatch } from '../channels/router';
 import type { ChannelName } from '../channels/types';
 import type { Env } from '../types';
 import { audit } from './audit';
-import { getContact } from './contacts';
+import { getContactForEvent } from './contacts';
 import { mintMagicToken } from './magic-link';
 
 const RETRY_DELAY_MS = 5000;
@@ -56,16 +56,22 @@ async function markDelivered(env: Env, eventId: string, channel: ChannelName): P
 export async function notifyActivation(
   env: Env,
   eventId: string,
-  userHash: string,
   workerOrigin: string,
 ): Promise<void> {
-  const contact = await getContact(env, userHash);
+  const event = await env.DB.prepare('SELECT userId, userHash FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ userId: string | null; userHash: string | null }>();
+  if (!event) {
+    return;
+  }
+  const actorHash = event.userHash;
+  const contact = await getContactForEvent(env, event);
   if (!contact) {
-    await audit(env, eventId, 'notification_skipped', userHash, { reason: 'no_contact' });
+    await audit(env, eventId, 'notification_skipped', actorHash, { reason: 'no_contact' });
     return;
   }
   if (!env.MAGIC_LINK_SECRET) {
-    await audit(env, eventId, 'notification_skipped', userHash, { reason: 'unconfigured' });
+    await audit(env, eventId, 'notification_skipped', actorHash, { reason: 'unconfigured' });
     return;
   }
 
@@ -86,10 +92,10 @@ export async function notifyActivation(
     },
   };
 
-  let result = await dispatch(env, contact.id, message, userHash);
+  let result = await dispatch(env, contact.id, message, actorHash);
   if (!result.delivered) {
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    result = await dispatch(env, contact.id, message, userHash);
+    result = await dispatch(env, contact.id, message, actorHash);
   }
   if (result.delivered && result.channel) {
     await markDelivered(env, eventId, result.channel);

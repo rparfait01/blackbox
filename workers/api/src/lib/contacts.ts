@@ -25,6 +25,66 @@ export async function getContact(env: Env, userHash: string): Promise<ContactRow
   return row ?? null;
 }
 
+export async function getContactByUserId(env: Env, userId: string): Promise<ContactRow | null> {
+  if (!userId) {
+    return null;
+  }
+  const row = await env.DB.prepare(
+    'SELECT id, userHash, displayName, createdAt FROM contacts WHERE userId = ?',
+  )
+    .bind(userId)
+    .first<ContactRow>();
+  return row ?? null;
+}
+
+/** Resolve the contact for an event, preferring its userId, then legacy userHash. */
+export async function getContactForEvent(
+  env: Env,
+  event: { userId: string | null; userHash: string | null },
+): Promise<ContactRow | null> {
+  if (event.userId) {
+    const byUser = await getContactByUserId(env, event.userId);
+    if (byUser) {
+      return byUser;
+    }
+  }
+  return event.userHash ? getContact(env, event.userHash) : null;
+}
+
+/** Get-or-create the contact row for a user (used when a guardian accepts). */
+export async function ensureContactForUser(
+  env: Env,
+  userId: string,
+  displayName: string,
+): Promise<string> {
+  const existing = await getContactByUserId(env, userId);
+  if (existing) {
+    return existing.id;
+  }
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    'INSERT INTO contacts (id, userHash, userId, displayName, createdAt) VALUES (?, NULL, ?, ?, ?)',
+  )
+    .bind(id, userId, displayName, Date.now())
+    .run();
+  return id;
+}
+
+/** Append one endpoint to a contact at the given priority. */
+export async function addEndpoint(
+  env: Env,
+  contactId: string,
+  channel: string,
+  channelIdentifier: string,
+  priority: number,
+): Promise<void> {
+  await env.DB.prepare(
+    'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  )
+    .bind(crypto.randomUUID(), contactId, channel, channelIdentifier, priority, Date.now(), Date.now())
+    .run();
+}
+
 export async function getContactEndpoints(
   env: Env,
   contactId: string,

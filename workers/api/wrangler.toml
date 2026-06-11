@@ -6,18 +6,19 @@ compatibility_flags = ["nodejs_compat"]
 # Principle: no telemetry. Disable Wrangler's anonymous usage metrics.
 send_metrics = false
 
-# Allowed PWA origins for CORS (comma-separated). Add the deployed Pages origin
-# here too so the contact's magic-link view can call the Worker.
+# Allowed PWA origins for CORS (comma-separated). The deployed Pages origin must
+# be here so the PWA (sign-up, guardian accept) and the contact magic-link view
+# can call the Worker.
 [vars]
-CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173"
-# PWA origin used to build the contact's magic-link dashboard URL. Set to the
-# deployed Pages URL for the pilot (e.g. https://stillpoint.pages.dev). When
-# empty the Worker falls back to its own origin, which will not serve the PWA.
-PWA_ORIGIN = "http://localhost:5173"
+CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blackbox-pwa.pages.dev"
+# PWA origin used to build dashboard + guardian-invite links. Set to the deployed
+# Pages URL for the pilot. When empty the Worker falls back to its own origin.
+PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
 
-# Secrets (LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,
-# MAGIC_LINK_SECRET) are NOT defined here — set them with `wrangler secret put`.
-# See README.md.
+# Secrets are NOT defined here — set them with `wrangler secret put` (see
+# README.md): LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,
+# MAGIC_LINK_SECRET, SESSION_SECRET, SENDGRID_API_KEY, SENDGRID_FROM_EMAIL,
+# SENDGRID_FROM_NAME.
 
 # D1 metadata database.
 [[d1_databases]]

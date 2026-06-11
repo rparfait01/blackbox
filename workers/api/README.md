@@ -121,6 +121,28 @@ page is useful with JavaScript disabled; audio + live updates require JS.
   monitor sees the closed status and tears down capture/upload/geolocation.
 - Expired/invalid tokens render a friendly page (401), not a bare error.
 
+## W8A — Identity, sign-up, guardians
+
+The anonymous device UUID is no longer the account. A person signs up with a
+**verified email** (OTP) + a **captured-but-unverified phone** (Twilio/SMS is
+dropped from v0), chooses a **display mode** (direct / covert), and sets a
+**lock code** (+ optional duress code). The account is a persistent `users` row
+reached by an HMAC **session token** (no expiry in v0, sent as
+`Authorization: Bearer`). Email OTP is delivered by SendGrid only.
+
+Auth endpoints (`/v1/auth`): `signup/start` → `signup/verify-email` →
+`signup/finalize` (issues the session token; `claimUserHash` links pre-existing
+pilot rows), and `signin/start` → `signin/verify`. User/settings (`/v1/me`,
+session-protected): profile, `display-mode`, `region`, `lock-code`,
+`duress-code`. Guardian (`/v1/guardians`): `invite` (session), `GET /` status,
+`resend`, `DELETE /`, and the public `accept/:id` → `accept/:id/otp` →
+`accept/:id/verify` (the invite magic link is the auth; on verify the guardian's
+email becomes a priority-1 endpoint on the user's contact).
+
+`contacts` and `events` gained a nullable `userId`. The router resolves a
+contact for an event by `userId` first, then legacy `userHash`, so pilot data and
+new accounts coexist.
+
 ## Required secrets (`wrangler secret put`)
 
 Never put these in `wrangler.toml` or source.
@@ -131,12 +153,20 @@ Never put these in `wrangler.toml` or source.
 | `LINE_CHANNEL_SECRET` | Verifies inbound LINE webhook signatures (HMAC-SHA256) |
 | `ADMIN_TOKEN` | Bearer token protecting the pilot-only `/v1/admin/*` endpoints |
 | `MAGIC_LINK_SECRET` | HMAC key signing read-only contact magic-link tokens |
+| `SESSION_SECRET` | HMAC key signing user session + guardian-invite tokens (falls back to `MAGIC_LINK_SECRET`) |
+| `SENDGRID_API_KEY` | SendGrid v3 API key (email channel + OTP/invite mail) |
+| `SENDGRID_FROM_EMAIL` | Verified SendGrid sender address |
+| `SENDGRID_FROM_NAME` | Sender display name (optional; default "BLACK BOX") |
 
 ```bash
 pnpm exec wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 pnpm exec wrangler secret put LINE_CHANNEL_SECRET
 pnpm exec wrangler secret put ADMIN_TOKEN
 pnpm exec wrangler secret put MAGIC_LINK_SECRET
+pnpm exec wrangler secret put SESSION_SECRET
+pnpm exec wrangler secret put SENDGRID_API_KEY
+pnpm exec wrangler secret put SENDGRID_FROM_EMAIL
+pnpm exec wrangler secret put SENDGRID_FROM_NAME
 ```
 
 Also set `PWA_ORIGIN` in `wrangler.toml [vars]` to the deployed Pages URL so the

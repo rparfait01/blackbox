@@ -1,0 +1,101 @@
+/**
+ * User-scoped profile + settings (W8A). All session-protected. Profile name /
+ * email / phone editing is read-only in v0 (email/phone changes are deferred);
+ * display mode, region, and the lock/duress codes are editable.
+ */
+
+import { Hono } from 'hono';
+import { requireSession } from '../auth';
+import { hashSecret, verifySecret } from '../lib/crypto';
+import { getInviteForUser } from '../lib/guardians';
+import { getUserById, updateUserFields } from '../lib/users';
+import type { Env, Vars } from '../types';
+
+export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
+
+userRoutes.use('*', requireSession);
+
+function isFourDigits(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9]{4}$/.test(value);
+}
+
+userRoutes.get('/', async (c) => {
+  const user = await getUserById(c.env, c.get('userId'));
+  if (!user) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  const region = user.regionId
+    ? await c.env.DB.prepare(
+        'SELECT id, name, defaultEmergencyNumber, defaultLanguage FROM regions WHERE id = ?',
+      )
+        .bind(user.regionId)
+        .first<{ id: string; name: string; defaultEmergencyNumber: string; defaultLanguage: string }>()
+    : null;
+  const invite = await getInviteForUser(c.env, user.id);
+  return c.json(
+    {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        displayMode: user.displayMode,
+        regionId: user.regionId,
+        hasDuressCode: user.duressCodeHash != null,
+      },
+      region,
+      guardian: invite
+        ? { name: invite.guardianName, relationship: invite.relationship, status: invite.status }
+        : null,
+    },
+    200,
+  );
+});
+
+userRoutes.post('/display-mode', async (c) => {
+  const body = await c.req.json<{ displayMode?: string }>().catch(() => ({}) as Record<string, string>);
+  if (body.displayMode !== 'direct' && body.displayMode !== 'covert') {
+    return c.json({ error: 'displayMode must be direct or covert' }, 400);
+  }
+  await updateUserFields(c.env, c.get('userId'), { displayMode: body.displayMode });
+  return c.json({ ok: true, displayMode: body.displayMode }, 200);
+});
+
+userRoutes.post('/region', async (c) => {
+  const body = await c.req.json<{ regionId?: string }>().catch(() => ({}) as Record<string, string>);
+  if (!body.regionId) {
+    return c.json({ error: 'regionId required' }, 400);
+  }
+  await updateUserFields(c.env, c.get('userId'), { regionId: body.regionId });
+  return c.json({ ok: true }, 200);
+});
+
+userRoutes.post('/lock-code', async (c) => {
+  const body = await c.req
+    .json<{ oldCode?: string; newCode?: string }>()
+    .catch(() => ({}) as Record<string, string>);
+  if (!isFourDigits(body.newCode)) {
+    return c.json({ error: 'newCode must be 4 digits' }, 400);
+  }
+  const user = await getUserById(c.env, c.get('userId'));
+  if (!user?.lockCodeHash || !body.oldCode || !(await verifySecret(body.oldCode, user.lockCodeHash))) {
+    return c.json({ error: 'old code incorrect' }, 403);
+  }
+  await updateUserFields(c.env, user.id, { lockCodeHash: await hashSecret(body.newCode) });
+  return c.json({ ok: true }, 200);
+});
+
+userRoutes.post('/duress-code', async (c) => {
+  const body = await c.req
+    .json<{ lockCode?: string; newDuressCode?: string }>()
+    .catch(() => ({}) as Record<string, string>);
+  if (!isFourDigits(body.newDuressCode)) {
+    return c.json({ error: 'newDuressCode must be 4 digits' }, 400);
+  }
+  const user = await getUserById(c.env, c.get('userId'));
+  if (!user?.lockCodeHash || !body.lockCode || !(await verifySecret(body.lockCode, user.lockCodeHash))) {
+    return c.json({ error: 'lock code incorrect' }, 403);
+  }
+  await updateUserFields(c.env, user.id, { duressCodeHash: await hashSecret(body.newDuressCode) });
+  return c.json({ ok: true }, 200);
+});

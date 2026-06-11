@@ -9,7 +9,7 @@
 import type { Context } from 'hono';
 import { dispatch } from '../channels/router';
 import { audit } from '../lib/audit';
-import { getContact, recordFollow } from '../lib/contacts';
+import { getContactForEvent, recordFollow } from '../lib/contacts';
 import type { Env, Vars } from '../types';
 
 type Ctx = Context<{ Bindings: Env; Variables: Vars }>;
@@ -58,10 +58,15 @@ async function handlePostback(c: Ctx, action: string, eventId: string): Promise<
   switch (action) {
     case 'approve_closure': {
       const row = await env.DB.prepare(
-        'SELECT status, closeRequestDuress, userHash FROM events WHERE id = ?',
+        'SELECT status, closeRequestDuress, userId, userHash FROM events WHERE id = ?',
       )
         .bind(eventId)
-        .first<{ status: string; closeRequestDuress: number | null; userHash: string }>();
+        .first<{
+          status: string;
+          closeRequestDuress: number | null;
+          userId: string | null;
+          userHash: string | null;
+        }>();
       if (!row) {
         return;
       }
@@ -79,9 +84,15 @@ async function handlePostback(c: Ctx, action: string, eventId: string): Promise<
         .run();
       await audit(env, eventId, 'closure.approved', null, null);
       // Confirm to the contact via the router (deferred so the ack stays fast).
-      const contact = await getContact(env, row.userHash);
+      const contact = await getContactForEvent(env, row);
       if (contact) {
-        c.executionCtx.waitUntil(dispatch(env, contact.id, { kind: 'closureConfirmation', eventId }));
+        c.executionCtx.waitUntil(
+          dispatch(env, contact.id, {
+            kind: 'closureConfirmation',
+            eventId,
+            payload: { userDisplayName: contact.displayName },
+          }),
+        );
       }
       return;
     }

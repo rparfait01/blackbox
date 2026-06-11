@@ -36,15 +36,23 @@ export interface ClassificationUpdatePayload {
 
 export interface ClosureRequestPayload {
   userDisplayName: string;
+  /** Dashboard link (used by channels without inline buttons, e.g. email). */
+  dashboardUrl?: string;
 }
 
 export interface DuressAlertPayload {
+  userDisplayName: string;
+  dashboardUrl?: string;
+}
+
+export interface ClosureConfirmationPayload {
   userDisplayName: string;
 }
 
 export interface StandDownConfirmationPayload {
   /** Local time the contact stood the alert down, e.g. "18:42". */
   time: string;
+  userDisplayName: string;
 }
 
 /** Every channel ('push' | 'line' | 'telegram' | 'sms' | 'email'). */
@@ -63,7 +71,7 @@ export interface NotificationChannel {
    */
   pushDuressAlert(eventId: string, payload: DuressAlertPayload): Promise<boolean>;
   /** Confirmation to the contact that an approved closure has stopped recording. */
-  pushClosureConfirmation(eventId: string): Promise<boolean>;
+  pushClosureConfirmation(eventId: string, payload: ClosureConfirmationPayload): Promise<boolean>;
   /** Confirmation that the contact's own stand-down ended the alert. */
   pushStandDownConfirmation(
     eventId: string,

@@ -1,0 +1,40 @@
+Pages deployed. Two URLs are live:
+
+https://blackbox-pwa.pages.dev (your stable production URL — use this one)
+https://fd2ed24b.blackbox-pwa.pages.dev (this specific deploy)
+https://master.blackbox-pwa.pages.dev (master branch alias)
+The system is fully live now. Worker, D1, R2, Pages, all wired.
+
+Last task: commit the work.
+
+powershell
+cd C:\dev\BlackBox
+git add -A
+git commit -m "W8A: identity, hosting, onboarding, SendGrid"
+Paste output.
+
+Then try the real thing.
+
+Open https://blackbox-pwa.pages.dev on your phone. Should land on the onboarding flow. Walk through the 7 steps:
+
+Welcome
+Name + email + phone + region
+Email OTP — check your inbox for a code from SendGrid
+Pick display mode (Direct or Covert)
+Set lock code + duress code
+Add Ikumi as a guardian (her email)
+Done — "Email notifications enabled" copy shows
+When you complete onboarding, the app routes you to either the BLACK BOX direct interface or Stillpoint based on your choice.
+
+Activate a session. Both LINE (your existing pairing) and email (your inbox) should receive the alert. Open one of the links and verify the dashboard works.
+
+If Ikumi taps her invite email and verifies via OTP, she becomes a registered guardian endpoint at priority 1. Her email then gets alerts in parallel with LINE.
+
+Report back what works and what doesn't. The build is done; this is the real-world validation.
+
+
+
+
+
+
+

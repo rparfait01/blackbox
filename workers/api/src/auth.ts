@@ -1,6 +1,28 @@
 import type { MiddlewareHandler } from 'hono';
 import { verifyRequest } from '@blackbox/shared';
+import { verifySession } from './lib/session';
 import type { Env, Vars } from './types';
+
+/** HMAC key for session + invite tokens. Falls back to the magic-link key. */
+export function sessionSecret(env: Env): string | null {
+  return env.SESSION_SECRET ?? env.MAGIC_LINK_SECRET ?? null;
+}
+
+/** Require a valid Bearer session token; sets `userId` on success. */
+export const requireSession: MiddlewareHandler<{ Bindings: Env; Variables: Vars }> = async (
+  c,
+  next,
+) => {
+  const secret = sessionSecret(c.env);
+  const token = (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const session = secret ? await verifySession(secret, token) : null;
+  if (!session) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  c.set('userId', session.userId);
+  await next();
+  return undefined;
+};
 
 /**
  * Per-event HMAC authentication. The event id comes from the path; its secret

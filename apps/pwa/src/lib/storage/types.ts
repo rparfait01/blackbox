@@ -12,8 +12,8 @@ export type SessionStatus = 'active' | 'interrupted' | 'closed';
 /** A Classification persisted against its session. Keyed by [sessionId, timestamp]. */
 export type StoredClassification = Classification & { sessionId: string };
 
-/** How a session was triggered. Only `stillpoint-press` is wired in W2; voice/button are W8. */
-export type ActivationSource = 'stillpoint-press' | 'voice' | 'button';
+/** How a session was triggered. `stillpoint-press` (covert) and `direct-tap` (direct mode) are wired; voice/button are later. */
+export type ActivationSource = 'stillpoint-press' | 'direct-tap' | 'voice' | 'button';
 
 export type CaptureMode = 'audio' | 'audio-video';
 

@@ -2,23 +2,27 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { randomHex } from '@blackbox/shared';
-import { hmacAuth } from './auth';
+import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import {
-  getContact,
   getContactEndpoints,
+  getContactForEvent,
   listContacts,
   listFollows,
   upsertContact,
 } from './lib/contacts';
 import { notifyActivation } from './lib/notify';
 import { mintMagicToken, verifyMagicToken, verifyMagicTokenDetailed } from './lib/magic-link';
+import { verifySession } from './lib/session';
 import { getContactState } from './lib/contact-state';
 import { renderDashboardPage, renderTokenPage } from './dashboard/page';
 import { audioStream, locationStream } from './routes/contact-streams';
 import { dispatch } from './channels/router';
 import { formatLocalTime } from './lib/contact-state';
 import { handleLineWebhook } from './routes/line-webhook';
+import { authRoutes } from './routes/auth';
+import { guardianRoutes } from './routes/guardians';
+import { userRoutes } from './routes/user';
 import type { Env, Vars } from './types';
 
 /**
@@ -102,7 +106,8 @@ app.get('/v1/health', async (c) => {
   return c.json({ status: d1 && r2 ? 'ok' : 'degraded', d1, r2 }, 200);
 });
 
-// --- Create event (no auth: this mints the per-event secret) ---
+// --- Create event (mints the per-event secret). Optional Bearer session ties
+// the event to a user account; legacy clients still send userHash. ---
 app.post('/v1/events', async (c) => {
   const body = await c.req
     .json<{ userHash?: string; source?: string; startTime?: number; locale?: string }>()
@@ -111,21 +116,33 @@ app.post('/v1/events', async (c) => {
   const hmacSecret = randomHex(32);
   const createdAt = Date.now();
   const userHash = body.userHash ?? '';
+
+  // Resolve userId from an optional session token (does not gate event creation).
+  const secret = sessionSecret(c.env);
+  const token = (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const session = secret && token ? await verifySession(secret, token) : null;
+  const userId = session?.userId ?? null;
+
   await c.env.DB.prepare(
-    'INSERT INTO events (id, createdAt, status, userHash, hmacSecret, source, locale) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO events (id, createdAt, status, userHash, userId, hmacSecret, source, locale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(eventId, createdAt, 'active', userHash, hmacSecret, body.source ?? null, body.locale ?? null)
+    .bind(eventId, createdAt, 'active', userHash, userId, hmacSecret, body.source ?? null, body.locale ?? null)
     .run();
-  await audit(c.env, eventId, 'event.create', userHash || null, { source: body.source });
+  await audit(c.env, eventId, 'event.create', userHash || userId, { source: body.source });
 
   // Push the activation alert to the contact off the response path (records
   // events.notifiedAt on success). Nothing is signalled back to the user's
   // phone; this never blocks the 201 below.
   const workerOrigin = new URL(c.req.url).origin;
-  c.executionCtx.waitUntil(notifyActivation(c.env, eventId, userHash, workerOrigin));
+  c.executionCtx.waitUntil(notifyActivation(c.env, eventId, workerOrigin));
 
   return c.json({ eventId, hmacSecret, createdAt }, 201);
 });
+
+// --- Mounted route groups (auth, guardians, user/settings) ---
+app.route('/v1/auth', authRoutes);
+app.route('/v1/guardians', guardianRoutes);
+app.route('/v1/me', userRoutes);
 
 // --- Admin (pilot-only; Bearer ADMIN_TOKEN). Onboarding moves to W9. ---
 app.use('/v1/admin/*', async (c, next) => {
@@ -369,9 +386,11 @@ app.post('/v1/c/:id/stand-down', async (c) => {
     return c.json({ error: 'unauthorized' }, 401);
   }
   const eventId = c.req.param('id');
-  const event = await c.env.DB.prepare('SELECT userHash, status, locale FROM events WHERE id = ?')
+  const event = await c.env.DB.prepare(
+    'SELECT userId, userHash, status, locale FROM events WHERE id = ?',
+  )
     .bind(eventId)
-    .first<{ userHash: string; status: string; locale: string | null }>();
+    .first<{ userId: string | null; userHash: string | null; status: string; locale: string | null }>();
   if (!event) {
     return c.json({ error: 'not found' }, 404);
   }
@@ -381,7 +400,7 @@ app.post('/v1/c/:id/stand-down', async (c) => {
       .run();
   }
 
-  const contact = await getContact(c.env, event.userHash);
+  const contact = await getContactForEvent(c.env, event);
   let channelUserId: string | null = null;
   if (contact) {
     const endpoints = await getContactEndpoints(c.env, contact.id);
@@ -393,7 +412,11 @@ app.post('/v1/c/:id/stand-down', async (c) => {
   if (contact) {
     const time = formatLocalTime(event.locale, Date.now());
     c.executionCtx.waitUntil(
-      dispatch(c.env, contact.id, { kind: 'standDownConfirmation', eventId, payload: { time } }),
+      dispatch(c.env, contact.id, {
+        kind: 'standDownConfirmation',
+        eventId,
+        payload: { time, userDisplayName: contact.displayName },
+      }),
     );
   }
   return c.json({ ok: true }, 200);
@@ -526,9 +549,9 @@ app.post('/v1/events/:id/close-request', async (c) => {
     .catch(() => ({}) as { pinHashWithSalt?: string; duress?: boolean });
   const duress = body.duress === true;
 
-  const event = await c.env.DB.prepare('SELECT userHash, status FROM events WHERE id = ?')
+  const event = await c.env.DB.prepare('SELECT userId, userHash, status FROM events WHERE id = ?')
     .bind(eventId)
-    .first<{ userHash: string; status: string }>();
+    .first<{ userId: string | null; userHash: string | null; status: string }>();
   if (!event) {
     return c.json({ error: 'not found' }, 404);
   }
@@ -542,9 +565,16 @@ app.post('/v1/events/:id/close-request', async (c) => {
     pinHashWithSalt: body.pinHashWithSalt ?? null,
   });
 
-  const contact = await getContact(c.env, event.userHash);
+  const contact = await getContactForEvent(c.env, event);
   if (contact) {
-    const payload = { userDisplayName: contact.displayName };
+    // Channels without inline buttons (email) link to the dashboard; mint a
+    // fresh token if the magic-link key is configured.
+    let dashboardUrl: string | undefined;
+    if (c.env.MAGIC_LINK_SECRET) {
+      const token = await mintMagicToken(c.env.MAGIC_LINK_SECRET, eventId);
+      dashboardUrl = `${new URL(c.req.url).origin}/c/${eventId}?t=${token}`;
+    }
+    const payload = { userDisplayName: contact.displayName, dashboardUrl };
     const message = duress
       ? ({ kind: 'duress', eventId, payload } as const)
       : ({ kind: 'closure', eventId, payload } as const);

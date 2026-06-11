@@ -11,11 +11,13 @@ import { audit } from '../lib/audit';
 import { getContactEndpoints } from '../lib/contacts';
 import type { Env } from '../types';
 import { LineChannel } from './line';
+import { SendGridEmailChannel } from './sendgrid-email';
 import { StubChannel } from './stub';
 import type {
   ActivationAlertPayload,
   ChannelName,
   ClassificationUpdatePayload,
+  ClosureConfirmationPayload,
   ClosureRequestPayload,
   DuressAlertPayload,
   NotificationChannel,
@@ -26,7 +28,7 @@ export type ChannelMessage =
   | { kind: 'activation'; eventId: string; payload: ActivationAlertPayload }
   | { kind: 'closure'; eventId: string; payload: ClosureRequestPayload }
   | { kind: 'duress'; eventId: string; payload: DuressAlertPayload }
-  | { kind: 'closureConfirmation'; eventId: string }
+  | { kind: 'closureConfirmation'; eventId: string; payload: ClosureConfirmationPayload }
   | { kind: 'standDownConfirmation'; eventId: string; payload: StandDownConfirmationPayload }
   | { kind: 'classificationUpdate'; eventId: string; payload: ClassificationUpdatePayload };
 
@@ -46,10 +48,13 @@ function createChannel(
       return env.LINE_CHANNEL_ACCESS_TOKEN
         ? new LineChannel(env.LINE_CHANNEL_ACCESS_TOKEN, identifier)
         : null;
+    case 'email':
+      return env.SENDGRID_API_KEY && env.SENDGRID_FROM_EMAIL
+        ? new SendGridEmailChannel(env, identifier)
+        : null;
     case 'push':
     case 'telegram':
     case 'sms':
-    case 'email':
       return new StubChannel(channel);
     default:
       return null;
@@ -66,7 +71,7 @@ function sendMessage(channel: NotificationChannel, message: ChannelMessage): Pro
     case 'duress':
       return channel.pushDuressAlert(message.eventId, message.payload);
     case 'closureConfirmation':
-      return channel.pushClosureConfirmation(message.eventId);
+      return channel.pushClosureConfirmation(message.eventId, message.payload);
     case 'standDownConfirmation':
       return channel.pushStandDownConfirmation(message.eventId, message.payload);
     case 'classificationUpdate':
