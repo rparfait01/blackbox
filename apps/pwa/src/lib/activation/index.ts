@@ -10,7 +10,7 @@ import {
 } from '@/lib/storage';
 import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
-import { CHUNK_INTERVAL_MS, DEFAULT_CAPTURE_MODE } from '@/lib/capture/config';
+import { CHUNK_INTERVAL_MS, captureModeForSource } from '@/lib/capture/config';
 import { LocationTracker, type GeoFix } from '@/lib/geolocation/location-tracker';
 import { TranscriptionService } from '@/lib/transcription';
 import { ToneAnalyzer } from '@/lib/tone';
@@ -24,6 +24,7 @@ import {
 } from '@/lib/upload';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 import { startSessionMonitor, stopSessionMonitor } from './session-monitor';
+import { startHeartbeat, stopHeartbeat } from './heartbeat';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
 const DEDUP_WINDOW_MS = 60_000;
@@ -105,21 +106,35 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
 
     const newSessionId = crypto.randomUUID();
     const startTime = Date.now();
-    const mode = DEFAULT_CAPTURE_MODE;
+    // Overt activations capture video; covert stays audio-only (camera off).
+    const mode = captureModeForSource(source);
 
     await createSession({ id: newSessionId, startTime, status: 'active', source, captureMode: mode });
 
     // Session row now exists: adopt the id and flush any buffered fixes.
     sessionId = newSessionId;
+    // Seed the open POST with the freshest fix we already have, so the very
+    // first contact notification can carry a position.
+    const seedFix = bufferedFixes.length > 0 ? bufferedFixes[bufferedFixes.length - 1] : undefined;
+    const initialLocation = seedFix
+      ? { lat: seedFix.lat, lon: seedFix.lon, accuracy: seedFix.accuracy }
+      : undefined;
     for (const fix of bufferedFixes) {
       void appendLocation({ sessionId, ...fix });
       uploadLocation(sessionId, fix);
     }
     bufferedFixes.length = 0;
 
-    // Initialize the transcript buffer and register the session for uploads.
+    // Initialize the transcript buffer and open the server event. registering
+    // the upload session FIRES THE OPEN POST immediately (Fix Brief 1 #3): the
+    // contact is notified server-side before any capture starts, so the alert
+    // survives the page dying right after activation.
     beginSession(newSessionId);
-    registerUploadSession({ sessionId: newSessionId, source, startTime });
+    registerUploadSession({ sessionId: newSessionId, source, startTime, initialLocation });
+
+    // Begin the heartbeat + lost-beacon lifecycle (server-authoritative): a
+    // missed heartbeat escalates ("device went dark") and never cancels.
+    startHeartbeat(newSessionId);
 
     // Start the closure monitor: it polls delivery-status and tears the session
     // down if the contact approves closure. Teardown is exactly stopActivation
@@ -219,6 +234,7 @@ export async function stopActivation(): Promise<void> {
   const { sessionId, capture, tracker, transcription, tone, classifyTimer } = active;
   active = null;
   stopSessionMonitor();
+  stopHeartbeat();
   if (classifyTimer !== null) {
     window.clearInterval(classifyTimer);
   }

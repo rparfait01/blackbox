@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import { CaretLeft } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
 import {
@@ -86,10 +87,23 @@ export function Settings(): JSX.Element {
 
   const mode = getDisplayMode();
 
+  // Back returns to the armed screen — Stillpoint in covert, BLACK BOX in direct.
+  const goBack = (): void => navigate(mode === 'direct' ? '/blackbox' : '/', { replace: true });
+
   return (
     <main className="stillpoint-bg min-h-full w-full overflow-y-auto p-6 text-med-text">
       <div className="mx-auto max-w-sm">
-        <h1 className="mb-8 font-serif text-3xl font-light tracking-[0.04em]">Settings</h1>
+        <div className="mb-8 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={goBack}
+            aria-label="Back"
+            className="-ml-2 p-2 text-med-text/60 transition-colors hover:text-med-text"
+          >
+            <CaretLeft size={24} weight="light" />
+          </button>
+          <h1 className="font-serif text-3xl font-light tracking-[0.04em]">Settings</h1>
+        </div>
 
         <Group label="Profile">
           <Row k="Name" v={me?.user.name ?? '—'} />

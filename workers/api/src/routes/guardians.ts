@@ -171,7 +171,13 @@ guardianRoutes.post('/accept/:id/otp', async (c) => {
   if (!stored.ok) {
     return c.json({ error: stored.reason ?? 'otp_failed' }, 429);
   }
-  c.executionCtx.waitUntil(sendOtpViaEmail(c.env, email, code).then(() => undefined));
+  const sent = await sendOtpViaEmail(c.env, email, code);
+  if (!sent.ok) {
+    return c.json(
+      { error: 'email_send_failed', sendgridStatus: sent.status, sendgridBody: sent.body },
+      502,
+    );
+  }
   return c.json({ ok: true, expiresAt: stored.expiresAt }, 200);
 });
 

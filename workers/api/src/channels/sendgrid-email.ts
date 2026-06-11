@@ -13,6 +13,7 @@ import {
   emailClosureConfirmation,
   emailClosureRequest,
   emailDuress,
+  emailEscalation,
   emailStandDownConfirmation,
   type BuiltEmail,
 } from './email-messages';
@@ -22,6 +23,7 @@ import type {
   ClosureConfirmationPayload,
   ClosureRequestPayload,
   DuressAlertPayload,
+  EscalationAlertPayload,
   NotificationChannel,
   StandDownConfirmationPayload,
 } from './types';
@@ -47,18 +49,33 @@ export function sendgridConfig(env: Env): EmailConfig | null {
   };
 }
 
-/** Low-level send. Returns true only on a 2xx from SendGrid. */
+export interface SendResult {
+  ok: boolean;
+  /** HTTP status from SendGrid, or 0 if the request never completed. */
+  status: number;
+  /** SendGrid response body (empty on success; JSON error detail on failure). */
+  body: string;
+  /** SendGrid X-Message-Id (links to the Activity Feed), when present. */
+  messageId?: string | null;
+}
+
+/**
+ * Low-level send. Awaits the SendGrid API and returns the full outcome (status +
+ * body) so callers can surface real errors instead of a silent boolean. Every
+ * attempt is logged to console (visible in Cloudflare Observability).
+ */
 export async function sendEmail(
   env: Env,
   message: { to: string; subject: string; html: string; text: string },
   messageType = 'email',
-): Promise<boolean> {
+): Promise<SendResult> {
   const config = sendgridConfig(env);
   if (!config) {
-    console.log(JSON.stringify({ channel: 'email', messageType, status: 'unconfigured' }));
-    return false;
+    console.log('[SendGrid] NOT configured — missing SENDGRID_API_KEY or SENDGRID_FROM_EMAIL');
+    return { ok: false, status: 0, body: 'sendgrid_not_configured' };
   }
   const start = Date.now();
+  console.log(`[SendGrid] sending ${messageType} to ${message.to} (from ${config.fromEmail})`);
   try {
     const response = await fetch(SEND_ENDPOINT, {
       method: 'POST',
@@ -76,18 +93,28 @@ export async function sendEmail(
         ],
       }),
     });
-    console.log(
-      JSON.stringify({ channel: 'email', messageType, status: response.status, ms: Date.now() - start }),
-    );
-    return response.status >= 200 && response.status < 300;
-  } catch {
-    console.log(JSON.stringify({ channel: 'email', messageType, status: 'fetch_error' }));
-    return false;
+    // SendGrid returns 202 with an EMPTY body on success; errors carry JSON.
+    const body = await response.text();
+    // X-Message-Id ties this send to a row in the SendGrid Activity Feed.
+    const messageId = response.headers.get('x-message-id');
+    console.log(`[SendGrid] response status ${response.status} (${Date.now() - start}ms)`);
+    console.log(`[SendGrid] response body ${body || '(empty)'} messageId ${messageId ?? '(none)'}`);
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      body,
+      messageId,
+    };
+  } catch (error) {
+    const body = error instanceof Error ? error.message : 'fetch_error';
+    console.log(`[SendGrid] fetch error ${body}`);
+    return { ok: false, status: 0, body };
   }
 }
 
 export class SendGridEmailChannel implements NotificationChannel {
   readonly channel = 'email' as const;
+  lastProviderMessageId: string | null = null;
 
   constructor(
     private readonly env: Env,
@@ -99,11 +126,17 @@ export class SendGridEmailChannel implements NotificationChannel {
       this.env,
       { to: this.toEmail, subject: built.subject, html: built.html, text: built.text },
       messageType,
-    );
+    ).then((r) => {
+      this.lastProviderMessageId = r.messageId ?? null;
+      return r.ok;
+    });
   }
 
   pushActivationAlert(_eventId: string, payload: ActivationAlertPayload): Promise<boolean> {
     return this.send('activation', emailActivation(payload));
+  }
+  pushEscalation(_eventId: string, payload: EscalationAlertPayload): Promise<boolean> {
+    return this.send('escalation', emailEscalation(payload));
   }
   pushClassificationUpdate(_eventId: string, payload: ClassificationUpdatePayload): Promise<boolean> {
     return this.send('classification', emailClassificationUpdate(payload));

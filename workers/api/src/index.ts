@@ -1,9 +1,22 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
-import { randomHex } from '@blackbox/shared';
+import { hmacSha256Hex, randomHex } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
+import { verifySecret } from './lib/crypto';
+import { getUserById } from './lib/users';
+import { appendToChain, hashBytes } from './lib/integrity';
+import {
+  getVerifiedRecipient,
+  logRecipientAction,
+  registerRecipient,
+  verifyRecipient,
+} from './lib/recipients';
+import { acknowledgeCustody, exportPackage } from './lib/custody';
+import { bumpTrust, listTrust } from './lib/trust';
+import { renderRecipientRegistration } from './dashboard/recipient-page';
+import { scheduled } from './scheduled';
 import {
   getContactEndpoints,
   getContactForEvent,
@@ -11,7 +24,7 @@ import {
   listFollows,
   upsertContact,
 } from './lib/contacts';
-import { notifyActivation } from './lib/notify';
+import { notifyActivation, notifyEscalation } from './lib/notify';
 import { mintMagicToken, verifyMagicToken, verifyMagicTokenDetailed } from './lib/magic-link';
 import { verifySession } from './lib/session';
 import { getContactState } from './lib/contact-state';
@@ -40,6 +53,14 @@ function allowedOrigins(env: Env): string[] {
     .split(',')
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
+}
+
+/** The event's stored tz offset (UTC canonical), for stamping child records. */
+async function eventTzOffset(env: Env, eventId: string): Promise<number | null> {
+  const row = await env.DB.prepare('SELECT tzOffsetMinutes FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ tzOffsetMinutes: number | null }>();
+  return row?.tzOffsetMinutes ?? null;
 }
 
 // CORS (also handles preflight for every endpoint).
@@ -108,14 +129,22 @@ app.get('/v1/health', async (c) => {
 
 // --- Create event (mints the per-event secret). Optional Bearer session ties
 // the event to a user account; legacy clients still send userHash. ---
+interface OpenEventBody {
+  userHash?: string;
+  source?: string;
+  startTime?: number;
+  locale?: string;
+  tzOffsetMinutes?: number;
+  location?: { lat?: number; lon?: number; accuracy?: number } | null;
+}
+
 app.post('/v1/events', async (c) => {
-  const body = await c.req
-    .json<{ userHash?: string; source?: string; startTime?: number; locale?: string }>()
-    .catch(() => ({}) as { userHash?: string; source?: string; startTime?: number; locale?: string });
+  const body = await c.req.json<OpenEventBody>().catch(() => ({}) as OpenEventBody);
   const eventId = crypto.randomUUID();
   const hmacSecret = randomHex(32);
   const createdAt = Date.now();
   const userHash = body.userHash ?? '';
+  const tzOffsetMinutes = typeof body.tzOffsetMinutes === 'number' ? body.tzOffsetMinutes : null;
 
   // Resolve userId from an optional session token (does not gate event creation).
   const secret = sessionSecret(c.env);
@@ -123,11 +152,33 @@ app.post('/v1/events', async (c) => {
   const session = secret && token ? await verifySession(secret, token) : null;
   const userId = session?.userId ?? null;
 
+  // lastHeartbeatAt seeds to createdAt so a brand-new event is never instantly
+  // flagged "dark" before the first heartbeat lands.
   await c.env.DB.prepare(
-    'INSERT INTO events (id, createdAt, status, userHash, userId, hmacSecret, source, locale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO events (id, createdAt, status, userHash, userId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(eventId, createdAt, 'active', userHash, userId, hmacSecret, body.source ?? null, body.locale ?? null)
+    .bind(
+      eventId,
+      createdAt,
+      'active',
+      userHash,
+      userId,
+      hmacSecret,
+      body.source ?? null,
+      body.locale ?? null,
+      tzOffsetMinutes,
+      createdAt,
+    )
     .run();
+  // Seed the first location (sent in the open body) so the very first alert can
+  // already carry a position.
+  if (body.location && typeof body.location.lat === 'number' && typeof body.location.lon === 'number') {
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO locations_index (eventId, timestamp, lat, lon, accuracyM, speed) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+      .bind(eventId, createdAt, body.location.lat, body.location.lon, body.location.accuracy ?? null, null)
+      .run();
+  }
   await audit(c.env, eventId, 'event.create', userHash || userId, { source: body.source });
 
   // Push the activation alert to the contact off the response path (records
@@ -208,6 +259,53 @@ app.get('/v1/admin/line-follows', async (c) => {
   return c.json({ follows: await listFollows(c.env) }, 200);
 });
 
+// --- Trust records (C5) + investigations (C4), operator-facing ---
+app.get('/v1/admin/trust', async (c) => {
+  return c.json({ trust: await listTrust(c.env) }, 200);
+});
+
+app.get('/v1/admin/investigations', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, eventId, recipientId, kind, detail, status, openedAt, resolvedAt, resolution FROM investigations ORDER BY openedAt DESC',
+  ).all();
+  return c.json({ investigations: results ?? [] }, 200);
+});
+
+app.post('/v1/admin/investigations/:id/resolve', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req
+    .json<{ resolution?: string; cooperated?: boolean }>()
+    .catch(() => ({}) as { resolution?: string; cooperated?: boolean });
+  const inv = await c.env.DB.prepare(
+    'SELECT id, recipientId, status FROM investigations WHERE id = ?',
+  )
+    .bind(id)
+    .first<{ id: string; recipientId: string | null; status: string }>();
+  if (!inv) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  await c.env.DB.prepare(
+    "UPDATE investigations SET status = 'resolved', resolvedAt = ?, resolution = ? WHERE id = ?",
+  )
+    .bind(Date.now(), body.resolution ?? null, id)
+    .run();
+  // Track cooperation against the recipient/agency trust record.
+  if (inv.recipientId) {
+    const recipient = await c.env.DB.prepare('SELECT agency FROM recipients WHERE id = ?')
+      .bind(inv.recipientId)
+      .first<{ agency: string }>();
+    await bumpTrust(
+      c.env,
+      [
+        { type: 'recipient', id: inv.recipientId },
+        ...(recipient ? [{ type: 'agency' as const, id: recipient.agency }] : []),
+      ],
+      { investigationsTotal: 1, investigationsCooperated: body.cooperated ? 1 : 0 },
+    );
+  }
+  return c.json({ ok: true }, 200);
+});
+
 // --- LINE webhook (no HMAC auth; verifies its own x-line-signature) ---
 app.post('/v1/webhooks/line', handleLineWebhook);
 
@@ -234,12 +332,114 @@ app.get('/c/:id', async (c) => {
   if (verdict !== 'ok') {
     return c.html(renderTokenPage(verdict === 'expired' ? 'expired' : 'invalid'), 401);
   }
+  const workerOrigin = new URL(c.req.url).origin;
+  // C1 — no anonymous access. Until the holder of this token has registered and
+  // verified an identity, serve the registration page, not the evidence.
+  const recipient = await getVerifiedRecipient(c.env, eventId, token);
+  if (!recipient) {
+    return c.html(renderRecipientRegistration({ eventId, token, base: workerOrigin }));
+  }
   const state = await getContactState(c.env, eventId);
   if (!state) {
     return c.html(renderTokenPage('invalid'), 404);
   }
+  await logRecipientAction(c.env, recipient.id, eventId, 'view');
+  return c.html(renderDashboardPage({ eventId, token, base: workerOrigin, state, recipient }));
+});
+
+// --- Recipient identity (C1): register + verify before evidence renders ---
+app.post('/v1/c/:id/recipient/register', async (c) => {
+  if (!(await requireMagicToken(c))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const eventId = c.req.param('id');
+  const token = c.req.query('t') ?? '';
+  const body = await c.req
+    .json<{ fullName?: string; agency?: string; roleRef?: string; contactType?: string; contactValue?: string; scope?: string }>()
+    .catch(() => ({}) as Record<string, string>);
+  const result = await registerRecipient(c.env, eventId, token, {
+    fullName: body.fullName ?? '',
+    agency: body.agency ?? '',
+    roleRef: body.roleRef,
+    contactType: 'email',
+    contactValue: body.contactValue ?? '',
+    scope: body.scope === 'export' ? 'export' : 'dispatch',
+  });
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.status as 400);
+  }
+  return c.json({ ok: true, recipientId: result.recipientId, expiresAt: result.expiresAt }, 200);
+});
+
+app.post('/v1/c/:id/recipient/verify', async (c) => {
+  if (!(await requireMagicToken(c))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const eventId = c.req.param('id');
+  const token = c.req.query('t') ?? '';
+  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const result = await verifyRecipient(c.env, eventId, token, body.code ?? '');
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.status as 400);
+  }
+  return c.json({ ok: true, recipientId: result.recipientId }, 200);
+});
+
+// --- Export = custody transfer + sealed vault (C3). Requires a verified
+// recipient identity bound to this token; the export is logged + sealed. ---
+app.get('/v1/c/:id/export', async (c) => {
+  if (!(await requireMagicToken(c))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const eventId = c.req.param('id');
+  const token = c.req.query('t') ?? '';
+  const recipient = await getVerifiedRecipient(c.env, eventId, token);
+  if (!recipient) {
+    return c.json({ error: 'identity not verified' }, 403);
+  }
   const workerOrigin = new URL(c.req.url).origin;
-  return c.html(renderDashboardPage({ eventId, token, base: workerOrigin, state }));
+  const result = await exportPackage(c.env, eventId, workerOrigin, recipient.id);
+  if (!result) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  // Hand the recipient their verifiable working copy (the signed manifest), with
+  // the custody id + package hash so they can acknowledge custody.
+  return c.json(
+    {
+      custodyId: result.custodyId,
+      packageHash: result.packageHash,
+      vaultKey: result.vaultKey,
+      manifest: result.manifest,
+    },
+    200,
+    { 'Content-Disposition': `attachment; filename="blackbox-${eventId}-manifest.json"` },
+  );
+});
+
+app.post('/v1/c/:id/custody/:custodyId/ack', async (c) => {
+  if (!(await requireMagicToken(c))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const eventId = c.req.param('id');
+  const token = c.req.query('t') ?? '';
+  const recipient = await getVerifiedRecipient(c.env, eventId, token);
+  if (!recipient) {
+    return c.json({ error: 'identity not verified' }, 403);
+  }
+  const ok = await acknowledgeCustody(c.env, c.req.param('custodyId'), recipient.id);
+  if (!ok) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  await bumpTrust(
+    c.env,
+    [
+      { type: 'recipient', id: recipient.id },
+      { type: 'agency', id: recipient.agency },
+    ],
+    { custodyAcknowledged: true },
+  );
+  await logRecipientAction(c.env, recipient.id, eventId, 'custody_ack', c.req.param('custodyId'));
+  return c.json({ ok: true }, 200);
 });
 
 app.get('/v1/c/:id/state', async (c) => {
@@ -422,8 +622,135 @@ app.post('/v1/c/:id/stand-down', async (c) => {
   return c.json({ ok: true }, 200);
 });
 
+// "Client lost" beacon (Fix Brief 1 #3). Sent via navigator.sendBeacon on
+// pagehide, which can't carry signed headers — so the payload is body-signed:
+// sig = HMAC(eventSecret, "LOST\n<eventId>\n<timestamp>"). Registered BEFORE the
+// HMAC middleware so the header-less beacon is not rejected; it self-verifies.
+// Marking "lost" ESCALATES (device went dark), it NEVER cancels — so even a
+// forged beacon is fail-safe.
+app.post('/v1/events/:id/lost', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req
+    .json<{ timestamp?: number; sig?: string }>()
+    .catch(() => ({}) as { timestamp?: number; sig?: string });
+  if (typeof body.timestamp !== 'number' || !body.sig) {
+    return c.json({ error: 'bad beacon' }, 400);
+  }
+  const row = await c.env.DB.prepare('SELECT hmacSecret, status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ hmacSecret: string; status: string }>();
+  if (!row) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  const expected = await hmacSha256Hex(row.hmacSecret, `LOST\n${eventId}\n${body.timestamp}`);
+  if (expected !== body.sig) {
+    return c.json({ error: 'bad signature' }, 401);
+  }
+  if (row.status === 'active') {
+    await c.env.DB.prepare('UPDATE events SET lostAt = ? WHERE id = ? AND lostAt IS NULL')
+      .bind(Date.now(), eventId)
+      .run();
+    await audit(c.env, eventId, 'client_lost', null, null);
+    const workerOrigin = new URL(c.req.url).origin;
+    c.executionCtx.waitUntil(notifyEscalation(c.env, eventId, workerOrigin, 'client_lost'));
+  }
+  return c.body(null, 204);
+});
+
 // --- Authenticated event sub-routes ---
 app.use('/v1/events/:id/*', hmacAuth);
+
+// Heartbeat (Fix Brief 1 #3). Records lastHeartbeatAt; the Worker NEVER
+// auto-closes on a missed beat — a missed heartbeat escalates via the scheduled
+// integrity scan ("device went dark"), it does not cancel.
+app.post('/v1/events/:id/heartbeat', async (c) => {
+  const eventId = c.req.param('id');
+  await c.env.DB.prepare('UPDATE events SET lastHeartbeatAt = ? WHERE id = ? AND status = ?')
+    .bind(Date.now(), eventId, 'active')
+    .run();
+  return c.json({ ok: true }, 200);
+});
+
+// Stand down (Fix Brief 1 #3/#4). The ONLY path that closes an event from the
+// user's side, and only with a server-VERIFIED lock code. The raw code is
+// checked against the account's lockCodeHash / duressCodeHash:
+//   - lock code  → close the event (closedBy = 'user_lock_code')
+//   - duress code → ESCALATE (duress alert), do NOT close; recording continues
+//                   and the event closes later only on confirmed voice contact
+//                   (a contact-side stand-down)
+//   - anything else → rejected; nothing changes
+app.post('/v1/events/:id/standdown', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const code = body.code ?? '';
+  const event = await c.env.DB.prepare(
+    'SELECT userId, userHash, status, locale FROM events WHERE id = ?',
+  )
+    .bind(eventId)
+    .first<{ userId: string | null; userHash: string | null; status: string; locale: string | null }>();
+  if (!event) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  if (event.status === 'closed') {
+    return c.json({ ok: true, closed: true }, 200); // idempotent
+  }
+
+  const user = event.userId ? await getUserById(c.env, event.userId) : null;
+  if (!user?.lockCodeHash) {
+    // No account lock code to verify against — cannot stand down server-side.
+    return c.json({ error: 'no_verifiable_lock_code' }, 409);
+  }
+
+  let kind: 'normal' | 'duress' | 'wrong' = 'wrong';
+  if (await verifySecret(code, user.lockCodeHash)) {
+    kind = 'normal';
+  } else if (user.duressCodeHash && (await verifySecret(code, user.duressCodeHash))) {
+    kind = 'duress';
+  }
+
+  const contact = await getContactForEvent(c.env, event);
+  const workerOrigin = new URL(c.req.url).origin;
+
+  if (kind === 'wrong') {
+    await audit(c.env, eventId, 'standdown_rejected', null, null);
+    return c.json({ error: 'invalid_code' }, 403);
+  }
+
+  if (kind === 'duress') {
+    // Escalate; never close. Recording continues no matter what.
+    await audit(c.env, eventId, 'standdown_duress', null, null);
+    if (contact && c.env.MAGIC_LINK_SECRET) {
+      const token = await mintMagicToken(c.env.MAGIC_LINK_SECRET, eventId);
+      const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
+      c.executionCtx.waitUntil(
+        dispatch(c.env, contact.id, {
+          kind: 'duress',
+          eventId,
+          payload: { userDisplayName: contact.displayName, dashboardUrl },
+        }),
+      );
+    }
+    return c.json({ ok: true, closed: false, duress: true }, 200);
+  }
+
+  // Normal lock code → server-authoritative close.
+  await c.env.DB.prepare(
+    'UPDATE events SET status = ?, closedAt = ?, closedBy = ? WHERE id = ? AND status = ?',
+  )
+    .bind('closed', Date.now(), 'user_lock_code', eventId, 'active')
+    .run();
+  await audit(c.env, eventId, 'standdown_by_user', null, null);
+  if (contact) {
+    c.executionCtx.waitUntil(
+      dispatch(c.env, contact.id, {
+        kind: 'closureConfirmation',
+        eventId,
+        payload: { userDisplayName: contact.displayName },
+      }),
+    );
+  }
+  return c.json({ ok: true, closed: true }, 200);
+});
 
 app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   const eventId = c.req.param('id');
@@ -432,12 +759,17 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('webm') ? 'webm' : 'bin';
   const r2Key = `events/${eventId}/chunks/${sequence}.${ext}`;
+  // Integrity (#C2): hash the chunk bytes on write and link into the event's
+  // append-only hash chain before anything can touch the stored object.
+  const sha256 = await hashBytes(bytes);
+  const tz = await eventTzOffset(c.env, eventId);
   await c.env.MEDIA.put(r2Key, bytes, { httpMetadata: { contentType: mimeType } });
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now())
+    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz)
     .run();
+  await appendToChain(c.env, eventId, 'chunk', r2Key, sha256);
   return c.json({ ok: true, r2Key }, 201);
 });
 
@@ -448,11 +780,12 @@ app.post('/v1/events/:id/locations', async (c) => {
   const eventId = c.req.param('id');
   const { points } = await c.req.json<LocationPayload>();
   if (points.length > 0) {
+    const tz = await eventTzOffset(c.env, eventId);
     await c.env.DB.batch(
       points.map((p) =>
         c.env.DB.prepare(
-          'INSERT OR REPLACE INTO locations_index (eventId, timestamp, lat, lon, accuracyM, speed) VALUES (?, ?, ?, ?, ?, ?)',
-        ).bind(eventId, p.timestamp, p.lat, p.lon, p.accuracy ?? null, p.speed ?? null),
+          'INSERT OR REPLACE INTO locations_index (eventId, timestamp, lat, lon, accuracyM, speed, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ).bind(eventId, p.timestamp, p.lat, p.lon, p.accuracy ?? null, p.speed ?? null, tz),
       ),
     );
   }
@@ -596,4 +929,9 @@ app.post('/v1/events/:id/close', async (c) => {
   return c.json({ ok: true }, 200);
 });
 
-export default app;
+// fetch + scheduled (Cron Trigger). The scheduled handler runs the
+// device-went-dark escalation and the vault integrity scan.
+export default {
+  fetch: app.fetch,
+  scheduled,
+};

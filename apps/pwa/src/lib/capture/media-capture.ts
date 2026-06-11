@@ -40,10 +40,13 @@ function pickMimeType(mode: CaptureMode): string {
 export class MediaCapture {
   private mediaStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
+  private videoSink: HTMLVideoElement | null = null;
+  private activeMode: CaptureMode;
   private readonly options: MediaCaptureOptions;
 
   constructor(options: MediaCaptureOptions) {
     this.options = options;
+    this.activeMode = options.mode;
   }
 
   get isRecording(): boolean {
@@ -63,13 +66,19 @@ export class MediaCapture {
       return true;
     }
     try {
-      const constraints: MediaStreamConstraints = {
-        audio: true,
-        video: this.options.mode === 'audio-video' ? { facingMode: 'user' } : false,
-      };
-      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.mediaStream = await this.acquireStream();
+      // The effective mode may have downgraded to audio if no camera was
+      // available; pick the mime type for what we actually captured.
+      this.activeMode = this.mediaStream.getVideoTracks().length > 0 ? 'audio-video' : 'audio';
 
-      const mimeType = pickMimeType(this.options.mode);
+      // Overt video capture: mount a hidden <video playsinline muted> sink and
+      // play() it from the activation gesture so the camera stays live (iOS
+      // autoplay policy). Covert mode never reaches here with video.
+      if (this.activeMode === 'audio-video') {
+        this.mountVideoSink(this.mediaStream);
+      }
+
+      const mimeType = pickMimeType(this.activeMode);
       const recorder = mimeType
         ? new MediaRecorder(this.mediaStream, { mimeType })
         : new MediaRecorder(this.mediaStream);
@@ -100,6 +109,40 @@ export class MediaCapture {
     }
   }
 
+  /**
+   * Acquire the capture stream. In overt (audio-video) mode, fall back to
+   * audio-only if the camera is missing or denied — never lose audio + location
+   * just because there is no camera.
+   */
+  private async acquireStream(): Promise<MediaStream> {
+    if (this.options.mode === 'audio-video') {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'user' } });
+      } catch (error) {
+        log.error('video capture unavailable; falling back to audio-only', error);
+      }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  }
+
+  /** Mount an off-screen muted video sink and play the stream from the gesture. */
+  private mountVideoSink(stream: MediaStream): void {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const video = document.createElement('video');
+    video.muted = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('aria-hidden', 'true');
+    // Off-screen, 1px: kept in the DOM so iOS keeps the camera track live.
+    video.style.cssText =
+      'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:0';
+    video.srcObject = stream;
+    document.body.appendChild(video);
+    this.videoSink = video;
+    void video.play().catch((error) => log.error('video sink play failed', error));
+  }
+
   stop(): void {
     try {
       if (this.recorder && this.recorder.state !== 'inactive') {
@@ -109,6 +152,16 @@ export class MediaCapture {
       log.error('recorder stop failed', error);
     }
     this.recorder = null;
+    if (this.videoSink) {
+      try {
+        this.videoSink.pause();
+        this.videoSink.srcObject = null;
+        this.videoSink.remove();
+      } catch (error) {
+        log.error('video sink teardown failed', error);
+      }
+      this.videoSink = null;
+    }
     if (this.mediaStream) {
       for (const track of this.mediaStream.getTracks()) {
         track.stop();

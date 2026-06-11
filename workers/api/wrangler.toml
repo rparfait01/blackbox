@@ -14,11 +14,24 @@ CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blac
 # PWA origin used to build dashboard + guardian-invite links. Set to the deployed
 # Pages URL for the pilot. When empty the Worker falls back to its own origin.
 PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
+# The Worker's own public origin — used to build dashboard magic-links from the
+# scheduled (cron) context, where there is no request URL. Set to the deployed
+# Worker URL.
+WORKER_ORIGIN = "https://blackbox-api.workers.dev"
+# Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the family
+# pilot this is the operator/founder.
+SECURITY_CONTACT_EMAIL = "royce.ikumi.parfait@gmail.com"
 
 # Secrets are NOT defined here — set them with `wrangler secret put` (see
 # README.md): LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,
 # MAGIC_LINK_SECRET, SESSION_SECRET, SENDGRID_API_KEY, SENDGRID_FROM_EMAIL,
-# SENDGRID_FROM_NAME.
+# SENDGRID_FROM_NAME, INTEGRITY_SIGNING_KEY.
+
+# Cron Trigger (Fix Brief 1 #3 escalation + Fix Brief 2 #C4 integrity scan).
+# Every minute: escalate active events whose heartbeat went stale, and re-verify
+# sealed vault artifacts.
+[triggers]
+crons = ["* * * * *"]
 
 # D1 metadata database.
 [[d1_databases]]
@@ -31,3 +44,9 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "MEDIA"
 bucket_name = "blackbox-media"
+
+# R2 sealed custody vault (Fix Brief 2 #C3) — write-once, 36-month retention.
+# Create with: wrangler r2 bucket create blackbox-vault
+[[r2_buckets]]
+binding = "VAULT"
+bucket_name = "blackbox-vault"

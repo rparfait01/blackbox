@@ -4,6 +4,7 @@ import { MeditationHome } from '@/routes/meditation/MeditationHome';
 import { BlackBoxHome } from '@/routes/blackbox/BlackBoxHome';
 import { Settings } from '@/routes/settings/Settings';
 import { Onboarding } from '@/routes/onboarding/Onboarding';
+import { SignIn } from '@/routes/signin/SignIn';
 import { GuardianAccept } from '@/routes/guardian/GuardianAccept';
 import { RootGate } from './RootGate';
 
@@ -12,6 +13,7 @@ import { RootGate } from './RootGate';
 export const router: ReturnType<typeof createBrowserRouter> = createBrowserRouter([
   { path: '/', element: <RootGate />, errorElement: <RootGate /> },
   { path: '/onboarding', element: <Onboarding />, errorElement: <MeditationHome /> },
+  { path: '/signin', element: <SignIn />, errorElement: <MeditationHome /> },
   { path: '/blackbox', element: <BlackBoxHome />, errorElement: <MeditationHome /> },
   { path: '/settings', element: <Settings />, errorElement: <MeditationHome /> },
   { path: '/guardian-accept/:inviteId', element: <GuardianAccept />, errorElement: <MeditationHome /> },

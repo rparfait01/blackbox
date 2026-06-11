@@ -3,36 +3,30 @@ import { signRequest } from '@blackbox/shared';
 import { log } from '@/lib/log';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
 import { getActiveSession, getStoredDuressPin, getStoredPin } from '@/lib/storage';
-import { pinHashWithSalt, verifyPin, type StoredPin } from '@/lib/crypto/pin';
+import { verifyPin } from '@/lib/crypto/pin';
 
 /**
- * Closure flow (W6, user side). The user enters a 4-digit pin in the disguised
- * overlay. We decide LOCALLY which pin it is — normal, duress, or wrong — and
- * only contact the Worker for the first two:
+ * Closure flow (Fix Brief 1 #3/#4, user side). The user enters a 4-digit code in
+ * the disguised overlay. We decide LOCALLY which code it is — normal, duress, or
+ * wrong — for covert UX (duress and normal look identical, a wrong code clears
+ * silently with no network call). The AUTHORITATIVE decision is the Worker's:
+ * the raw code is POSTed to `/v1/events/:id/standdown`, which re-verifies it
+ * against the account's lock/duress hash and:
  *
- *  - normal pin  → close-request with duress:false (contact gets Approve/Hold)
- *  - duress pin  → close-request with duress:true  (contact gets a DURESS alert
- *                  with no approve button; recording continues no matter what)
- *  - wrong pin   → nothing leaves the device; the overlay closes silently
- *
- * The Worker never sees or validates the pin: closure is gated by the contact's
- * approval, not by the server. We still forward the salted hash, which the
- * Worker records (in audit, never logged) for the event trail.
+ *  - lock code   → closes the event server-side (server-authoritative). The
+ *                  session monitor sees `status=closed` and tears capture down.
+ *  - duress code → ESCALATES (duress alert) and does NOT close; recording
+ *                  continues. The event closes later only on confirmed voice
+ *                  contact (a contact-side stand-down).
+ *  - wrong code  → nothing leaves the device; the overlay clears silently.
  */
 
 export type ClosureResult = 'submitted' | 'wrong' | 'no-session';
 
-async function postCloseRequest(
-  eventId: string,
-  secret: string,
-  stored: StoredPin,
-  duress: boolean,
-): Promise<void> {
-  const path = `/v1/events/${eventId}/close-request`;
+async function postStandDown(eventId: string, secret: string, code: string): Promise<void> {
+  const path = `/v1/events/${eventId}/standdown`;
   const timestamp = Date.now();
-  const body = new TextEncoder().encode(
-    JSON.stringify({ pinHashWithSalt: pinHashWithSalt(stored), duress }),
-  );
+  const body = new TextEncoder().encode(JSON.stringify({ code }));
   const signed = await signRequest({ secret, eventId, method: 'POST', path, timestamp, body });
   await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
@@ -55,28 +49,22 @@ export async function submitClosurePin(digits: string): Promise<ClosureResult> {
 
   const [normal, duress] = await Promise.all([getStoredPin(), getStoredDuressPin()]);
 
-  let matched: StoredPin | null = null;
-  let isDuress = false;
-  if (normal && (await verifyPin(digits, normal))) {
-    matched = normal;
-  } else if (duress && (await verifyPin(digits, duress))) {
-    matched = duress;
-    isDuress = true;
-  }
+  const isNormal = normal ? await verifyPin(digits, normal) : false;
+  const isDuress = !isNormal && duress ? await verifyPin(digits, duress) : false;
 
-  if (!matched) {
+  if (!isNormal && !isDuress) {
     return 'wrong';
   }
 
-  // Send the request if we can reach the backend and the event exists. If the
-  // event has not been created yet (very early closure) we still report
-  // 'submitted' so the overlay stays covert — the contact simply won't receive
-  // it, which is an acceptable edge for the pilot.
+  // Hand the raw code to the Worker, which re-verifies it authoritatively and
+  // either closes the event (lock code) or escalates without closing (duress).
+  // If the event has not been created yet (very early closure) we still report
+  // 'submitted' so the overlay stays covert.
   if (uploadsEnabled && session.eventId && session.hmacSecret) {
     try {
-      await postCloseRequest(session.eventId, session.hmacSecret, matched, isDuress);
+      await postStandDown(session.eventId, session.hmacSecret, digits);
     } catch (error) {
-      log.error('close-request failed', error);
+      log.error('standdown failed', error);
     }
   }
   return 'submitted';

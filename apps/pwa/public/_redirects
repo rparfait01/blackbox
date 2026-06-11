@@ -1,0 +1,6 @@
+# Cloudflare Pages SPA fallback. Without this, refreshing or deep-linking to a
+# client route (e.g. /blackbox, /settings, /signin, /guardian-accept/:id) returns
+# a Pages 404 — which looks exactly like "session not persisting / back to
+# onboarding". Existing static files (assets, icons, manifest) are served first;
+# only unmatched paths fall back to the app shell.
+/*    /index.html   200

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 
 import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
+import { primePermissions } from '@/lib/permissions';
+import { InstallHint } from '@/components/InstallHint';
 import { hashPin } from '@/lib/crypto/pin';
 import { setStoredPin, setStoredDuressPin } from '@/lib/storage';
 import { getUserHash } from '@/lib/device';
@@ -85,6 +87,8 @@ export function Onboarding(): JSX.Element {
   const [regionId, setRegionId] = useState(defaultCountry().regionId);
   const [signupId, setSignupId] = useState('');
   const [otp, setOtp] = useState('');
+  const [resend, setResend] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [emailExists, setEmailExists] = useState(false);
 
   // display + codes
   const [displayMode, setMode] = useState<DisplayMode>('covert');
@@ -93,6 +97,10 @@ export function Onboarding(): JSX.Element {
   );
   const [firstCode, setFirstCode] = useState('');
   const [lockCode, setLockCode] = useState('');
+
+  // permissions priming (mic + location), requested from a user gesture here so
+  // activation never triggers a permission dialog.
+  const [perms, setPerms] = useState<'idle' | 'asking' | { mic: boolean; location: boolean }>('idle');
 
   // guardian
   const [gName, setGName] = useState('');
@@ -104,6 +112,7 @@ export function Onboarding(): JSX.Element {
 
   async function startSignup(): Promise<void> {
     setError(null);
+    setEmailExists(false);
     if (!name.trim() || !email.trim()) {
       setError('Name and email are required.');
       return;
@@ -117,17 +126,31 @@ export function Onboarding(): JSX.Element {
     if (res.ok && res.data?.signupId) {
       setSignupId(res.data.signupId);
       setStep(3);
+    } else if (res.status === 409) {
+      setEmailExists(true);
+    } else if (res.status === 502) {
+      setError('We could not send the verification email. Please try again shortly.');
     } else {
-      setError(res.status === 409 ? 'That email already has an account.' : 'Could not start sign-up.');
+      setError('Could not start sign-up.');
     }
   }
 
   async function resendOtp(): Promise<void> {
     setError(null);
-    await api('/v1/auth/signup/start', {
+    setResend('sending');
+    // Re-issuing start replaces the draft and sends a fresh code; adopt the new
+    // signupId so verification targets the latest code.
+    const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
       auth: false,
       body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId },
     });
+    if (res.ok && res.data?.signupId) {
+      setSignupId(res.data.signupId);
+      setResend('sent');
+    } else {
+      setResend('error');
+    }
+    window.setTimeout(() => setResend('idle'), 2000);
   }
 
   async function verifyEmail(): Promise<void> {
@@ -233,6 +256,12 @@ export function Onboarding(): JSX.Element {
           that is and how the app looks on your phone.
         </p>
         <PrimaryButton onClick={() => setStep(2)}>Get started</PrimaryButton>
+        <button
+          onClick={() => navigate('/signin')}
+          className="mt-5 block w-full text-center text-sm text-med-text/60 underline"
+        >
+          Already have an account? Sign in
+        </button>
       </Shell>
     );
   }
@@ -281,6 +310,17 @@ export function Onboarding(): JSX.Element {
             </select>
           </label>
         </div>
+        {emailExists ? (
+          <div className="mt-6 rounded-lg border border-med-text/20 bg-black/20 p-4">
+            <p className="mb-3 text-sm text-med-text/80">Account already exists. Tap Sign In instead.</p>
+            <button
+              onClick={() => navigate('/signin', { state: { email: email.trim() } })}
+              className="w-full rounded-full bg-med-text/90 py-3 text-sm font-medium text-[#1a1f3a]"
+            >
+              Sign In
+            </button>
+          </div>
+        ) : null}
         {error ? <p className="mt-4 text-sm text-status-active">{error}</p> : null}
         <div className="mt-8">
           <PrimaryButton onClick={startSignup} disabled={busy}>
@@ -302,8 +342,18 @@ export function Onboarding(): JSX.Element {
           className="mb-2 w-full border-b border-med-text/25 bg-transparent py-3 text-center font-mono text-3xl tracking-[0.4em] text-med-text outline-none placeholder:text-med-text/20"
         />
         {error ? <p className="mb-2 text-sm text-status-active">{error}</p> : null}
-        <button onClick={resendOtp} className="mb-8 text-sm text-med-text/50 underline">
-          Resend code
+        <button
+          onClick={resendOtp}
+          disabled={resend === 'sending'}
+          className="mb-8 text-sm text-med-text/50 underline disabled:no-underline disabled:opacity-60"
+        >
+          {resend === 'sending'
+            ? 'Sending…'
+            : resend === 'sent'
+              ? 'Code sent'
+              : resend === 'error'
+                ? 'Could not send — try again'
+                : 'Resend code'}
         </button>
         <PrimaryButton onClick={verifyEmail} disabled={busy || otp.length !== 6}>
           {busy ? 'Verifying…' : 'Verify'}
@@ -353,8 +403,8 @@ export function Onboarding(): JSX.Element {
         {error ? <p className="mt-4 text-center text-sm text-status-active">{error}</p> : null}
         <p className="mt-8 text-center text-xs leading-relaxed text-med-text/50">
           {onLockStep
-            ? 'Your session lock code ends the alert through your support contact’s approval.'
-            : 'The backup code signals to your support contact that something is wrong without making it visible to anyone watching.'}
+            ? 'Your session lock code ends an active alert — entering it stands the alert down.'
+            : 'The backup code looks like ending the alert, but instead it silently signals your support contact that you are in danger. The alert keeps running and only ends once they have reached you.'}
         </p>
         {codePhase === 'duress' ? (
           <button onClick={() => void finalize(undefined)} className="mt-4 block w-full text-center text-sm text-med-text/40 underline">
@@ -386,12 +436,51 @@ export function Onboarding(): JSX.Element {
     );
   }
 
+  const grantPerms = async (): Promise<void> => {
+    setPerms('asking');
+    setPerms(await primePermissions());
+  };
+  const permsGranted = typeof perms === 'object';
+
   return (
     <Shell title="You're set up">
-      <div className="mb-8 rounded-lg border border-med-text/20 bg-black/20 p-5 text-sm leading-relaxed text-med-text/80">
+      <div className="mb-6 rounded-lg border border-med-text/20 bg-black/20 p-5 text-sm leading-relaxed text-med-text/80">
         Email notifications enabled. Your support contact will receive an immediate email at
         activation. Most phones show this on the lock screen and on a connected watch.
       </div>
+
+      {/* Prime mic + location now, from this tap, so activation never triggers a
+          permission prompt mid-alert. */}
+      <div className="mb-8 rounded-lg border border-med-text/20 bg-black/20 p-5 text-sm leading-relaxed text-med-text/80">
+        <p className="mb-4">
+          BLACK BOX needs your microphone and location to capture an alert. Grant them now so a
+          prompt never appears when you activate.
+        </p>
+        {permsGranted ? (
+          <p className="font-mono text-[12px] text-med-text/70">
+            Microphone {perms.mic ? '✓ enabled' : '✕ not granted'} · Location{' '}
+            {perms.location ? '✓ enabled' : '✕ not granted'}
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void grantPerms()}
+            disabled={perms === 'asking'}
+            className="w-full rounded-full border border-med-text/40 py-3 text-sm font-medium text-med-text disabled:opacity-50"
+          >
+            {perms === 'asking' ? 'Requesting…' : 'Enable microphone & location'}
+          </button>
+        )}
+        <p className="mt-3 text-[11px] leading-relaxed text-med-text/45">
+          On iPhone, Safari may still ask again at the first activation — installing to your home
+          screen (below) reduces this. Full persistence comes with the native app.
+        </p>
+      </div>
+
+      <div className="mb-8">
+        <InstallHint />
+      </div>
+
       <PrimaryButton onClick={finish}>Continue</PrimaryButton>
     </Shell>
   );

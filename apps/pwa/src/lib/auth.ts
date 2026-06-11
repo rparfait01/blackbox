@@ -8,10 +8,10 @@
 
 export type DisplayMode = 'direct' | 'covert';
 
-const TOKEN_KEY = 'bb:sessionToken';
-const MODE_KEY = 'bb:displayMode';
-const SETUP_KEY = 'bb:setupComplete';
-const USER_KEY = 'bb:user';
+const TOKEN_KEY = 'blackbox.session';
+const MODE_KEY = 'blackbox.displayMode';
+const SETUP_KEY = 'blackbox.setupComplete';
+const USER_KEY = 'blackbox.user';
 
 export interface CachedUser {
   name: string;

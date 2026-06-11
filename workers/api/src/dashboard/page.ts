@@ -10,6 +10,7 @@
  * audio + live updates require JS.
  */
 
+import { formatDtg } from '@blackbox/shared';
 import type { ContactState } from '../lib/contact-state';
 
 interface DashboardOpts {
@@ -17,6 +18,8 @@ interface DashboardOpts {
   token: string;
   base: string;
   state: ContactState;
+  /** The verified recipient viewing this evidence (Fix Brief 2 #C1). */
+  recipient?: { id: string; fullName: string; agency: string };
 }
 
 const ZOOM = 16;
@@ -90,7 +93,7 @@ function clock(ms: number): string {
 }
 
 export function renderDashboardPage(opts: DashboardOpts): string {
-  const { eventId, token, base, state } = opts;
+  const { eventId, token, base, state, recipient } = opts;
   const cfg = {
     eventId,
     token,
@@ -117,6 +120,14 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 <body>
 <main class="wrap">
   <div class="brand">BLACK BOX · Live</div>
+  <div class="dtg">INITIAL REPORT · ${formatDtg(state.startedAt)}</div>
+  ${
+    recipient
+      ? `<div class="rcp">Accessed by ${escapeHtml(recipient.fullName)} · ${escapeHtml(
+          recipient.agency,
+        )} · ${escapeHtml(recipient.id)}</div>`
+      : ''
+  }
 
   <div class="bar">
     <div class="rec" id="rec">${recording}</div>
@@ -156,6 +167,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   <div class="actions">
     <button id="respond" class="btn btn-respond">I AM RESPONDING</button>
     <button id="share" class="btn btn-share">SHARE LIVE LINK</button>
+    <button id="exportPkg" class="btn btn-share">EXPORT EVIDENCE PACKAGE</button>
     <a id="call" class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
     <button id="standDown" class="btn btn-standdown" ${state.active ? '' : 'hidden'}>
       <span class="sd-label">HOLD 3S TO STAND DOWN</span>
@@ -201,7 +213,9 @@ const CSS = `
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
 .wrap{max-width:520px;margin:0 auto;padding:16px 16px 48px}
-.brand{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#666;margin-bottom:8px}
+.brand{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#666;margin-bottom:4px}
+.dtg{font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.1em;color:#e8e8e8;margin-bottom:4px}
+.rcp{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.04em;color:#666;margin-bottom:8px}
 .bar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #222;padding:10px 0}
 .rec{display:flex;align-items:center;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase}
 .rec-text{color:#ff3b30}
@@ -426,6 +440,21 @@ const CLIENT_JS = `
       else if(d&&d.url){ window.prompt('Copy this live link', d.url); }
     }).catch(function(){});
   };
+
+  // ---- export = custody transfer + sealed vault (downloads the signed manifest) ----
+  var exp=el('exportPkg');
+  if(exp){ exp.onclick=function(){
+    exp.disabled=true; exp.textContent='SEALING…';
+    fetch(api('/export')).then(function(r){ return r.json(); }).then(function(d){
+      if(d&&d.manifest){
+        var blob=new Blob([JSON.stringify(d.manifest,null,2)],{type:'application/json'});
+        var url=URL.createObjectURL(blob);
+        var a=document.createElement('a'); a.href=url; a.download='blackbox-'+CFG.eventId+'-manifest.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        exp.textContent='SEALED '+(d.packageHash?d.packageHash.slice(0,8):'')+' ✓';
+        if(d.custodyId){ fetch(api('/custody/'+d.custodyId+'/ack'),{method:'POST'}).catch(function(){}); }
+      } else { exp.disabled=false; exp.textContent='EXPORT EVIDENCE PACKAGE'; }
+    }).catch(function(){ exp.disabled=false; exp.textContent='EXPORT EVIDENCE PACKAGE'; });
+  };}
 
   // ---- stand down (3s deliberate hold) ----
   (function(){

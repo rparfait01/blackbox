@@ -9,6 +9,7 @@
 
 import { audit } from '../lib/audit';
 import { getContactEndpoints } from '../lib/contacts';
+import { recordDelivery } from '../lib/delivery';
 import type { Env } from '../types';
 import { LineChannel } from './line';
 import { SendGridEmailChannel } from './sendgrid-email';
@@ -20,12 +21,14 @@ import type {
   ClosureConfirmationPayload,
   ClosureRequestPayload,
   DuressAlertPayload,
+  EscalationAlertPayload,
   NotificationChannel,
   StandDownConfirmationPayload,
 } from './types';
 
 export type ChannelMessage =
   | { kind: 'activation'; eventId: string; payload: ActivationAlertPayload }
+  | { kind: 'escalation'; eventId: string; payload: EscalationAlertPayload }
   | { kind: 'closure'; eventId: string; payload: ClosureRequestPayload }
   | { kind: 'duress'; eventId: string; payload: DuressAlertPayload }
   | { kind: 'closureConfirmation'; eventId: string; payload: ClosureConfirmationPayload }
@@ -66,6 +69,8 @@ function sendMessage(channel: NotificationChannel, message: ChannelMessage): Pro
   switch (message.kind) {
     case 'activation':
       return channel.pushActivationAlert(message.eventId, message.payload);
+    case 'escalation':
+      return channel.pushEscalation(message.eventId, message.payload);
     case 'closure':
       return channel.pushClosureRequest(message.eventId, message.payload);
     case 'duress':
@@ -105,9 +110,25 @@ export async function dispatch(
       await audit(env, message.eventId, `notification_failed_${channelName}`, actorHash, {
         reason: 'unconfigured',
       });
+      await recordDelivery(env, {
+        eventId: message.eventId,
+        messageKind: message.kind,
+        channel: channelName,
+        status: 'skipped',
+        detail: 'unconfigured',
+      });
       continue;
     }
     const ok = await sendMessage(channel, message);
+    // Per-channel delivery record (Fix Brief 1 #5) — delivery is observable in
+    // D1, not guessed. providerMessageId links back to the provider's own logs.
+    await recordDelivery(env, {
+      eventId: message.eventId,
+      messageKind: message.kind,
+      channel: channelName,
+      status: ok ? 'delivered' : 'failed',
+      providerMessageId: channel.lastProviderMessageId ?? null,
+    });
     if (ok) {
       await audit(env, message.eventId, `notification_delivered_${channelName}`, actorHash, null);
       return { delivered: true, channel: channelName };

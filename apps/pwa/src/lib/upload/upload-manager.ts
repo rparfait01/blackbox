@@ -3,6 +3,7 @@ import type { Classification } from '@blackbox/classifier';
 
 import { log } from '@/lib/log';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
+import { getSessionToken } from '@/lib/auth';
 import { getUserHash } from '@/lib/device';
 import {
   deleteQueuedUpload,
@@ -33,6 +34,9 @@ interface SessionContext {
   startTime: number;
   eventId?: string;
   hmacSecret?: string;
+  /** A first location fix, seeded into the open POST so the very first
+   *  notification can carry a position even before location uploads flush. */
+  initialLocation?: { lat: number; lon: number; accuracy?: number };
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -69,18 +73,49 @@ function scheduleDrain(delayMs: number): void {
   }, delayMs);
 }
 
-/** Register a live session as uploadable and kick the drain loop. */
+/**
+ * Open the server event for a live session. This is the client's FIRST network
+ * action on activation (Fix Brief 1 #3): it creates the Worker event eagerly —
+ * which fires the contact notification server-side — INDEPENDENT of any media
+ * capture. Capture/upload follow opportunistically; if the page dies the event
+ * stays active. The open is retried with backoff until it succeeds so the alert
+ * is durable even across a flaky network at activation.
+ */
 export function registerUploadSession(session: {
   sessionId: string;
   source: string;
   startTime: number;
+  initialLocation?: { lat: number; lon: number; accuracy?: number };
 }): void {
   if (!uploadsEnabled) {
     return;
   }
-  contexts.set(session.sessionId, { ...session });
+  const ctx: SessionContext = { ...session };
+  contexts.set(session.sessionId, ctx);
   ensureTimers();
+  // Fire the open POST immediately; do not wait for a queued media item.
+  void openEventWithRetry(ctx, 0);
   scheduleDrain(0);
+}
+
+/** Create the server event now, retrying with backoff while the session lives. */
+async function openEventWithRetry(ctx: SessionContext, attempt: number): Promise<void> {
+  if (ctx.eventId) {
+    return;
+  }
+  // If the session context was torn down (session ended) stop retrying.
+  if (contexts.get(ctx.sessionId) !== ctx) {
+    return;
+  }
+  try {
+    if (await ensureEvent(ctx)) {
+      return;
+    }
+    throw new Error('open failed');
+  } catch (error) {
+    log.error('event open failed; will retry', error);
+    window.setTimeout(() => void openEventWithRetry(ctx, attempt + 1), backoff(attempt + 1));
+  }
 }
 
 export function uploadChunk(
@@ -203,10 +238,28 @@ async function ensureEvent(ctx: SessionContext): Promise<boolean> {
   const userHash = await getUserHash();
   // locale lets the contact dashboard show the right emergency number (W7).
   const locale = typeof navigator !== 'undefined' ? navigator.language : '';
+  // Canonical time is UTC ms + the device tz offset (Fix Brief 2 #C6).
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  // Attach the Bearer session token so the Worker ties the event to the user
+  // ACCOUNT (events.userId). Without it the event is userHash-only and the
+  // guardian-created contact (keyed by userId) can never be resolved — the
+  // alert would be created but no notification would have a target.
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = getSessionToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
   const response = await fetch(`${API_BASE_URL}/v1/events`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userHash, source: ctx.source, startTime: ctx.startTime, locale }),
+    headers,
+    body: JSON.stringify({
+      userHash,
+      source: ctx.source,
+      startTime: ctx.startTime,
+      locale,
+      tzOffsetMinutes,
+      location: ctx.initialLocation ?? null,
+    }),
   });
   if (response.status !== 201) {
     return false;

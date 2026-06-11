@@ -7,7 +7,7 @@
 
 import type { Env } from '../types';
 import { hashSecret, verifySecret } from './crypto';
-import { sendEmail } from '../channels/sendgrid-email';
+import { sendEmail, type SendResult } from '../channels/sendgrid-email';
 
 const TTL_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -86,7 +86,7 @@ export async function verifyOtp(env: Env, identifier: string, code: string): Pro
   return { ok: true };
 }
 
-export function sendOtpViaEmail(env: Env, email: string, code: string): Promise<boolean> {
+export function sendOtpViaEmail(env: Env, email: string, code: string): Promise<SendResult> {
   const subject = `Your BLACK BOX code: ${code}`;
   const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:24px">
 <table role="presentation" align="center" style="max-width:420px;background:#fff;border-radius:12px;padding:24px">

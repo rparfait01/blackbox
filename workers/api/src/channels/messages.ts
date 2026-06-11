@@ -13,6 +13,7 @@ import type {
   ClassificationUpdatePayload,
   ClosureRequestPayload,
   DuressAlertPayload,
+  EscalationAlertPayload,
 } from './types';
 
 const RED = '#FF3B30';
@@ -123,6 +124,67 @@ export function activationAlert(eventId: string, p: ActivationAlertPayload): Bui
     fallback:
       `🚨 EMERGENCY — ${p.userDisplayName} activated BLACK BOX. ` +
       `Live audio + location active.\nLive dashboard: ${p.dashboardUrl}`,
+  };
+}
+
+/** "Device went dark" escalation — red, explicit, NO resolution affordance. */
+export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
+  const why =
+    p.reason === 'client_lost'
+      ? 'Her phone closed the app or lost connection while the alert was still active.'
+      : 'Her phone stopped checking in while the alert was still active.';
+  const body: LineMessage[] = [
+    {
+      type: 'text',
+      text: `${p.userDisplayName}'s phone went dark. THE ALERT IS STILL ACTIVE.`,
+      weight: 'bold',
+      wrap: true,
+    },
+    { type: 'text', text: `${why} This is more urgent, not resolved.`, wrap: true, color: RED, size: 'sm' },
+  ];
+  if (p.lastSeen) {
+    body.push(infoRow('LAST SEEN', p.lastSeen));
+  }
+  const coords = coordLabel(p.location ?? null);
+  if (coords) {
+    body.push(infoRow('LAST WHERE', coords));
+  }
+  return {
+    messages: [
+      {
+        type: 'flex',
+        altText: `🚨 ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE`,
+        contents: {
+          type: 'bubble',
+          header: {
+            type: 'box',
+            layout: 'vertical',
+            backgroundColor: RED,
+            paddingAll: '14px',
+            contents: [
+              { type: 'text', text: '🚨 DEVICE WENT DARK', color: '#FFFFFF', weight: 'bold', size: 'lg' },
+            ],
+          },
+          body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: body },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'button',
+                style: 'primary',
+                color: RED,
+                height: 'sm',
+                action: { type: 'uri', label: 'OPEN LIVE DASHBOARD', uri: p.dashboardUrl },
+              },
+            ],
+          },
+        },
+      },
+    ],
+    fallback:
+      `🚨 ${p.userDisplayName}'s phone went dark — THE ALERT IS STILL ACTIVE. ${why} ` +
+      `This is more urgent, not resolved. Dashboard: ${p.dashboardUrl}`,
   };
 }
 

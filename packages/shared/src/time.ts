@@ -1,0 +1,62 @@
+/**
+ * Canonical-time rendering (Fix Brief 2 #C6). Storage is ALWAYS UTC ms + a tz
+ * offset (minutes, in the JS `getTimezoneOffset` convention: minutes to ADD to
+ * local to get UTC, e.g. JST = -540). Local time and DTG are render-only — never
+ * stored — so ordering and integrity hold across regions.
+ *
+ * One formatter, two modes:
+ *   - DTG (Date-Time Group), e.g. "121830Z JUN 26" — for the initial event
+ *     report header. Always Zulu (UTC).
+ *   - Local, e.g. "2026-06-12 18:30 (UTC+09:00)" — for every subsequent log
+ *     entry, in the event's own local time derived from the stored offset.
+ */
+
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/**
+ * DTG: DDHHMM Z MMM YY in UTC (Zulu). The literal `Z` is the zone designator.
+ * Example: 2026-06-12T18:30Z → "121830Z JUN 26".
+ */
+export function formatDtg(utcMs: number): string {
+  const d = new Date(utcMs);
+  const dd = pad2(d.getUTCDate());
+  const hh = pad2(d.getUTCHours());
+  const mm = pad2(d.getUTCMinutes());
+  const mon = MONTHS[d.getUTCMonth()];
+  const yy = pad2(d.getUTCFullYear() % 100);
+  return `${dd}${hh}${mm}Z ${mon} ${yy}`;
+}
+
+/** Render the offset label, e.g. -540 → "UTC+09:00", 300 → "UTC-05:00". */
+export function formatOffsetLabel(tzOffsetMinutes: number): string {
+  // getTimezoneOffset is minutes to add to local to reach UTC; the displayed
+  // UTC offset is the negation.
+  const utcOffset = -tzOffsetMinutes;
+  const sign = utcOffset >= 0 ? '+' : '-';
+  const abs = Math.abs(utcOffset);
+  return `UTC${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
+}
+
+/**
+ * Local time for a stored UTC instant + offset. Shifts the instant by the offset
+ * and reads UTC getters, so the result is independent of the machine doing the
+ * rendering. Example: (…18:30Z, -540) → "2026-06-13 03:30 (UTC+09:00)".
+ */
+export function formatLocal(utcMs: number, tzOffsetMinutes: number | null | undefined): string {
+  const offset = tzOffsetMinutes ?? 0;
+  const shifted = new Date(utcMs - offset * 60_000);
+  const date = `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
+  const time = `${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}`;
+  return `${date} ${time} (${formatOffsetLabel(offset)})`;
+}
+
+/** Just the local clock time, e.g. "18:30" — for compact contact-facing copy. */
+export function formatLocalClock(utcMs: number, tzOffsetMinutes: number | null | undefined): string {
+  const offset = tzOffsetMinutes ?? 0;
+  const shifted = new Date(utcMs - offset * 60_000);
+  return `${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}`;
+}

@@ -55,12 +55,38 @@ export interface StandDownConfirmationPayload {
   userDisplayName: string;
 }
 
+/**
+ * "Device went dark" escalation (Fix Brief 1 #3). Fired when an active event
+ * stops heart-beating (missed heartbeat) or the client reports itself lost. An
+ * interruption ESCALATES, it never cancels — so this tells the contact the
+ * phone went dark while the alert is still active, and to treat it as MORE
+ * urgent, not resolved.
+ */
+export interface EscalationAlertPayload {
+  userDisplayName: string;
+  dashboardUrl: string;
+  /** Why we escalated: 'device_dark' (missed heartbeat) | 'client_lost' (pagehide). */
+  reason: 'device_dark' | 'client_lost';
+  /** Local time of the last contact with the device, e.g. "18:42". */
+  lastSeen?: string | null;
+  location?: { lat: number; lon: number } | null;
+}
+
 /** Every channel ('push' | 'line' | 'telegram' | 'sms' | 'email'). */
 export type ChannelName = 'push' | 'line' | 'telegram' | 'sms' | 'email';
 
 export interface NotificationChannel {
   readonly channel: ChannelName;
+  /**
+   * Provider message id of the most recent send, when the provider returns one
+   * (SendGrid X-Message-Id, LINE x-line-request-id). Recorded in delivery_records
+   * so a delivery can be traced back to the provider's own logs. Optional —
+   * channels that have no such id leave it undefined.
+   */
+  readonly lastProviderMessageId?: string | null;
   pushActivationAlert(eventId: string, payload: ActivationAlertPayload): Promise<boolean>;
+  /** "Device went dark" escalation — interruption escalates, never cancels. */
+  pushEscalation(eventId: string, payload: EscalationAlertPayload): Promise<boolean>;
   pushClassificationUpdate(eventId: string, payload: ClassificationUpdatePayload): Promise<boolean>;
   pushClosureRequest(eventId: string, payload: ClosureRequestPayload): Promise<boolean>;
   /**

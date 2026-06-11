@@ -25,6 +25,9 @@ export class StubChannel implements NotificationChannel {
   pushActivationAlert(): Promise<boolean> {
     return this.unimplemented('activation');
   }
+  pushEscalation(): Promise<boolean> {
+    return this.unimplemented('escalation');
+  }
   pushClassificationUpdate(): Promise<boolean> {
     return this.unimplemented('classification');
   }

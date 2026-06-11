@@ -5,6 +5,7 @@ import { Gear } from '@phosphor-icons/react';
 import { api } from '@/lib/api';
 import { isSetupComplete } from '@/lib/auth';
 import { triggerActivation } from '@/lib/activation';
+import { PinEntryOverlay } from '@/routes/meditation/PinEntryOverlay';
 
 /**
  * Direct-mode home (W8A) — the BLACK BOX interface from the reference design,
@@ -19,6 +20,7 @@ interface MeResponse {
 
 export function BlackBoxHome(): JSX.Element {
   const [guardian, setGuardian] = useState<MeResponse['guardian']>(null);
+  const [pinOpen, setPinOpen] = useState(false);
 
   useEffect(() => {
     void api<MeResponse>('/v1/me').then((res) => {
@@ -55,7 +57,7 @@ export function BlackBoxHome(): JSX.Element {
           type="button"
           onClick={activate}
           aria-label="Activate"
-          className="relative flex h-48 w-48 items-center justify-center rounded-full transition-transform active:scale-95"
+          className="relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
           <span className="absolute inset-0 rounded-full border border-status-armed/40" />
           <span className="absolute inset-6 rounded-full border border-bb-border-defined" />
@@ -65,6 +67,16 @@ export function BlackBoxHome(): JSX.Element {
         <div className="mt-10 font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
           Tap to activate
         </div>
+
+        {/* Stand down: enter the lock code to end an active alert. Duress code
+            escalates instead of cancelling (server-authoritative). */}
+        <button
+          type="button"
+          onClick={() => setPinOpen(true)}
+          className="mt-8 font-mono text-[11px] uppercase tracking-[0.18em] text-bb-text-secondary hover:text-bb-text"
+        >
+          Enter code to stand down
+        </button>
       </div>
 
       <div className="space-y-4">
@@ -89,6 +101,8 @@ export function BlackBoxHome(): JSX.Element {
           )}
         </Section>
       </div>
+
+      <PinEntryOverlay open={pinOpen} onClose={() => setPinOpen(false)} />
     </main>
   );
 }

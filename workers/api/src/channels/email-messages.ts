@@ -12,6 +12,7 @@ import type {
   ClosureConfirmationPayload,
   ClosureRequestPayload,
   DuressAlertPayload,
+  EscalationAlertPayload,
   StandDownConfirmationPayload,
 } from './types';
 
@@ -99,6 +100,38 @@ export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
       `EMERGENCY — ${p.userDisplayName} activated BLACK BOX. Live audio + location active.\n` +
       `Where: ${coords(p.location)}\n${p.threatSummary ? `Heard: ${p.threatSummary}\n` : ''}` +
       `Open the live dashboard: ${p.dashboardUrl}`,
+  };
+}
+
+export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
+  const why =
+    p.reason === 'client_lost'
+      ? 'Her phone closed the app or lost connection while the alert was still active.'
+      : 'Her phone stopped checking in while the alert was still active (it may be off, out of battery, or taken).';
+  const rows: Array<[string, string]> = [
+    ['Who', p.userDisplayName],
+    ['Status', 'ALERT STILL ACTIVE — device went dark'],
+  ];
+  if (p.lastSeen) {
+    rows.push(['Last seen', p.lastSeen]);
+  }
+  if (p.location) {
+    rows.push(['Last where', `${p.location.lat.toFixed(4)}°, ${p.location.lon.toFixed(4)}°`]);
+  }
+  return {
+    subject: `🚨 BLACK BOX — ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE 🚨`,
+    html: shell({
+      headerColor: RED,
+      headerText: '🚨 DEVICE WENT DARK',
+      rows,
+      ctaUrl: p.dashboardUrl,
+      ctaText: 'OPEN LIVE DASHBOARD',
+      note: `${why} This is MORE urgent, not resolved. The alert has not been cancelled.`,
+    }),
+    text:
+      `DEVICE WENT DARK — ${p.userDisplayName}'s phone stopped checking in. THE ALERT IS STILL ACTIVE.\n` +
+      `${why}\n${p.lastSeen ? `Last seen: ${p.lastSeen}\n` : ''}` +
+      `This is more urgent, not resolved. Open the live dashboard: ${p.dashboardUrl}`,
   };
 }
 

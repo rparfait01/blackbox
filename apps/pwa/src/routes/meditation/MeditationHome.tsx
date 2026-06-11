@@ -73,12 +73,12 @@ export function MeditationHome(): JSX.Element {
       </h1>
 
       <div
-        className="relative flex h-60 w-60 touch-none items-center justify-center"
+        className="relative flex h-60 w-60 touch-none select-none items-center justify-center [-webkit-touch-callout:none] [-webkit-user-select:none]"
         {...handlers}
       >
         <HoldProgressRing progress={progress} />
         <BreathingCircles />
-        <span className="animate-breath-label motion-reduce:animate-none relative z-10 font-serif text-lg font-light uppercase tracking-[0.3em] text-med-text">
+        <span className="animate-breath-label motion-reduce:animate-none pointer-events-none relative z-10 select-none font-serif text-lg font-light uppercase tracking-[0.3em] text-med-text">
           Breathe
         </span>
       </div>

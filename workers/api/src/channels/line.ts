@@ -15,6 +15,7 @@ import {
   closureConfirmation,
   closureRequest,
   duressAlert,
+  escalationAlert,
   standDownConfirmation,
   type BuiltMessage,
 } from './messages';
@@ -23,6 +24,7 @@ import type {
   ClassificationUpdatePayload,
   ClosureRequestPayload,
   DuressAlertPayload,
+  EscalationAlertPayload,
   NotificationChannel,
   StandDownConfirmationPayload,
 } from './types';
@@ -43,6 +45,7 @@ async function retryKey(seed: string): Promise<string> {
 
 export class LineChannel implements NotificationChannel {
   readonly channel = 'line' as const;
+  lastProviderMessageId: string | null = null;
 
   constructor(
     private readonly accessToken: string,
@@ -51,6 +54,9 @@ export class LineChannel implements NotificationChannel {
 
   pushActivationAlert(eventId: string, payload: ActivationAlertPayload): Promise<boolean> {
     return this.send(eventId, 'activation', activationAlert(eventId, payload));
+  }
+  pushEscalation(eventId: string, payload: EscalationAlertPayload): Promise<boolean> {
+    return this.send(eventId, 'escalation', escalationAlert(payload));
   }
 
   pushClassificationUpdate(
@@ -114,6 +120,7 @@ export class LineChannel implements NotificationChannel {
         },
         body: JSON.stringify({ to: this.channelUserId, messages }),
       });
+      this.lastProviderMessageId = response.headers.get('x-line-request-id');
       console.log(
         JSON.stringify({
           channel: 'line',

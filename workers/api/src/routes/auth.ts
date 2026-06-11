@@ -51,7 +51,14 @@ authRoutes.post('/signup/start', async (c) => {
   if (!stored.ok) {
     return c.json({ error: stored.reason ?? 'otp_failed' }, 429);
   }
-  c.executionCtx.waitUntil(sendOtpViaEmail(c.env, email, code).then(() => undefined));
+  // Await the send: do NOT return 201 unless SendGrid accepted the message.
+  const sent = await sendOtpViaEmail(c.env, email, code);
+  if (!sent.ok) {
+    return c.json(
+      { error: 'email_send_failed', sendgridStatus: sent.status, sendgridBody: sent.body },
+      502,
+    );
+  }
   return c.json({ signupId: result.userId, expiresAt: stored.expiresAt }, 201);
 });
 
@@ -125,16 +132,24 @@ authRoutes.post('/signin/start', async (c) => {
   }
   const email = normalizeEmail(body.email);
   const user = await getUserByEmail(c.env, email);
-  // Only send to a finalized account, but respond the same either way (no
-  // account-enumeration via this endpoint).
-  if (user && isActive(user)) {
-    const code = generateOtp();
-    const stored = await storeOtp(c.env, email, code, 'email');
-    if (stored.ok) {
-      c.executionCtx.waitUntil(sendOtpViaEmail(c.env, email, code).then(() => undefined));
-    }
+  // The pilot UX favors a clear "no account found" over enumeration resistance,
+  // so an unknown / unfinalized email returns 404.
+  if (!user || !isActive(user)) {
+    return c.json({ error: 'user_not_found' }, 404);
   }
-  return c.json({ ok: true }, 200);
+  const code = generateOtp();
+  const stored = await storeOtp(c.env, email, code, 'email');
+  if (!stored.ok) {
+    return c.json({ error: stored.reason ?? 'otp_failed' }, 429);
+  }
+  const sent = await sendOtpViaEmail(c.env, email, code);
+  if (!sent.ok) {
+    return c.json(
+      { error: 'email_send_failed', sendgridStatus: sent.status, sendgridBody: sent.body },
+      502,
+    );
+  }
+  return c.json({ ok: true, expiresAt: stored.expiresAt }, 200);
 });
 
 authRoutes.post('/signin/verify', async (c) => {

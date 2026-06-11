@@ -12,6 +12,8 @@
  * the PWA, and never changes anything the PWA observes.
  */
 
+import { formatLocalClock } from '@blackbox/shared';
+
 import { dispatch } from '../channels/router';
 import type { ChannelName } from '../channels/types';
 import type { Env } from '../types';
@@ -100,4 +102,75 @@ export async function notifyActivation(
   if (result.delivered && result.channel) {
     await markDelivered(env, eventId, result.channel);
   }
+}
+
+/**
+ * "Device went dark" escalation (Fix Brief 1 #3). Fired when an active event's
+ * heartbeat goes stale (cron) or the client reports itself lost (pagehide
+ * beacon). Sets `events.escalatedAt` exactly once so it never re-fires. An
+ * interruption ESCALATES — it never closes the event.
+ */
+export async function notifyEscalation(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+  reason: 'device_dark' | 'client_lost',
+): Promise<void> {
+  const event = await env.DB.prepare(
+    'SELECT userId, userHash, status, escalatedAt, lastHeartbeatAt, tzOffsetMinutes FROM events WHERE id = ?',
+  )
+    .bind(eventId)
+    .first<{
+      userId: string | null;
+      userHash: string | null;
+      status: string;
+      escalatedAt: number | null;
+      lastHeartbeatAt: number | null;
+      tzOffsetMinutes: number | null;
+    }>();
+  // Never escalate a closed event, and never escalate twice.
+  if (!event || event.status !== 'active' || event.escalatedAt != null) {
+    return;
+  }
+  // Claim the escalation atomically: only the writer that flips escalatedAt from
+  // NULL proceeds, so concurrent cron + beacon can't double-send.
+  const claim = await env.DB.prepare(
+    'UPDATE events SET escalatedAt = ? WHERE id = ? AND escalatedAt IS NULL AND status = ?',
+  )
+    .bind(Date.now(), eventId, 'active')
+    .run();
+  if (claim.meta.changes === 0) {
+    return;
+  }
+
+  const actorHash = event.userHash;
+  const contact = await getContactForEvent(env, event);
+  if (!contact || !env.MAGIC_LINK_SECRET) {
+    await audit(env, eventId, 'escalation_skipped', actorHash, {
+      reason: contact ? 'unconfigured' : 'no_contact',
+    });
+    return;
+  }
+  const token = await mintMagicToken(env.MAGIC_LINK_SECRET, eventId);
+  const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
+  const lastSeen = event.lastHeartbeatAt
+    ? formatLocalClock(event.lastHeartbeatAt, event.tzOffsetMinutes)
+    : null;
+  await audit(env, eventId, 'escalation_fired', actorHash, { reason });
+  await dispatch(
+    env,
+    contact.id,
+    {
+      kind: 'escalation',
+      eventId,
+      payload: {
+        userDisplayName: contact.displayName,
+        dashboardUrl,
+        reason,
+        lastSeen,
+        location: await latestLocation(env, eventId),
+      },
+    },
+    actorHash,
+  );
 }
