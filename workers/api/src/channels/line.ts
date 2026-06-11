@@ -1,0 +1,129 @@
+/**
+ * LINE Messaging API channel (W6). Pushes rich Flex messages to a single
+ * contact's LINE user id, authenticated with the long-lived Channel Access
+ * Token. Pushes are idempotent: the retry key is derived deterministically from
+ * eventId + message type, so a retried activation alert never double-sends.
+ *
+ * Logging discipline: we log endpoint / status / latency / messageType only —
+ * never the access token, the channelUserId, or any message contents.
+ */
+
+import { sha256Hex } from '@blackbox/shared';
+import {
+  activationAlert,
+  classificationUpdate,
+  closureConfirmation,
+  closureRequest,
+  duressAlert,
+  standDownConfirmation,
+  type BuiltMessage,
+} from './messages';
+import type {
+  ActivationAlertPayload,
+  ClassificationUpdatePayload,
+  ClosureRequestPayload,
+  DuressAlertPayload,
+  NotificationChannel,
+  StandDownConfirmationPayload,
+} from './types';
+
+const PUSH_ENDPOINT = 'https://api.line.me/v2/bot/message/push';
+
+/** Deterministic UUID (for the idempotent retry key) from a stable string. */
+async function retryKey(seed: string): Promise<string> {
+  const hex = await sha256Hex(new TextEncoder().encode(seed));
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join('-');
+}
+
+export class LineChannel implements NotificationChannel {
+  readonly channel = 'line' as const;
+
+  constructor(
+    private readonly accessToken: string,
+    private readonly channelUserId: string,
+  ) {}
+
+  pushActivationAlert(eventId: string, payload: ActivationAlertPayload): Promise<boolean> {
+    return this.send(eventId, 'activation', activationAlert(eventId, payload));
+  }
+
+  pushClassificationUpdate(
+    eventId: string,
+    payload: ClassificationUpdatePayload,
+  ): Promise<boolean> {
+    // Time-varying content: include a nonce in the key so distinct updates send.
+    return this.send(`${eventId}:${payload.summary}`, 'classification', classificationUpdate(payload));
+  }
+
+  pushClosureRequest(eventId: string, payload: ClosureRequestPayload): Promise<boolean> {
+    return this.send(eventId, 'closure', closureRequest(eventId, payload));
+  }
+
+  pushDuressAlert(eventId: string, payload: DuressAlertPayload): Promise<boolean> {
+    return this.send(eventId, 'duress', duressAlert(eventId, payload));
+  }
+
+  pushClosureConfirmation(eventId: string): Promise<boolean> {
+    return this.send(eventId, 'closure_confirm', closureConfirmation());
+  }
+
+  pushStandDownConfirmation(
+    eventId: string,
+    payload: StandDownConfirmationPayload,
+  ): Promise<boolean> {
+    return this.send(eventId, 'stand_down_confirm', standDownConfirmation(payload.time));
+  }
+
+  /**
+   * Send a built message, falling back to its plain-text form if the Flex
+   * message is rejected. Returns true only on a 200 from LINE.
+   */
+  private async send(keySeed: string, messageType: string, built: BuiltMessage): Promise<boolean> {
+    const key = await retryKey(`${keySeed}:${messageType}`);
+    const flexOk = await this.post(built.messages, key, messageType);
+    if (flexOk) {
+      return true;
+    }
+    // Fall back to a plain-text message (new retry key so it is not deduped
+    // against the failed Flex attempt).
+    const fallbackKey = await retryKey(`${keySeed}:${messageType}:fallback`);
+    return this.post([{ type: 'text', text: built.fallback }], fallbackKey, `${messageType}_fallback`);
+  }
+
+  private async post(
+    messages: Record<string, unknown>[],
+    key: string,
+    messageType: string,
+  ): Promise<boolean> {
+    const start = Date.now();
+    try {
+      const response = await fetch(PUSH_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.accessToken}`,
+          'X-Line-Retry-Key': key,
+        },
+        body: JSON.stringify({ to: this.channelUserId, messages }),
+      });
+      console.log(
+        JSON.stringify({
+          channel: 'line',
+          messageType,
+          status: response.status,
+          ms: Date.now() - start,
+        }),
+      );
+      return response.status === 200;
+    } catch {
+      console.log(JSON.stringify({ channel: 'line', messageType, status: 'fetch_error' }));
+      return false;
+    }
+  }
+}

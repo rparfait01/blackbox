@@ -34,6 +34,13 @@ export type {
   UploadQueueItem,
 } from './types';
 
+export {
+  getStoredPin,
+  setStoredPin,
+  getStoredDuressPin,
+  setStoredDuressPin,
+} from './user-config';
+
 /**
  * Append-only local store. Recording chunks and location points are written
  * with `add` (never overwritten); only session metadata transitions status.

@@ -5,7 +5,7 @@ import { log } from '@/lib/log';
  * reads as a meditation app's storage in browser DevTools — facade consistency.
  */
 export const DB_NAME = 'stillpoint';
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 export const STORE_SESSIONS = 'sessions';
 export const STORE_RECORDINGS = 'recordings';
@@ -13,6 +13,7 @@ export const STORE_LOCATIONS = 'locations';
 export const STORE_TRANSCRIPTS = 'transcripts';
 export const STORE_CLASSIFICATIONS = 'classifications';
 export const STORE_UPLOAD_QUEUE = 'upload_queue';
+export const STORE_USER_CONFIG = 'userConfig';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -77,6 +78,13 @@ function openDB(): Promise<IDBDatabase> {
           autoIncrement: true,
         });
         queue.createIndex('bySession', 'sessionId', { unique: false });
+      }
+
+      // Added in v5 (W6). Single-record-per-key config store: the hashed closure
+      // pin and duress pin live here. Same guarded create-if-missing pattern, so
+      // the v4 -> v5 upgrade only adds this store and preserves all other data.
+      if (!db.objectStoreNames.contains(STORE_USER_CONFIG)) {
+        db.createObjectStore(STORE_USER_CONFIG, { keyPath: 'key' });
       }
     };
 

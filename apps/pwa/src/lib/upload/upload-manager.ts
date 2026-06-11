@@ -4,7 +4,6 @@ import type { Classification } from '@blackbox/classifier';
 import { log } from '@/lib/log';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
 import { getUserHash } from '@/lib/device';
-import { fireDeliveryHaptic } from '@/lib/activation/haptic';
 import {
   deleteQueuedUpload,
   enqueueUpload,
@@ -23,9 +22,9 @@ import type { GeoFix } from '@/lib/geolocation/location-tracker';
  * (on first drain) so activation never blocks on the network — and so an offline
  * activation still queues data that flushes when connectivity returns.
  *
- * Covert: nothing here ever changes the UI. The only user-perceptible effect is
- * the two-pulse haptic, fired exactly once per session on the first successful
- * chunk upload (which implies the cloud has accepted the event).
+ * Covert: nothing here ever changes the UI. There is no on-device feedback of
+ * any kind during a session — not here and not anywhere — so this pipeline has
+ * no user-perceptible effect.
  */
 
 interface SessionContext {
@@ -41,7 +40,6 @@ const LOCATION_FLUSH_MS = 5000;
 
 const contexts = new Map<string, SessionContext>();
 const locationBatch = new Map<string, Array<Record<string, number>>>();
-const hapticFired = new Set<string>();
 
 let timersStarted = false;
 let drainScheduled = false;
@@ -203,10 +201,12 @@ async function ensureEvent(ctx: SessionContext): Promise<boolean> {
     return true;
   }
   const userHash = await getUserHash();
+  // locale lets the contact dashboard show the right emergency number (W7).
+  const locale = typeof navigator !== 'undefined' ? navigator.language : '';
   const response = await fetch(`${API_BASE_URL}/v1/events`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userHash, source: ctx.source, startTime: ctx.startTime }),
+    body: JSON.stringify({ userHash, source: ctx.source, startTime: ctx.startTime, locale }),
   });
   if (response.status !== 201) {
     return false;
@@ -247,14 +247,7 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
     headers: { ...headers, ...signed },
     body: body as BodyInit,
   });
-  if (response.status >= 200 && response.status < 300) {
-    if (item.kind === 'chunk' && !hapticFired.has(ctx.sessionId)) {
-      hapticFired.add(ctx.sessionId);
-      fireDeliveryHaptic();
-    }
-    return true;
-  }
-  return false;
+  return response.status >= 200 && response.status < 300;
 }
 
 async function drainQueue(): Promise<void> {

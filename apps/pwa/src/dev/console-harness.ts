@@ -1,6 +1,14 @@
 import { LocalClassifier, type Classification } from '@blackbox/classifier';
 import { append, clear, getBuffer, type BufferedFragment } from '@/lib/transcript-buffer';
-import { getClassifications, getLatestClassification, type StoredClassification } from '@/lib/storage';
+import {
+  getClassifications,
+  getLatestClassification,
+  setStoredDuressPin,
+  setStoredPin,
+  type StoredClassification,
+} from '@/lib/storage';
+import { hashPin } from '@/lib/crypto/pin';
+import { API_BASE_URL } from '@/lib/env';
 
 /**
  * DEV-only console interface for exercising the classification foundation
@@ -17,8 +25,23 @@ interface ClassifierDevApi {
   getAllClassifications: (sessionId: string) => Promise<StoredClassification[]>;
 }
 
+/** Pilot-only admin/config helpers (W6). Dev builds only. */
+interface ContactsDevApi {
+  /** List server-side contacts. Pass the ADMIN_TOKEN (kept out of source). */
+  list: (adminToken: string) => Promise<unknown>;
+}
+
+interface PinDevApi {
+  /** Store the hashed closure pin for the user (the normal pin). */
+  set: (digits: string) => Promise<void>;
+  /** Store the hashed duress pin (same first 3 digits, different 4th). */
+  setDuress: (digits: string) => Promise<void>;
+}
+
 interface StillpointDevGlobal {
   classifier: ClassifierDevApi;
+  contacts: ContactsDevApi;
+  pin: PinDevApi;
 }
 
 type GlobalWithDev = typeof globalThis & { __stillpoint?: StillpointDevGlobal };
@@ -40,5 +63,23 @@ export function installDevConsole(): void {
     getAllClassifications: (sessionId) => getClassifications(sessionId),
   };
 
-  (globalThis as GlobalWithDev).__stillpoint = { classifier: classifierApi };
+  const contactsApi: ContactsDevApi = {
+    list: async (adminToken) => {
+      const response = await fetch(`${API_BASE_URL}/v1/admin/contacts`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      return response.json();
+    },
+  };
+
+  const pinApi: PinDevApi = {
+    set: async (digits) => setStoredPin(await hashPin(digits)),
+    setDuress: async (digits) => setStoredDuressPin(await hashPin(digits)),
+  };
+
+  (globalThis as GlobalWithDev).__stillpoint = {
+    classifier: classifierApi,
+    contacts: contactsApi,
+    pin: pinApi,
+  };
 }

@@ -19,7 +19,8 @@ export interface ActivationHold {
  *
  * This is a covert activation trigger: completion produces no visible output.
  * The progress ring is the only on-screen feedback, and it reads as part of the
- * meditation interaction. (Recording + haptic acknowledgment attach in W2.)
+ * meditation interaction. Once activated, the session gives no on-device
+ * feedback of any kind — the system records and reaches, it does not reassure.
  */
 export function useActivationHold(holdMs: number, onComplete: () => void): ActivationHold {
   const [progress, setProgress] = useState(0);

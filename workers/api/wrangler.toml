@@ -6,20 +6,27 @@ compatibility_flags = ["nodejs_compat"]
 # Principle: no telemetry. Disable Wrangler's anonymous usage metrics.
 send_metrics = false
 
-# Allowed PWA origins for CORS (comma-separated). Override per environment.
+# Allowed PWA origins for CORS (comma-separated). Add the deployed Pages origin
+# here too so the contact's magic-link view can call the Worker.
 [vars]
 CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173"
+# PWA origin used to build the contact's magic-link dashboard URL. Set to the
+# deployed Pages URL for the pilot (e.g. https://stillpoint.pages.dev). When
+# empty the Worker falls back to its own origin, which will not serve the PWA.
+PWA_ORIGIN = "http://localhost:5173"
 
-# D1 metadata database. Create with `wrangler d1 create blackbox` and paste the
-# returned database_id here before deploying. Local dev (`wrangler dev`) uses a
-# local SQLite simulation and does not need a real id.
+# Secrets (LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,
+# MAGIC_LINK_SECRET) are NOT defined here — set them with `wrangler secret put`.
+# See README.md.
+
+# D1 metadata database.
 [[d1_databases]]
 binding = "DB"
 database_name = "blackbox"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "32c52326-db43-4a39-ab58-f62d7b95b9ad"
 migrations_dir = "migrations"
 
-# R2 media bucket. Create with `wrangler r2 bucket create blackbox-media`.
+# R2 media bucket.
 [[r2_buckets]]
 binding = "MEDIA"
 bucket_name = "blackbox-media"

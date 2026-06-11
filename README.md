@@ -53,7 +53,8 @@ This repository is at build phase **W1 (Foundation)**. What works today:
   serif wordmark, and a counting-up session timer.
 - The covert press-and-hold activation trigger on the breathing circle, with a progress
   ring. On completion it fires a development-only log and produces no visible output —
-  W2 attaches the actual recording invocation and haptic acknowledgment.
+  and there is no on-device feedback at any point in a session (the system records and
+  reaches, it does not reassure).
 - An empty `/settings` route reserved for a later phase (nothing links to it yet).
 - PWA shell: web manifest (named "Stillpoint"), service worker, placeholder icons.
 - Worker scaffold with a `/health` endpoint (not deployed).

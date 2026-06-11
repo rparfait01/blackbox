@@ -233,7 +233,15 @@ Both users see each other in their dashboard's "Designated Contact" field.
 
 ### 8. Notification stack (cuts across W6)
 
-Notifications fire in parallel via every channel available:
+**BLACK BOX is the spine; these are channels.** LINE is not the foundation — it
+is one channel among many. A contact is a person with one or more reach
+endpoints tried in priority order; a contact without LINE is still reachable.
+Adding a channel is implementing one channel and registering it in the router —
+no schema redesign per channel. (v0 ships LINE; push/telegram/sms/email are
+stubs the router routes to once built. Native/web **push** is the next to build,
+as it removes the third-party-messaging-app dependency entirely.)
+
+Notifications fire via every channel available, in priority order:
 
 1. **LINE bot push** (primary for both users — they use LINE)
 2. **Telegram bot push** (backup, if user has paired Telegram)

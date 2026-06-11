@@ -23,6 +23,7 @@ import {
   uploadTranscript,
 } from '@/lib/upload';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
+import { startSessionMonitor, stopSessionMonitor } from './session-monitor';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
 const DEDUP_WINDOW_MS = 60_000;
@@ -120,6 +121,13 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
     beginSession(newSessionId);
     registerUploadSession({ sessionId: newSessionId, source, startTime });
 
+    // Start the closure monitor: it polls delivery-status and tears the session
+    // down if the contact approves closure. Teardown is exactly stopActivation
+    // (covert: no UI change). There is no on-device feedback during the session.
+    startSessionMonitor(newSessionId, () => {
+      void stopActivation();
+    });
+
     let sequence = 0;
     const capture = new MediaCapture({
       mode,
@@ -210,6 +218,7 @@ export async function stopActivation(): Promise<void> {
   }
   const { sessionId, capture, tracker, transcription, tone, classifyTimer } = active;
   active = null;
+  stopSessionMonitor();
   if (classifyTimer !== null) {
     window.clearInterval(classifyTimer);
   }
@@ -263,9 +272,9 @@ async function runClassifyTick(session: ActiveSession): Promise<void> {
 }
 
 function onRecordingStarted(sessionId: string): void {
-  // Local recording has begun. Per the covert design NO haptic fires here — the
-  // acknowledgment haptic fires only on network-confirmed delivery (W5). In W2
-  // this is a development-only log.
+  // Local recording has begun. By design there is NO on-device feedback at any
+  // point in an active session — BLACK BOX records and reaches, it does not
+  // reassure. This is a development-only log.
   log.debug('recording started', sessionId);
 }
 

@@ -8,6 +8,8 @@ import { triggerActivation } from '@/lib/activation';
 import { BreathingCircles } from './BreathingCircles';
 import { HoldProgressRing } from './HoldProgressRing';
 import { useActivationHold } from './use-activation-hold';
+import { useEndSessionPress } from './use-end-session-press';
+import { PinEntryOverlay } from './PinEntryOverlay';
 
 /**
  * Stillpoint — the entire visible surface of the app. Nothing here references
@@ -15,18 +17,20 @@ import { useActivationHold } from './use-activation-hold';
  *
  * A deliberate press-and-hold on the breathing circle is a covert activation
  * trigger. Completing the hold produces NO visible output: no navigation, no
- * screen change, no toast. The meditation view simply continues. In W1 the
- * completion only logs for development verification; W2 attaches the actual
- * recording invocation and the (network-confirmed) haptic acknowledgment.
+ * screen change, no toast. The meditation view simply continues — and there is
+ * no on-device feedback at any later point in the session either. BLACK BOX
+ * records and reaches; it does not reassure.
  *
  * The gear and "End session" controls are ordinary meditation-app affordances.
- * The gear opens preferences; ending the session resets the timer. In a later
- * phase (W6) the same end-session control will branch to the closure-pin flow
- * when a session is active — but in W1 it is a plain timer reset.
+ * The gear opens preferences. "End session" carries the W6 covert closure
+ * gesture: a quick TAP resets the timer (the W2 behavior), while a deliberate
+ * long HOLD opens the disguised pin-entry overlay — the only way to request
+ * closure. The hold does not reset the timer; only the tap does.
  */
 export function MeditationHome(): JSX.Element {
   const sessionStart = useRef<number>(performance.now());
   const [sessionMs, setSessionMs] = useState(0);
+  const [pinOpen, setPinOpen] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -41,14 +45,18 @@ export function MeditationHome(): JSX.Element {
     void triggerActivation('stillpoint-press');
   });
 
-  const endSession = (): void => {
-    // Always reset the visible timer — Stillpoint behaves exactly like a normal
-    // meditation app ending a session, every time. Any underlying recording
+  const resetTimer = (): void => {
+    // Tap behavior (W2): reset the visible timer. Stillpoint behaves exactly
+    // like a normal meditation app ending a session. Any underlying recording
     // continues untouched: this does NOT stop capture, geolocation, or the
-    // sessions row. Closure is a separate, non-obvious gesture designed in W6.
+    // sessions row.
     sessionStart.current = performance.now();
     setSessionMs(0);
   };
+
+  const { progress: endHoldProgress, handlers: endHandlers } = useEndSessionPress(resetTimer, () =>
+    setPinOpen(true),
+  );
 
   return (
     <main className="stillpoint-bg animate-hue-drift motion-reduce:animate-none relative flex h-full w-full select-none flex-col items-center justify-center overflow-hidden p-8 text-med-text">
@@ -84,13 +92,25 @@ export function MeditationHome(): JSX.Element {
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={endSession}
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 font-serif text-base font-light tracking-[0.2em] text-med-text/40 transition-colors hover:text-med-text/70"
-      >
-        End session
-      </button>
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center">
+        <button
+          type="button"
+          {...endHandlers}
+          className="touch-none select-none font-serif text-base font-light tracking-[0.2em] text-med-text/40 transition-colors hover:text-med-text/70"
+        >
+          End session
+        </button>
+        {/* Subtle filling line: the only feedback during the closure hold. It
+            reads as a press ripple, not a progress bar. */}
+        <div className="mt-2 h-px w-24 overflow-hidden">
+          <div
+            className="h-full bg-med-text/50"
+            style={{ width: `${endHoldProgress * 100}%` }}
+          />
+        </div>
+      </div>
+
+      <PinEntryOverlay open={pinOpen} onClose={() => setPinOpen(false)} />
     </main>
   );
 }

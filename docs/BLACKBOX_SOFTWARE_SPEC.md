@@ -552,6 +552,18 @@ Software side: implement against a mock first. Hardware integration in W8 only r
 
 ## 7. Notification policy engine
 
+**BLACK BOX is the system; the messaging services are channels.** LINE, SMS,
+email, web/native push, and Telegram are interchangeable *channels*, never the
+foundation. A contact is a person with one or more reach endpoints, each
+`(channel, channelIdentifier, priority)`; the notification router tries them in
+priority order until one delivers. A contact with no LINE is still reachable by
+any other endpoint. Adding a channel is implementing one `NotificationChannel`
+and registering it — it never requires a schema change or a new code path at the
+call sites. No single channel is load-bearing. (In v0 only LINE is implemented;
+push/telegram/sms/email exist as stubs the router can route to once built —
+native/web **push** is the next to build, as it removes the dependency on any
+third-party messaging app entirely.)
+
 User-configurable cascade. Default policy:
 
 1. **T+0s** — Send to all contacts marked `priority: 1` via Telegram + Web Push

@@ -1,6 +1,13 @@
-# Local Worker secrets template. Copy to `.dev.vars` (gitignored) if you need to
-# override anything for local `wrangler dev`. v0 has NO required secrets — the
-# per-event HMAC secret is generated server-side and stored in D1.
+# Local Worker secrets template. Copy to `.dev.vars` (gitignored) for local
+# `wrangler dev`. The per-event HMAC secret is generated server-side and stored
+# in D1 — it is NOT listed here.
 #
-# CORS origins are set in wrangler.toml [vars]; override here only if needed:
+# W6 secrets (in production, set these with `wrangler secret put` instead):
+# LINE_CHANNEL_ACCESS_TOKEN = "..."   # LINE push API Bearer token
+# LINE_CHANNEL_SECRET = "..."         # verifies inbound LINE webhook signatures
+# ADMIN_TOKEN = "..."                 # protects /v1/admin/* (pilot setup)
+# MAGIC_LINK_SECRET = "..."           # signs read-only contact magic-link tokens
+#
+# CORS origins + PWA_ORIGIN are set in wrangler.toml [vars]; override here if needed:
 # CORS_ALLOWED_ORIGINS = "http://localhost:5173"
+# PWA_ORIGIN = "http://localhost:5173"

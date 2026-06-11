@@ -36,3 +36,10 @@ Desktop.ini
 
 # Test / coverage
 coverage/
+
+# Local credential notes (never commit)
+*token*.txt
+*secret*.txt
+admin_token.txt
+Long Token - Long Lived.txt
+wrangler_secret_list.txt
