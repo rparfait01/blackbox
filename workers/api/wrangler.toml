@@ -17,10 +17,14 @@ PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
 # The Worker's own public origin — used to build dashboard magic-links from the
 # scheduled (cron) context, where there is no request URL. Set to the deployed
 # Worker URL.
-WORKER_ORIGIN = "https://blackbox-api.workers.dev"
+WORKER_ORIGIN = "https://blackbox-api.stillpoint-dev.workers.dev"
 # Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the family
 # pilot this is the operator/founder.
 SECURITY_CONTACT_EMAIL = "royce.ikumi.parfait@gmail.com"
+# Ed25519 PUBLIC verification key (SPKI base64) for export manifests (#C2). The
+# matching PRIVATE key is the INTEGRITY_SIGNING_KEY secret. Publish this value
+# out-of-band so recipients/courts can pin it.
+INTEGRITY_PUBLIC_KEY = "MCowBQYDK2VwAyEA0JvR9tHYACGq0mivDWifJ16CJ6mt6t5A06yLlhpwPYE="
 
 # Secrets are NOT defined here — set them with `wrangler secret put` (see
 # README.md): LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,
