@@ -36,36 +36,35 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
     return () => window.clearTimeout(id);
   }, [open]);
 
-  useEffect(() => {
-    if (digits.length !== 4 || awaiting) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const result = await submitClosurePin(digits);
-      if (cancelled) {
-        return;
-      }
-      if (result === 'submitted') {
-        setAwaiting(true);
-      } else if (result === 'no-session') {
-        onClose();
-      } else {
-        // wrong pin: clear silently, allow another attempt
-        setDigits('');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [digits, awaiting, onClose]);
-
   if (!mounted) {
     return null;
   }
 
+  const runSubmit = async (code: string): Promise<void> => {
+    const result = await submitClosurePin(code);
+    if (result === 'submitted') {
+      setAwaiting(true);
+    } else if (result === 'no-session') {
+      onClose();
+    } else {
+      // wrong code: clear silently, allow another attempt
+      setDigits('');
+    }
+  };
+
   const press = (digit: string): void => {
-    setDigits((current) => (current.length < 4 ? current + digit : current));
+    // Append the digit FIRST; submit only on the FULL 4 digits, deferred so the
+    // 4th dot paints before the panel switches to "Awaiting…" (Fix Brief 4 S3).
+    setDigits((current) => {
+      if (current.length >= 4 || awaiting) {
+        return current;
+      }
+      const next = current + digit;
+      if (next.length === 4) {
+        window.setTimeout(() => void runSubmit(next), 150);
+      }
+      return next;
+    });
   };
   const backspace = (): void => setDigits((current) => current.slice(0, -1));
 

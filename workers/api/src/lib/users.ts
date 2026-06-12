@@ -128,6 +128,20 @@ export async function updateUserFields(
     .run();
 }
 
+/**
+ * True while the user has an active alert (Fix Brief 4 S1). Settings that affect
+ * alert integrity (codes, contacts, channels) are locked during an active event
+ * so an aggressor can't rewrite them mid-alert and then stand down.
+ */
+export async function hasActiveEvent(env: Env, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    "SELECT 1 AS x FROM events WHERE userId = ? AND status = 'active' LIMIT 1",
+  )
+    .bind(userId)
+    .first<{ x: number }>();
+  return row != null;
+}
+
 /** Claim pre-existing pilot rows (keyed by userHash) into the new user account. */
 export async function claimByUserHash(env: Env, userId: string, userHash: string): Promise<void> {
   if (!userHash) {

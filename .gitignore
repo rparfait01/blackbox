@@ -51,3 +51,6 @@ workers/SendGrid Mail Send.txt
 # Stray scratch text files at repo root / workers (never commit; docs live in docs/*.md)
 /*.txt
 workers/*.txt
+
+# Marketing/portfolio HTML kept out of the code repo
+docs/Portfolio/

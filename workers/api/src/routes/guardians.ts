@@ -19,7 +19,7 @@ import {
 } from '../lib/guardians';
 import { mintMagicToken, verifyMagicTokenDetailed } from '../lib/magic-link';
 import { generateOtp, sendOtpViaEmail, sendOtpViaSms, storeOtp, verifyOtp } from '../lib/otp';
-import { getUserById, normalizeEmail } from '../lib/users';
+import { getUserById, hasActiveEvent, normalizeEmail } from '../lib/users';
 import type { Env, Vars } from '../types';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -59,6 +59,9 @@ async function sendInviteEmail(
 
 guardianRoutes.post('/invite', requireSession, async (c) => {
   const userId = c.get('userId');
+  if (await hasActiveEvent(c.env, userId)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
   const body = await c.req
     .json<{ name?: string; phone?: string; email?: string; relationship?: string }>()
     .catch(() => ({}) as Record<string, string>);
@@ -104,6 +107,9 @@ guardianRoutes.get('/', requireSession, async (c) => {
 // Contact setup (Fix Brief 3): the user picks a preferred channel (sms/line/
 // email) + destination; we store it as the priority-1 endpoint immediately.
 guardianRoutes.post('/contact', requireSession, async (c) => {
+  if (await hasActiveEvent(c.env, c.get('userId'))) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
   const body = await c.req
     .json<{ name?: string; relationship?: string; channel?: string; destination?: string }>()
     .catch(() => ({}) as Record<string, string>);
@@ -138,6 +144,9 @@ guardianRoutes.post('/resend', requireSession, async (c) => {
 });
 
 guardianRoutes.delete('/', requireSession, async (c) => {
+  if (await hasActiveEvent(c.env, c.get('userId'))) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
   await removeInvite(c.env, c.get('userId'));
   return c.json({ ok: true }, 200);
 });

@@ -8,12 +8,17 @@ import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { hashSecret, verifySecret } from '../lib/crypto';
 import { getInviteForUser } from '../lib/guardians';
-import { getUserById, updateUserFields } from '../lib/users';
+import { getUserById, hasActiveEvent, updateUserFields } from '../lib/users';
 import type { Env, Vars } from '../types';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 userRoutes.use('*', requireSession);
+
+/** 423 Locked if the user has an active alert (Fix Brief 4 S1). */
+async function lockedDuringAlert(c: { env: Env; get: (k: 'userId') => string }): Promise<boolean> {
+  return hasActiveEvent(c.env, c.get('userId'));
+}
 
 function isFourDigits(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9]{4}$/.test(value);
@@ -77,6 +82,9 @@ userRoutes.post('/region', async (c) => {
 });
 
 userRoutes.post('/lock-code', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
   const body = await c.req
     .json<{ oldCode?: string; newCode?: string }>()
     .catch(() => ({}) as Record<string, string>);
@@ -92,6 +100,9 @@ userRoutes.post('/lock-code', async (c) => {
 });
 
 userRoutes.post('/duress-code', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
   const body = await c.req
     .json<{ lockCode?: string; newDuressCode?: string }>()
     .catch(() => ({}) as Record<string, string>);

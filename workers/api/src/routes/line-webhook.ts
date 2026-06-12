@@ -7,9 +7,8 @@
  */
 
 import type { Context } from 'hono';
-import { dispatch } from '../channels/router';
 import { audit } from '../lib/audit';
-import { getContactForEvent, recordFollow } from '../lib/contacts';
+import { recordFollow } from '../lib/contacts';
 import type { Env, Vars } from '../types';
 
 type Ctx = Context<{ Bindings: Env; Variables: Vars }>;
@@ -57,43 +56,10 @@ async function handlePostback(c: Ctx, action: string, eventId: string): Promise<
   const env = c.env;
   switch (action) {
     case 'approve_closure': {
-      const row = await env.DB.prepare(
-        'SELECT status, closeRequestDuress, userId, userHash FROM events WHERE id = ?',
-      )
-        .bind(eventId)
-        .first<{
-          status: string;
-          closeRequestDuress: number | null;
-          userId: string | null;
-          userHash: string | null;
-        }>();
-      if (!row) {
-        return;
-      }
-      // Duress overrides approval: the recording MUST NOT stop. (The duress
-      // message carries no Approve button, so this is a defensive guard only.)
-      if (row.closeRequestDuress === 1) {
-        await audit(env, eventId, 'closure.approve_ignored_duress', null, null);
-        return;
-      }
-      if (row.status === 'closed') {
-        return;
-      }
-      await env.DB.prepare('UPDATE events SET status = ?, closedAt = ?, closedBy = ? WHERE id = ?')
-        .bind('closed', Date.now(), 'contact_approval', eventId)
-        .run();
-      await audit(env, eventId, 'closure.approved', null, null);
-      // Confirm to the contact via the router (deferred so the ack stays fast).
-      const contact = await getContactForEvent(env, row);
-      if (contact) {
-        c.executionCtx.waitUntil(
-          dispatch(env, contact.id, {
-            kind: 'closureConfirmation',
-            eventId,
-            payload: { userDisplayName: contact.displayName },
-          }),
-        );
-      }
+      // Fix Brief 4 S2: a contact / responder can NEVER stand the alert down.
+      // Only the user's verified lock code closes an event. We record the
+      // contact's intent for the trail, but the event stays active.
+      await audit(env, eventId, 'closure.contact_approve_noop', null, null);
       return;
     }
     case 'hold_closure':

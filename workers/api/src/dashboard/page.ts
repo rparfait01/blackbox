@@ -306,7 +306,6 @@ export function renderDashboardPage(opts: DashboardOpts): string {
         ? '<button id="exportPkg" class="btn btn-share">EXPORT EVIDENCE PACKAGE</button>'
         : ''
     }
-    <button id="share" class="btn btn-share">SHARE LIVE LINK</button>
     <a id="call" class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
     ${
       role === 'coordinator' && state.active
@@ -317,6 +316,18 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 
   <div class="ended-banner" id="endedBanner" ${state.active ? 'hidden' : ''}>
     Session ended — recording has stopped.
+  </div>
+
+  <!-- Share-with-authorities modal (Fix Brief 4 G1): QR + dispatch link. -->
+  <div class="modal" id="dispatchModal" hidden>
+    <div class="modal-card">
+      <div class="modal-title">Share with authorities</div>
+      <div class="qr-box" id="dispatchQr"></div>
+      <div class="modal-note">Scan the code or open the link on the responder's device. They must verify their identity before any evidence is shown.</div>
+      <input class="modal-url" id="dispatchUrl" readonly />
+      <button class="btn btn-share" id="dispatchCopy">Copy link</button>
+      <button class="modal-close" id="dispatchClose">Close</button>
+    </div>
   </div>
 </main>
 <script>window.__CFG=${JSON.stringify(cfg)};window.__STATE0=${JSON.stringify(state)};</script>
@@ -418,6 +429,14 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
 .cam-reload{margin-top:6px;background:#1a1a1a;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:12px}
 .sec-transcript{opacity:.72}
 .transcript-secondary{max-height:140px;font-size:12px;color:#aaa}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+.modal-card{background:#111;border:1px solid #333;border-radius:12px;padding:20px;max-width:360px;width:100%;text-align:center}
+.modal-title{font-weight:700;font-size:16px;margin-bottom:14px}
+.qr-box{background:#fff;border-radius:8px;padding:12px;display:inline-block;max-width:240px}
+.qr-box svg{display:block;width:100%;height:auto}
+.modal-note{color:#aaa;font-size:12px;line-height:1.5;margin:12px 0}
+.modal-url{width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;color:#cfcfcf;font-size:11px;padding:8px;margin-bottom:10px;font-family:ui-monospace,Menlo,monospace}
+.modal-close{margin-top:10px;background:none;border:0;color:#888;font-size:13px;text-decoration:underline}
 .bar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #222;padding:10px 0}
 .rec{display:flex;align-items:center;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase}
 .rec-text{color:#ff3b30}
@@ -643,26 +662,29 @@ const CLIENT_JS = `
     var b=el('respond');
     fetch(api('/responding'),{method:'POST'}).then(function(){ b.classList.add('done'); b.textContent='RESPONDING ✓'; }).catch(function(){});
   };
-  el('share').onclick=function(){
-    var b=el('share');
-    fetch(api('/share')).then(function(r){ return r.json(); }).then(function(d){
-      if(d&&d.url&&navigator.clipboard){ navigator.clipboard.writeText(d.url).then(function(){ b.textContent='LINK COPIED'; setTimeout(function(){ b.textContent='SHARE LIVE LINK'; },2000); }); }
-      else if(d&&d.url){ window.prompt('Copy this live link', d.url); }
-    }).catch(function(){});
-  };
-
-  // ---- share with authorities: mint a dispatch link (Fix Brief 3 R3) ----
+  // ---- share with authorities: mint a dispatch link + QR (Fix Brief 4 G1) ----
   var sa=el('shareAuth');
   if(sa){ sa.onclick=function(){
     sa.disabled=true; sa.textContent='MINTING…';
-    fetch(api('/dispatch-link')).then(function(r){ return r.json(); }).then(function(d){
+    fetch(api('/dispatch-link')).then(function(r){ return r.json().then(function(d){ return {ok:r.ok,d:d}; }); }).then(function(res){
       sa.disabled=false; sa.textContent='SHARE WITH AUTHORITIES';
-      if(d&&d.url){
-        if(navigator.clipboard){ navigator.clipboard.writeText(d.url).catch(function(){}); }
-        window.prompt('Authority dispatch link (identity-verified on open). Send to responders:', d.url);
+      if(res.ok && res.d && res.d.url){
+        var qb=el('dispatchQr'); if(qb){ qb.innerHTML=res.d.qr||''; }
+        var u=el('dispatchUrl'); if(u){ u.value=res.d.url; }
+        el('dispatchModal').hidden=false;
+      } else {
+        alert('Only the responding coordinator can share with authorities.');
       }
-    }).catch(function(){ sa.disabled=false; sa.textContent='SHARE WITH AUTHORITIES'; });
+    }).catch(function(){ sa.disabled=false; sa.textContent='SHARE WITH AUTHORITIES'; alert('Could not create the link. Try again.'); });
   };}
+  (function(){
+    var close=el('dispatchClose'); if(close){ close.onclick=function(){ el('dispatchModal').hidden=true; }; }
+    var copy=el('dispatchCopy'); if(copy){ copy.onclick=function(){
+      var u=el('dispatchUrl'); if(!u) return;
+      u.select();
+      if(navigator.clipboard){ navigator.clipboard.writeText(u.value).then(function(){ copy.textContent='Copied ✓'; setTimeout(function(){ copy.textContent='Copy link'; },1800); }).catch(function(){}); }
+    };}
+  })();
 
   // ---- coordinator stand down: requires the user's lock code (server-verified) ----
   var sdc=el('standDownCode');

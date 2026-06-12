@@ -6,6 +6,7 @@ import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { attemptStandDown } from './lib/standdown';
 import { appendToChain, hashBytes } from './lib/integrity';
+import { qrSvg } from './lib/qr';
 import {
   getVerifiedRecipient,
   logRecipientAction,
@@ -16,13 +17,7 @@ import { acknowledgeCustody, exportPackage } from './lib/custody';
 import { bumpTrust, listTrust } from './lib/trust';
 import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
-import {
-  getContactEndpoints,
-  getContactForEvent,
-  listContacts,
-  listFollows,
-  upsertContact,
-} from './lib/contacts';
+import { getContactForEvent, listContacts, listFollows, upsertContact } from './lib/contacts';
 import { notifyActivation, notifyEscalation } from './lib/notify';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -31,7 +26,6 @@ import { getContactState } from './lib/contact-state';
 import { renderDashboardPage, renderNotifiedPage, renderTokenPage } from './dashboard/page';
 import { audioStream, locationStream } from './routes/contact-streams';
 import { dispatch } from './channels/router';
-import { formatLocalTime } from './lib/contact-state';
 import { handleLineWebhook } from './routes/line-webhook';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
@@ -371,8 +365,10 @@ app.get('/c/:id', async (c) => {
   let isCoordinator: boolean;
   if (claim.meta.changes === 1) {
     isCoordinator = true;
+    // Path '/' so the cookie is also sent on the /v1/c/:id/* API calls (e.g.
+    // dispatch-link, standdown) — not just the /c/:id page (Fix Brief 4 G1).
     setCookie(c, 'bbcoord', newKey, {
-      path: `/c/${eventId}`,
+      path: '/',
       httpOnly: true,
       secure: true,
       sameSite: 'Lax',
@@ -416,8 +412,9 @@ app.get('/v1/c/:id/dispatch-link', async (c) => {
   }
   const token = await mintRoleToken(c.env.MAGIC_LINK_SECRET, eventId, 'dispatch');
   const origin = new URL(c.req.url).origin;
+  const url = `${origin}/c/${eventId}?t=${token}`;
   await audit(c.env, eventId, 'dispatch_link_minted', null, null);
-  return c.json({ url: `${origin}/c/${eventId}?t=${token}` }, 200);
+  return c.json({ url, qr: qrSvg(url) }, 200);
 });
 
 // Coordinator stand-down — requires the user's lock code, server-verified
@@ -681,49 +678,15 @@ app.get('/v1/c/:id/share', async (c) => {
   return c.json({ url: `${workerOrigin}/c/${eventId}?t=${token}` }, 200);
 });
 
-// "HOLD 3S TO STAND DOWN": the contact's deliberate path to end an alert without
-// the user's pin — used when they know the situation is resolved (they reached
-// the user, the user is safe). Closes the event; the PWA's closure monitor then
-// tears down capture/upload/geolocation. NOTHING is pushed to the user's phone.
+// Contact-side stand-down is DISABLED (Fix Brief 4 S2 + Brief 3 G3): a contact /
+// responder can never end an alert. Only the user's verified lock code closes an
+// event. We record the attempt for the trail and refuse to close.
 app.post('/v1/c/:id/stand-down', async (c) => {
   if (!(await requireMagicToken(c))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
-  const eventId = c.req.param('id');
-  const event = await c.env.DB.prepare(
-    'SELECT userId, userHash, status, locale FROM events WHERE id = ?',
-  )
-    .bind(eventId)
-    .first<{ userId: string | null; userHash: string | null; status: string; locale: string | null }>();
-  if (!event) {
-    return c.json({ error: 'not found' }, 404);
-  }
-  if (event.status !== 'closed') {
-    await c.env.DB.prepare('UPDATE events SET status = ?, closedAt = ?, closedBy = ? WHERE id = ?')
-      .bind('closed', Date.now(), 'contact_stand_down', eventId)
-      .run();
-  }
-
-  const contact = await getContactForEvent(c.env, event);
-  let channelUserId: string | null = null;
-  if (contact) {
-    const endpoints = await getContactEndpoints(c.env, contact.id);
-    channelUserId = endpoints.find((e) => e.channel === 'line')?.channelIdentifier ?? null;
-  }
-  await audit(c.env, eventId, 'stand_down_by_contact', null, { channelUserId });
-
-  // Confirm to the contact (routed; never to the user).
-  if (contact) {
-    const time = formatLocalTime(event.locale, Date.now());
-    c.executionCtx.waitUntil(
-      dispatch(c.env, contact.id, {
-        kind: 'standDownConfirmation',
-        eventId,
-        payload: { time, userDisplayName: contact.displayName },
-      }),
-    );
-  }
-  return c.json({ ok: true }, 200);
+  await audit(c.env, c.req.param('id'), 'contact_standdown_blocked', null, null);
+  return c.json({ ok: false, closed: false, reason: 'requires_user_lock_code' }, 403);
 });
 
 // "Client lost" beacon (Fix Brief 1 #3). Sent via navigator.sendBeacon on
@@ -1007,16 +970,12 @@ app.post('/v1/events/:id/close-request', async (c) => {
   return c.json({ ok: true, duress }, 200);
 });
 
+// The generic no-code close is DISABLED (Fix Brief 4 S2). The ONLY way to close
+// an active event is the verified lock code via /v1/events/:id/standdown (PWA)
+// or /v1/c/:id/standdown (coordinator, with the user's code).
 app.post('/v1/events/:id/close', async (c) => {
-  const eventId = c.req.param('id');
-  const body = await c.req
-    .json<{ closedBy?: string }>()
-    .catch(() => ({}) as { closedBy?: string });
-  await c.env.DB.prepare('UPDATE events SET status = ?, closedAt = ?, closedBy = ? WHERE id = ?')
-    .bind('closed', Date.now(), body.closedBy ?? null, eventId)
-    .run();
-  await audit(c.env, eventId, 'event.close', body.closedBy ?? null, null);
-  return c.json({ ok: true }, 200);
+  await audit(c.env, c.req.param('id'), 'event.close_blocked', null, null);
+  return c.json({ ok: false, reason: 'requires_user_lock_code' }, 403);
 });
 
 // fetch + scheduled (Cron Trigger). The scheduled handler runs the
