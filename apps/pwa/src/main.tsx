@@ -18,13 +18,15 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
 import { router } from '@/app/router';
-import { markStaleSessionsInterrupted } from '@/lib/storage';
+import { resumeActiveSession } from '@/lib/activation';
 import { resumeUploads } from '@/lib/upload';
 import '@/index.css';
 
-// On launch, reconcile any session left `active` by a previous reload (the
-// browser kills capture on reload) by marking it `interrupted`. Fire-and-forget.
-void markStaleSessionsInterrupted();
+// On launch, re-hydrate from the server (Fix Brief 6 LT5-1): an alert that is
+// still active server-side stays active and resumes its lifecycle (so a refresh
+// can never close it and the user can still stand it down with the code). A
+// session that never reached the backend is marked interrupted. Fire-and-forget.
+void resumeActiveSession();
 
 // Resume draining any uploads queued by a previous (possibly offline) session.
 void resumeUploads();

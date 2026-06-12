@@ -21,16 +21,27 @@ export interface PermissionResult {
   location: boolean;
 }
 
-async function primeMic(): Promise<boolean> {
+async function primeMicAndCamera(): Promise<boolean> {
+  // Prime BOTH mic and camera in one grant so overt activation never hits a
+  // fresh camera prompt mid-alert (Fix Brief 6 LT5-6). If the camera is absent
+  // or denied, fall back to priming the mic alone.
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
     for (const track of stream.getTracks()) {
       track.stop();
     }
     return true;
-  } catch (error) {
-    log.error('mic permission priming failed', error);
-    return false;
+  } catch {
+    try {
+      const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
+      for (const track of audioOnly.getTracks()) {
+        track.stop();
+      }
+      return true;
+    } catch (error) {
+      log.error('mic permission priming failed', error);
+      return false;
+    }
   }
 }
 
@@ -54,7 +65,7 @@ function primeLocation(): Promise<boolean> {
 /** Request mic + location together from a single user gesture. */
 export async function primePermissions(): Promise<PermissionResult> {
   // Run sequentially: some browsers dislike two simultaneous permission prompts.
-  const mic = await primeMic();
+  const mic = await primeMicAndCamera();
   const location = await primeLocation();
   return { mic, location };
 }

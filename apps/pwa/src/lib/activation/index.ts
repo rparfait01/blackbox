@@ -1,5 +1,6 @@
 import { LocalClassifier, type ClassificationContext } from '@blackbox/classifier';
 import { log } from '@/lib/log';
+import { uploadsEnabled } from '@/lib/env';
 import {
   appendChunk,
   appendClassification,
@@ -67,6 +68,41 @@ let visibilityHooked = false;
 /** True while a session is recording in this page lifetime. */
 export function isSessionActive(): boolean {
   return active !== null;
+}
+
+/**
+ * Re-hydrate from the SERVER on launch (Fix Brief 6 LT5-1). A refresh must never
+ * close an alert and must never strand the user from standing it down:
+ *
+ *  - A local 'active' session that already has a backend event is RESUMED: the
+ *    heartbeat + closure monitor restart so the event stays reachable and the
+ *    user can still enter the verified code to stand it down. The ONLY close
+ *    door remains POST /standdown with the code; the monitor closes locally only
+ *    when the SERVER reports status=closed.
+ *  - A local 'active' session that never reached the backend is genuinely stale
+ *    (capture died on reload) and is marked 'interrupted'.
+ *
+ * Capture (mic/camera) is NOT silently re-acquired — the browser requires a user
+ * gesture after a reload — but the event stays active and reachable, which is
+ * what matters.
+ */
+export async function resumeActiveSession(): Promise<void> {
+  const session = await getActiveSession();
+  if (!session) {
+    return;
+  }
+  if (!uploadsEnabled || !session.eventId || !session.hmacSecret) {
+    await updateSessionStatus(session.id, 'interrupted', Date.now());
+    return;
+  }
+  // Resume the lifecycle. The monitor reconciles against the server's current
+  // status on its first tick: if the alert was already stood down (server
+  // 'closed'), it tears down; otherwise it stays active.
+  startHeartbeat(session.id);
+  startSessionMonitor(session.id, () => {
+    stopHeartbeat();
+    void updateSessionStatus(session.id, 'closed', Date.now());
+  });
 }
 
 /**

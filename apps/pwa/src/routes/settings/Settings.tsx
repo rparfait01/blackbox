@@ -84,11 +84,19 @@ export function Settings(): JSX.Element {
     flash(res.ok ? 'Invite resent' : 'Could not resend');
   }
   async function removeGuardian(): Promise<void> {
-    if (!window.confirm('Remove your support contact?')) {
+    if (!window.confirm('Are you sure you want to clear your support contact?')) {
       return;
     }
-    await api('/v1/guardians', { method: 'DELETE' });
-    flash('Support contact removed');
+    const res = await api('/v1/guardians', { method: 'DELETE' });
+    // Reflect the REAL server state: only report removed if the server cleared it
+    // (it returns 423 while an alert is active — Brief 4 S1).
+    if (res.ok) {
+      flash('Support contact cleared');
+    } else if (res.status === 423) {
+      flash('Locked during an active alert');
+    } else {
+      flash('Could not clear contact');
+    }
     load();
   }
   async function saveContact(values: ContactValues): Promise<void> {

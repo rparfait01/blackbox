@@ -319,7 +319,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   </div>
 
   <!-- Share-with-authorities modal (Fix Brief 4 G1): QR + dispatch link. -->
-  <div class="modal" id="dispatchModal" hidden>
+  <div class="modal" id="dispatchModal">
     <div class="modal-card">
       <div class="modal-title">Share with authorities</div>
       <div class="qr-box" id="dispatchQr"></div>
@@ -429,7 +429,10 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
 .cam-reload{margin-top:6px;background:#1a1a1a;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:12px}
 .sec-transcript{opacity:.72}
 .transcript-secondary{max-height:140px;font-size:12px;color:#aaa}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+/* Hidden by default; shown only when JS adds .open (an explicit class beats the
+   UA [hidden] rule that a bare .modal{display:flex} was overriding). */
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);align-items:center;justify-content:center;padding:20px;z-index:100}
+.modal.open{display:flex}
 .modal-card{background:#111;border:1px solid #333;border-radius:12px;padding:20px;max-width:360px;width:100%;text-align:center}
 .modal-title{font-weight:700;font-size:16px;margin-bottom:14px}
 .qr-box{background:#fff;border-radius:8px;padding:12px;display:inline-block;max-width:240px}
@@ -671,14 +674,14 @@ const CLIENT_JS = `
       if(res.ok && res.d && res.d.url){
         var qb=el('dispatchQr'); if(qb){ qb.innerHTML=res.d.qr||''; }
         var u=el('dispatchUrl'); if(u){ u.value=res.d.url; }
-        el('dispatchModal').hidden=false;
+        el('dispatchModal').classList.add('open');
       } else {
         alert('Only the responding coordinator can share with authorities.');
       }
     }).catch(function(){ sa.disabled=false; sa.textContent='SHARE WITH AUTHORITIES'; alert('Could not create the link. Try again.'); });
   };}
   (function(){
-    var close=el('dispatchClose'); if(close){ close.onclick=function(){ el('dispatchModal').hidden=true; }; }
+    var close=el('dispatchClose'); if(close){ close.onclick=function(){ el('dispatchModal').classList.remove('open'); }; }
     var copy=el('dispatchCopy'); if(copy){ copy.onclick=function(){
       var u=el('dispatchUrl'); if(!u) return;
       u.select();

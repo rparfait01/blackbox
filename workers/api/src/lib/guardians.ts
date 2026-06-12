@@ -122,8 +122,11 @@ export async function removeInvite(env: Env, userId: string): Promise<void> {
     .first<{ id: string }>();
   const statements = [env.DB.prepare('DELETE FROM guardian_invites WHERE userId = ?').bind(userId)];
   if (contact) {
+    // Delete the endpoints AND the contact row itself, so the contact truly
+    // clears server-side (Fix Brief 6 LT5-7) — not just its reach endpoints.
     statements.push(
       env.DB.prepare('DELETE FROM contact_endpoints WHERE contactId = ?').bind(contact.id),
+      env.DB.prepare('DELETE FROM contacts WHERE id = ?').bind(contact.id),
     );
   }
   await env.DB.batch(statements);
