@@ -7,8 +7,15 @@
 import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { hashSecret, verifySecret } from '../lib/crypto';
-import { getInviteForUser } from '../lib/guardians';
-import { getUserById, hasActiveEvent, updateUserFields } from '../lib/users';
+import { getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
+import { getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
+import {
+  guardianLoad,
+  listSlots,
+  removeSlot,
+  upsertSlot,
+  type SlotKey,
+} from '../lib/roles';
 import type { Env, Vars } from '../types';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -97,6 +104,78 @@ userRoutes.post('/lock-code', async (c) => {
   }
   await updateUserFields(c.env, user.id, { lockCodeHash: await hashSecret(body.newCode) });
   return c.json({ ok: true }, 200);
+});
+
+// --- Roles: 3 contacts + 1 guardian (Brief 9 / Brief 8 contact tabs) ---
+const VALID_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary', 'guardian'];
+
+userRoutes.get('/contacts', async (c) => {
+  const userId = c.get('userId');
+  const user = await getUserById(c.env, userId);
+  const slots = await listSlots(c.env, userId);
+  const guardianSlot = slots.find((s) => s.slot === 'guardian');
+  const othersLoad =
+    guardianSlot?.destination != null
+      ? await guardianLoad(c.env, guardianSlot.destination, userId)
+      : 0;
+  return c.json(
+    {
+      slots,
+      guardianEnabled: (user?.guardianEnabled ?? 1) === 1,
+      // Surface the guardian's load so the user can judge reliability (Brief 9 caps).
+      guardianAlsoFailsafeFor: othersLoad,
+    },
+    200,
+  );
+});
+
+userRoutes.post('/contacts/:slot', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const slot = c.req.param('slot') as SlotKey;
+  if (!VALID_SLOTS.includes(slot)) {
+    return c.json({ error: 'invalid slot' }, 400);
+  }
+  const body = await c.req
+    .json<{ contactName?: string; channel?: string; destination?: string }>()
+    .catch(() => ({}) as Record<string, string>);
+  const channel = body.channel as PreferredChannel | undefined;
+  if (!body.contactName?.trim() || !body.destination?.trim()) {
+    return c.json({ error: 'name and destination are required' }, 400);
+  }
+  if (channel !== 'sms' && channel !== 'line' && channel !== 'email') {
+    return c.json({ error: 'channel must be sms, line or email' }, 400);
+  }
+  const user = await getUserById(c.env, c.get('userId'));
+  await upsertSlot(c.env, c.get('userId'), slot, {
+    contactName: body.contactName.trim(),
+    userDisplayName: user?.name ?? 'BLACK BOX user',
+    channel,
+    destination: normalizeDestination(channel, body.destination.trim()),
+  });
+  return c.json({ ok: true }, 200);
+});
+
+userRoutes.delete('/contacts/:slot', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const slot = c.req.param('slot') as SlotKey;
+  if (!VALID_SLOTS.includes(slot)) {
+    return c.json({ error: 'invalid slot' }, 400);
+  }
+  await removeSlot(c.env, c.get('userId'), slot);
+  return c.json({ ok: true }, 200);
+});
+
+userRoutes.post('/guardian-enabled', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const body = await c.req.json<{ enabled?: boolean }>().catch(() => ({}) as { enabled?: boolean });
+  await setGuardianEnabled(c.env, c.get('userId'), body.enabled === true);
+  return c.json({ ok: true, enabled: body.enabled === true }, 200);
 });
 
 userRoutes.post('/duress-code', async (c) => {

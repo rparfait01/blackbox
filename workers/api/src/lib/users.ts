@@ -17,9 +17,14 @@ export interface UserRow {
   regionId: string | null;
   lockCodeHash: string | null;
   duressCodeHash: string | null;
+  guardianEnabled: number;
+  nationality: string | null;
   createdAt: number;
   updatedAt: number;
 }
+
+const USER_COLS =
+  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, guardianEnabled, nationality, createdAt, updatedAt';
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -33,17 +38,11 @@ export function normalizePhone(phone: string): string {
 }
 
 export function getUserById(env: Env, id: string): Promise<UserRow | null> {
-  return env.DB.prepare(
-    'SELECT id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, createdAt, updatedAt FROM users WHERE id = ?',
-  )
-    .bind(id)
-    .first<UserRow>();
+  return env.DB.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).bind(id).first<UserRow>();
 }
 
 export function getUserByEmail(env: Env, email: string): Promise<UserRow | null> {
-  return env.DB.prepare(
-    'SELECT id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, createdAt, updatedAt FROM users WHERE email = ?',
-  )
+  return env.DB.prepare(`SELECT ${USER_COLS} FROM users WHERE email = ?`)
     .bind(normalizeEmail(email))
     .first<UserRow>();
 }
@@ -125,6 +124,13 @@ export async function updateUserFields(
   const now = Date.now();
   await env.DB.prepare(`UPDATE users SET ${sets.join(', ')}, updatedAt = ? WHERE id = ?`)
     .bind(...values, now, userId)
+    .run();
+}
+
+/** Guardian on/off toggle (Brief 9). Locked during an active alert by the route. */
+export async function setGuardianEnabled(env: Env, userId: string, enabled: boolean): Promise<void> {
+  await env.DB.prepare('UPDATE users SET guardianEnabled = ?, updatedAt = ? WHERE id = ?')
+    .bind(enabled ? 1 : 0, Date.now(), userId)
     .run();
 }
 

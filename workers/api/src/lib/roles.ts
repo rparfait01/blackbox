@@ -1,0 +1,166 @@
+/**
+ * Roles model (Brief 9 + Brief 8 contact tabs). A user has up to three Contacts
+ * in priority order (primary → secondary → tertiary) and exactly one Guardian
+ * (the zero-fail failsafe + coordinator of last resort), plus a server-side
+ * guardian on/off toggle. Each slot maps to at most one contact row carrying a
+ * single priority-1 reach endpoint (the chosen channel + destination).
+ *
+ * Contacts are location-only in the network; the current coordinator gets full
+ * access (enforced in the dashboard layer). This module is just the slot CRUD.
+ */
+
+import type { Env } from '../types';
+
+export type SlotRole = 'contact' | 'guardian';
+export type SlotKey = 'primary' | 'secondary' | 'tertiary' | 'guardian';
+
+interface SlotAddress {
+  role: SlotRole;
+  priority: number | null;
+}
+
+/** Map the public slot key to a (role, priority) address. */
+export function slotAddress(slot: string): SlotAddress | null {
+  switch (slot) {
+    case 'primary':
+      return { role: 'contact', priority: 1 };
+    case 'secondary':
+      return { role: 'contact', priority: 2 };
+    case 'tertiary':
+      return { role: 'contact', priority: 3 };
+    case 'guardian':
+      return { role: 'guardian', priority: null };
+    default:
+      return null;
+  }
+}
+
+export interface SlotView {
+  slot: SlotKey;
+  filled: boolean;
+  contactName: string | null;
+  channel: string | null;
+  destination: string | null;
+}
+
+interface ContactRowLite {
+  id: string;
+  role: string | null;
+  priority: number | null;
+  contactName: string | null;
+}
+
+function keyFor(role: string | null, priority: number | null): SlotKey | null {
+  if (role === 'guardian') {
+    return 'guardian';
+  }
+  if (role === 'contact') {
+    return priority === 1 ? 'primary' : priority === 2 ? 'secondary' : priority === 3 ? 'tertiary' : null;
+  }
+  return null;
+}
+
+/** All four slots for a user (filled or empty), each with its primary endpoint. */
+export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
+  const { results } = await env.DB.prepare(
+    'SELECT id, role, priority, contactName FROM contacts WHERE userId = ?',
+  )
+    .bind(userId)
+    .all<ContactRowLite>();
+  const rows = results ?? [];
+
+  const slots: Record<SlotKey, SlotView> = {
+    primary: { slot: 'primary', filled: false, contactName: null, channel: null, destination: null },
+    secondary: { slot: 'secondary', filled: false, contactName: null, channel: null, destination: null },
+    tertiary: { slot: 'tertiary', filled: false, contactName: null, channel: null, destination: null },
+    guardian: { slot: 'guardian', filled: false, contactName: null, channel: null, destination: null },
+  };
+
+  for (const row of rows) {
+    const key = keyFor(row.role, row.priority);
+    if (!key) {
+      continue;
+    }
+    const endpoint = await env.DB.prepare(
+      'SELECT channel, channelIdentifier FROM contact_endpoints WHERE contactId = ? ORDER BY priority ASC LIMIT 1',
+    )
+      .bind(row.id)
+      .first<{ channel: string; channelIdentifier: string }>();
+    slots[key] = {
+      slot: key,
+      filled: true,
+      contactName: row.contactName,
+      channel: endpoint?.channel ?? null,
+      destination: endpoint?.channelIdentifier ?? null,
+    };
+  }
+  return [slots.primary, slots.secondary, slots.tertiary, slots.guardian];
+}
+
+/** Insert or replace a single slot with its chosen channel + destination. */
+export async function upsertSlot(
+  env: Env,
+  userId: string,
+  slot: SlotKey,
+  input: { contactName: string; userDisplayName: string; channel: string; destination: string },
+): Promise<void> {
+  const addr = slotAddress(slot);
+  if (!addr) {
+    return;
+  }
+  // Remove any existing row(s) for this slot first (keeps one per slot).
+  const existing = await env.DB.prepare(
+    'SELECT id FROM contacts WHERE userId = ? AND role = ? AND ((? IS NULL AND priority IS NULL) OR priority = ?)',
+  )
+    .bind(userId, addr.role, addr.priority, addr.priority)
+    .all<{ id: string }>();
+  const statements = [];
+  for (const row of existing.results ?? []) {
+    statements.push(env.DB.prepare('DELETE FROM contact_endpoints WHERE contactId = ?').bind(row.id));
+    statements.push(env.DB.prepare('DELETE FROM contacts WHERE id = ?').bind(row.id));
+  }
+  const contactId = crypto.randomUUID();
+  statements.push(
+    env.DB.prepare(
+      'INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, createdAt) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)',
+    ).bind(contactId, userId, input.userDisplayName, input.contactName, addr.role, addr.priority, Date.now()),
+    env.DB.prepare(
+      'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, 1, ?, ?)',
+    ).bind(crypto.randomUUID(), contactId, input.channel, input.destination, Date.now(), Date.now()),
+  );
+  await env.DB.batch(statements);
+}
+
+/** Remove a slot entirely (contact row + endpoints). */
+export async function removeSlot(env: Env, userId: string, slot: SlotKey): Promise<void> {
+  const addr = slotAddress(slot);
+  if (!addr) {
+    return;
+  }
+  const existing = await env.DB.prepare(
+    'SELECT id FROM contacts WHERE userId = ? AND role = ? AND ((? IS NULL AND priority IS NULL) OR priority = ?)',
+  )
+    .bind(userId, addr.role, addr.priority, addr.priority)
+    .all<{ id: string }>();
+  const statements = [];
+  for (const row of existing.results ?? []) {
+    statements.push(env.DB.prepare('DELETE FROM contact_endpoints WHERE contactId = ?').bind(row.id));
+    statements.push(env.DB.prepare('DELETE FROM contacts WHERE id = ?').bind(row.id));
+  }
+  if (statements.length > 0) {
+    await env.DB.batch(statements);
+  }
+}
+
+/** How many OTHER users this guardian (by destination) is also a failsafe for. */
+export async function guardianLoad(env: Env, destination: string, exceptUserId: string): Promise<number> {
+  if (!destination) {
+    return 0;
+  }
+  const row = await env.DB.prepare(
+    "SELECT COUNT(DISTINCT c.userId) AS n FROM contacts c JOIN contact_endpoints e ON e.contactId = c.id WHERE c.role = 'guardian' AND e.channelIdentifier = ? AND c.userId != ?",
+  )
+    .bind(destination, exceptUserId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}

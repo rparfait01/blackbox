@@ -14,21 +14,12 @@ import { hashPin } from '@/lib/crypto/pin';
 import { setStoredDuressPin, setStoredPin } from '@/lib/storage';
 import { REGIONS } from '@/lib/regions';
 import { PinPad } from '@/components/PinPad';
-import { ContactForm, type ContactChannel, type ContactValues } from '@/components/ContactForm';
 import { useActiveAlert } from '@/lib/active-alert';
+import { ContactTabs } from './ContactTabs';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; hasDuressCode: boolean };
-  guardian: {
-    name: string | null;
-    relationship: string | null;
-    status: string;
-    channel: ContactChannel | null;
-    destination: string | null;
-  } | null;
 }
-
-const CHANNEL_LABEL: Record<ContactChannel, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
 
 /**
  * Settings (W8A). Profile (read-only for now), display-mode toggle (with a
@@ -40,9 +31,6 @@ export function Settings(): JSX.Element {
   const alertActive = useActiveAlert();
   const [me, setMe] = useState<MeData | null>(null);
   const [codeOverlay, setCodeOverlay] = useState<'lock' | 'duress' | null>(null);
-  const [contactOpen, setContactOpen] = useState(false);
-  const [contactBusy, setContactBusy] = useState(false);
-  const [contactError, setContactError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const load = (): void => {
@@ -83,40 +71,6 @@ export function Settings(): JSX.Element {
     if (res.ok) {
       flash('Region updated');
       load();
-    }
-  }
-
-  async function resendInvite(): Promise<void> {
-    const res = await api('/v1/guardians/resend', { body: {} });
-    flash(res.ok ? 'Invite resent' : 'Could not resend');
-  }
-  async function removeGuardian(): Promise<void> {
-    if (!window.confirm('Are you sure you want to clear your support contact?')) {
-      return;
-    }
-    const res = await api('/v1/guardians', { method: 'DELETE' });
-    // Reflect the REAL server state: only report removed if the server cleared it
-    // (it returns 423 while an alert is active — Brief 4 S1).
-    if (res.ok) {
-      flash('Support contact cleared');
-    } else if (res.status === 423) {
-      flash('Locked during an active alert');
-    } else {
-      flash('Could not clear contact');
-    }
-    load();
-  }
-  async function saveContact(values: ContactValues): Promise<void> {
-    setContactBusy(true);
-    setContactError(null);
-    const res = await api('/v1/guardians/contact', { body: values });
-    setContactBusy(false);
-    if (res.ok) {
-      setContactOpen(false);
-      flash('Support contact saved');
-      load();
-    } else {
-      setContactError('Could not save. Check the destination and try again.');
     }
   }
 
@@ -190,39 +144,7 @@ export function Settings(): JSX.Element {
           </select>
         </Group>
 
-        <Group label="Support contact">
-          {me?.guardian ? (
-            <>
-              <Row k={me.guardian.name ?? 'Contact'} v={me.guardian.status === 'accepted' ? 'Active' : 'Waiting…'} />
-              {me.guardian.channel ? (
-                <Row
-                  k={CHANNEL_LABEL[me.guardian.channel]}
-                  v={me.guardian.destination ?? '—'}
-                />
-              ) : null}
-              <div className="mt-2 flex gap-4">
-                <button onClick={() => { setContactError(null); setContactOpen(true); }} className="text-sm text-med-text/60 underline">
-                  Edit
-                </button>
-                {me.guardian.status !== 'accepted' ? (
-                  <button onClick={resendInvite} className="text-sm text-med-text/60 underline">
-                    Resend invite
-                  </button>
-                ) : null}
-                <button onClick={removeGuardian} className="text-sm text-status-active/80 underline">
-                  Remove
-                </button>
-              </div>
-            </>
-          ) : (
-            <button
-              onClick={() => { setContactError(null); setContactOpen(true); }}
-              className="text-sm text-med-text/80 underline"
-            >
-              Add a support contact
-            </button>
-          )}
-        </Group>
+        <ContactTabs flash={flash} />
 
         <button onClick={signOut} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
@@ -245,44 +167,6 @@ export function Settings(): JSX.Element {
           }}
           onClose={() => setCodeOverlay(null)}
         />
-      ) : null}
-
-      {contactOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-          onClick={() => setContactOpen(false)}
-        >
-          <div
-            className="stillpoint-bg max-h-full w-full max-w-sm overflow-y-auto rounded-2xl p-7 text-med-text"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-6 font-serif text-2xl font-light">
-              {me?.guardian ? 'Edit support contact' : 'Add support contact'}
-            </h2>
-            <ContactForm
-              initial={
-                me?.guardian
-                  ? {
-                      name: me.guardian.name ?? '',
-                      relationship: me.guardian.relationship ?? '',
-                      channel: me.guardian.channel ?? 'sms',
-                      destination: me.guardian.destination ?? '',
-                    }
-                  : undefined
-              }
-              busy={contactBusy}
-              error={contactError}
-              submitLabel="Save support contact"
-              onSubmit={(v) => void saveContact(v)}
-            />
-            <button
-              onClick={() => setContactOpen(false)}
-              className="mt-5 block w-full text-center text-sm text-med-text/40 underline"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
       ) : null}
     </main>
   );
