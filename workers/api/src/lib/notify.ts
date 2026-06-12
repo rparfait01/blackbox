@@ -15,13 +15,10 @@
 import { formatLocalClock } from '@blackbox/shared';
 
 import { dispatch } from '../channels/router';
-import type { ChannelName } from '../channels/types';
 import type { Env } from '../types';
 import { audit } from './audit';
 import { getContactForEvent, listReachableContacts } from './contacts';
 import { mintMagicToken } from './magic-link';
-
-const RETRY_DELAY_MS = 5000;
 
 async function latestSummary(env: Env, eventId: string): Promise<string | null> {
   const row = await env.DB.prepare(
@@ -44,16 +41,102 @@ async function latestLocation(
   return row ? { lat: row.lat, lon: row.lon } : null;
 }
 
-async function markDelivered(env: Env, eventId: string, channel: ChannelName): Promise<void> {
-  await env.DB.prepare('UPDATE events SET notifiedAt = ?, notifyChannel = ? WHERE id = ?')
-    .bind(Date.now(), channel, eventId)
-    .run();
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Per-account cascade window (ms between steps). Defaults to 15s. */
+async function cascadeIntervalMs(env: Env, userId: string | null): Promise<number> {
+  if (!userId) {
+    return 15_000;
+  }
+  const row = await env.DB.prepare('SELECT cascadeIntervalSeconds FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ cascadeIntervalSeconds: number }>();
+  return Math.max(1, row?.cascadeIntervalSeconds ?? 15) * 1000;
+}
+
+async function emergencyAfterSeconds(env: Env, userId: string | null): Promise<number> {
+  if (!userId) {
+    return 120;
+  }
+  const row = await env.DB.prepare('SELECT emergencyAfterSeconds FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ emergencyAfterSeconds: number }>();
+  return Math.max(30, row?.emergencyAfterSeconds ?? 120);
 }
 
 /**
- * Push the activation alert to the event's contact via the router. Designed to
- * be passed to `ctx.waitUntil()`. Safe no-ops (audited) when there is no contact
- * or the magic-link signing key is unconfigured.
+ * Atomically claim cascade step `fromStep` → `fromStep + 1`. Only the writer that
+ * advances notifies that step, so the in-request stagger and the cron backstop
+ * never double-notify. Fails if a coordinator was claimed or the event closed —
+ * that is how the cascade HALTS.
+ */
+async function advanceStep(env: Env, eventId: string, fromStep: number): Promise<boolean> {
+  const r = await env.DB.prepare(
+    "UPDATE events SET cascadeStep = ? WHERE id = ? AND cascadeStep = ? AND status = 'active' AND coordinatorClaimedAt IS NULL",
+  )
+    .bind(fromStep + 1, eventId, fromStep)
+    .run();
+  return r.meta.changes === 1;
+}
+
+interface ActivationCtx {
+  dashboardUrl: string;
+  audioUrl: string;
+  location: { lat: number; lon: number } | null;
+  threatSummary: string | null;
+}
+
+async function activationCtx(env: Env, eventId: string, workerOrigin: string): Promise<ActivationCtx> {
+  const token = await mintMagicToken(env.MAGIC_LINK_SECRET as string, eventId);
+  return {
+    dashboardUrl: `${workerOrigin}/c/${eventId}?t=${token}`,
+    audioUrl: `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`,
+    location: await latestLocation(env, eventId),
+    threatSummary: await latestSummary(env, eventId),
+  };
+}
+
+async function dispatchStep(
+  env: Env,
+  eventId: string,
+  ctx: ActivationCtx,
+  contact: { id: string; displayName: string },
+  actorHash: string | null,
+): Promise<void> {
+  const result = await dispatch(
+    env,
+    contact.id,
+    {
+      kind: 'activation',
+      eventId,
+      payload: {
+        userDisplayName: contact.displayName,
+        dashboardUrl: ctx.dashboardUrl,
+        audioUrl: ctx.audioUrl,
+        location: ctx.location,
+        threatSummary: ctx.threatSummary,
+      },
+    },
+    actorHash,
+  );
+  if (result.delivered && result.channel) {
+    // notifiedAt marks the FIRST delivery only.
+    await env.DB.prepare(
+      'UPDATE events SET notifiedAt = ?, notifyChannel = ? WHERE id = ? AND notifiedAt IS NULL',
+    )
+      .bind(Date.now(), result.channel, eventId)
+      .run();
+  }
+}
+
+/**
+ * Sequential contact cascade (Brief 11). On activation, notify contacts in
+ * PRIORITY ORDER, staggered (default 15s): primary → secondary → tertiary →
+ * guardian. The first to open the dashboard claims coordinator; the cascade then
+ * HALTS (advanceStep fails once coordinatorClaimedAt is set). Recipients are
+ * resolved FRESH so a newly added contact is always included. Runs inside
+ * ctx.waitUntil(); the 1-min cron (advanceCascades) backstops a worker that dies
+ * mid-stagger and fires the emergency-services fallback.
  */
 export async function notifyActivation(
   env: Env,
@@ -66,54 +149,83 @@ export async function notifyActivation(
   if (!event) {
     return;
   }
-  const actorHash = event.userHash;
-  // Fan out to EVERY contact (priority order) + the guardian if enabled — resolved
-  // fresh so a newly added contact is always included (Brief 10 P0).
+  if (!env.MAGIC_LINK_SECRET) {
+    await audit(env, eventId, 'notification_skipped', event.userHash, { reason: 'unconfigured' });
+    return;
+  }
   const contacts = await listReachableContacts(env, event);
   if (contacts.length === 0) {
-    await audit(env, eventId, 'notification_skipped', actorHash, { reason: 'no_contact' });
+    await audit(env, eventId, 'notification_skipped', event.userHash, { reason: 'no_contact' });
     return;
   }
+  const interval = await cascadeIntervalMs(env, event.userId);
+  const ctx = await activationCtx(env, eventId, workerOrigin);
+
+  for (let step = 0; step < contacts.length; step += 1) {
+    if (!(await advanceStep(env, eventId, step))) {
+      return; // coordinator claimed / event closed / cron advanced — halt
+    }
+    await dispatchStep(env, eventId, ctx, contacts[step]!, event.userHash);
+    if (step < contacts.length - 1) {
+      await sleep(interval);
+    }
+  }
+}
+
+/**
+ * Cron backstop + emergency fallback (Brief 11). For each active, UNCLAIMED
+ * event: fire any cascade step whose window has elapsed but wasn't notified (e.g.
+ * the worker died mid-stagger), then — if the chain is exhausted and no one
+ * claimed after emergencyAfterSeconds — fire the emergency-services fallback once.
+ */
+export async function advanceCascades(env: Env, workerOrigin: string): Promise<void> {
   if (!env.MAGIC_LINK_SECRET) {
-    await audit(env, eventId, 'notification_skipped', actorHash, { reason: 'unconfigured' });
     return;
   }
-
-  const token = await mintMagicToken(env.MAGIC_LINK_SECRET, eventId);
-  // The Worker itself serves the contact dashboard at /c/:id. All contacts get
-  // the same link; the first to open claims coordinator (full access), the rest
-  // get the location-only view.
-  const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
-  const audioUrl = `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`;
-  const location = await latestLocation(env, eventId);
-  const threatSummary = await latestSummary(env, eventId);
-
-  const dispatchAll = async (): Promise<{ delivered: boolean; channel: ChannelName | null }> => {
-    let delivered = false;
-    let channel: ChannelName | null = null;
-    for (const contact of contacts) {
-      const message = {
-        kind: 'activation' as const,
-        eventId,
-        payload: { userDisplayName: contact.displayName, dashboardUrl, audioUrl, location, threatSummary },
-      };
-      const result = await dispatch(env, contact.id, message, actorHash);
-      if (result.delivered) {
-        delivered = true;
-        channel = channel ?? result.channel;
+  const { results } = await env.DB.prepare(
+    "SELECT id, userId, userHash, createdAt, cascadeStep, emergencyNotifiedAt FROM events WHERE status = 'active' AND coordinatorClaimedAt IS NULL",
+  ).all<{
+    id: string;
+    userId: string | null;
+    userHash: string | null;
+    createdAt: number;
+    cascadeStep: number;
+    emergencyNotifiedAt: number | null;
+  }>();
+  const now = Date.now();
+  for (const ev of results ?? []) {
+    const contacts = await listReachableContacts(env, { userId: ev.userId, userHash: ev.userHash });
+    if (contacts.length === 0) {
+      continue;
+    }
+    const intervalSec = (await cascadeIntervalMs(env, ev.userId)) / 1000;
+    const elapsed = (now - ev.createdAt) / 1000;
+    const dueSteps = Math.min(contacts.length, Math.floor(elapsed / intervalSec) + 1);
+    let step = ev.cascadeStep;
+    if (step < dueSteps) {
+      const ctx = await activationCtx(env, ev.id, workerOrigin);
+      while (step < dueSteps) {
+        if (!(await advanceStep(env, ev.id, step))) {
+          break; // claimed / closed / raced with the in-request cascade
+        }
+        await dispatchStep(env, ev.id, ctx, contacts[step]!, ev.userHash);
+        step += 1;
       }
     }
-    return { delivered, channel };
-  };
-
-  let result = await dispatchAll();
-  if (!result.delivered) {
-    // Nobody reached on any channel — retry the whole fan-out once.
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    result = await dispatchAll();
-  }
-  if (result.delivered && result.channel) {
-    await markDelivered(env, eventId, result.channel);
+    const emergencyAfter = await emergencyAfterSeconds(env, ev.userId);
+    if (step >= contacts.length && elapsed >= emergencyAfter && ev.emergencyNotifiedAt == null) {
+      const claim = await env.DB.prepare(
+        "UPDATE events SET emergencyNotifiedAt = ? WHERE id = ? AND emergencyNotifiedAt IS NULL AND coordinatorClaimedAt IS NULL AND status = 'active'",
+      )
+        .bind(now, ev.id)
+        .run();
+      if (claim.meta.changes === 1) {
+        // v0 has no configured emergency-services SMS/LINE target — record the
+        // fallback so it is observable. Wire a per-account emergency endpoint to
+        // actually dispatch here.
+        await audit(env, ev.id, 'emergency_fallback', ev.userHash, { reason: 'no_coordinator' });
+      }
+    }
   }
 }
 

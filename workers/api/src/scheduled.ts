@@ -14,7 +14,7 @@
  */
 
 import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types';
-import { notifyEscalation } from './lib/notify';
+import { advanceCascades, notifyEscalation } from './lib/notify';
 import { runIntegrityScan } from './lib/integrity';
 import type { Env } from './types';
 
@@ -49,6 +49,12 @@ export const scheduled = async (
         await escalateDarkDevices(env);
       } catch (error) {
         console.log(JSON.stringify({ level: 'error', job: 'escalate', detail: String(error) }));
+      }
+      try {
+        // Backstop the staggered contact cascade + emergency fallback (Brief 11).
+        await advanceCascades(env, workerOrigin(env));
+      } catch (error) {
+        console.log(JSON.stringify({ level: 'error', job: 'cascade', detail: String(error) }));
       }
       try {
         await runIntegrityScan(env, workerOrigin(env));
