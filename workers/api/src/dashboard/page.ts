@@ -76,18 +76,6 @@ function transcriptHtml(state: ContactState): string {
     .join('');
 }
 
-function classificationHtml(state: ContactState): string {
-  const c = state.latestClassification;
-  if (!c?.summary) {
-    return '<div class="muted">Building situational summary…</div>';
-  }
-  const threat = c.threatLevel ? c.threatLevel.toUpperCase() : '—';
-  return (
-    `<div class="summary">${escapeHtml(c.summary)}</div>` +
-    `<div class="threat-row"><span class="muted-label">Threat</span><span class="threat-val">${escapeHtml(threat)}</span></div>`
-  );
-}
-
 function clock(ms: number): string {
   const t = Math.floor(ms / 1000);
   const m = Math.floor(t / 60)
@@ -95,6 +83,97 @@ function clock(ms: number): string {
     .padStart(2, '0');
   const s = (t % 60).toString().padStart(2, '0');
   return `${m}:${s}`;
+}
+
+// Published category labels — mirrors the classifier's rule set so the rendered
+// situation is auditable (Fix Brief 5 D2).
+const CATEGORY_LABEL: Record<string, string> = {
+  weapon: 'Weapon reference',
+  violence: 'Violence language',
+  restraint: 'Restraint language',
+  compliance: 'Coercion / compliance',
+  fear: 'Fear expressed',
+  pain: 'Pain expressed',
+  medical: 'Medical distress',
+  disorientation: 'Disorientation',
+  bargaining: 'Bargaining',
+  'profanity-distress': 'Distress profanity',
+};
+function catLabel(c: string): string {
+  return CATEGORY_LABEL[c] ?? c;
+}
+function threatClass(level: string): string {
+  return level === 'critical' || level === 'high' ? 'th-high' : level === 'medium' ? 'th-med' : 'th-low';
+}
+const TRIGGER_LABEL: Record<string, string> = {
+  manual: 'Manual activation',
+  deadman: 'Deadman (released)',
+  tamper: 'Tamper',
+};
+
+/** Frozen ORIGIN block — the immutable initial-contact anchor (Fix Brief 5 D1). */
+function originHtml(state: ContactState): string {
+  const o = state.origin;
+  if (!o) {
+    return '<div class="muted">Capturing initial-contact snapshot…</div>';
+  }
+  const rows: Array<[string, string]> = [
+    ['Trigger', TRIGGER_LABEL[o.triggerType] ?? o.triggerType],
+    ['Start (DTG)', formatDtg(o.dtgStart)],
+  ];
+  if (o.location) {
+    rows.push(['Where', `${o.location.lat.toFixed(4)}°, ${o.location.lon.toFixed(4)}°`]);
+  }
+  if (o.voiceCount != null) {
+    rows.push(['Voices at start', o.voiceCount > 1 ? `${o.voiceCount} (inferred)` : String(o.voiceCount)]);
+  }
+  if (o.categories.length > 0) {
+    rows.push(['Initial signals', o.categories.map(catLabel).join(', ')]);
+  }
+  if (o.audioFromSeq != null) {
+    rows.push(['First audio', `segments ${o.audioFromSeq}–${o.audioToSeq ?? o.audioFromSeq}`]);
+  }
+  return rows
+    .map(
+      ([k, v]) =>
+        `<div class="kv"><span class="kv-k">${escapeHtml(k)}</span><span class="kv-v">${escapeHtml(v)}</span></div>`,
+    )
+    .join('');
+}
+
+/**
+ * SITUATION block — latched, assembled detected facts + rule-derived threat
+ * (Fix Brief 5 D2/D3). No free-text generation; inferences are marked. Mirrored
+ * by the client poll renderer (window.__renderSituation).
+ */
+function situationHtml(s: ContactState['situation']): string {
+  if (!s.hasSignal) {
+    return '<div class="muted">No specific indicators detected yet. Audio + location active.</div>';
+  }
+  const parts: string[] = [];
+  parts.push(
+    `<div class="th-row"><span class="kv-k">Threat (rule-derived)</span><span class="th-badge ${threatClass(
+      s.threatLevel,
+    )}">${escapeHtml(s.threatLevel.toUpperCase())}</span></div>`,
+  );
+  if (s.categories.length > 0) {
+    parts.push(
+      `<div class="facts">${s.categories
+        .map((c) => `<span class="fact">${escapeHtml(catLabel(c.category))}</span>`)
+        .join('')}</div>`,
+    );
+  }
+  if (s.toneIndicators.length > 0) {
+    parts.push(
+      `<div class="facts">${s.toneIndicators
+        .map((t) => `<span class="fact fact-tone">${escapeHtml(t.replace(/-/g, ' '))}</span>`)
+        .join('')}</div>`,
+    );
+  }
+  if (s.multipleVoicesInferred) {
+    parts.push('<div class="inferred">Multiple voices detected — inferred, low confidence</div>');
+  }
+  return parts.join('');
 }
 
 /** Status banner copy + class (Fix Brief 3 R2). */
@@ -165,6 +244,31 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     <div class="elapsed" id="elapsed">${clock(state.durationMs)}</div>
   </div>
 
+  <!-- D5 order: ORIGIN → SITUATION → CAMERA → TRANSCRIPT(secondary) → location/audio/devices -->
+  <section class="sec sec-origin">
+    <div class="label">Origin · Frozen at activation</div>
+    <div id="origin">${originHtml(state)}</div>
+  </section>
+
+  <section class="sec sec-situation">
+    <div class="label">Situation · Detected facts (latched)</div>
+    <div id="situation">${situationHtml(state.situation)}</div>
+  </section>
+
+  <section class="sec sec-camera">
+    <div class="label">Live camera</div>
+    ${
+      state.hasVideo
+        ? '<video id="cam" class="camera" controls playsinline></video><button id="camReload" class="cam-reload">↻ Refresh feed</button>'
+        : '<div class="map-empty">No camera feed — audio-only capture.</div>'
+    }
+  </section>
+
+  <section class="sec sec-transcript">
+    <div class="label">Live transcript · secondary (evidence/replay)</div>
+    <div class="transcript transcript-secondary" id="transcript">${transcriptHtml(state)}</div>
+  </section>
+
   <section class="sec">
     <div class="label">Location · Live</div>
     <div class="map" id="map">${ssrMap(state)}</div>
@@ -186,13 +290,8 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   </section>
 
   <section class="sec">
-    <div class="label">Live transcript</div>
-    <div class="transcript" id="transcript">${transcriptHtml(state)}</div>
-  </section>
-
-  <section class="sec">
-    <div class="label">Summary</div>
-    <div id="classification">${classificationHtml(state)}</div>
+    <div class="label">Capture source</div>
+    <div class="muted">${state.hasVideo ? 'Phone microphone &amp; camera' : 'Phone microphone'} · no external hardware paired</div>
   </section>
 
   <div class="actions">
@@ -301,6 +400,24 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
 .sb-active{background:#13301a;color:#34c759}
 .sb-dark{background:#3a1414;color:#ff6b60;animation:pulse 1.2s infinite}
 .sb-ended{background:#1a1a1a;color:#888}
+.sec-origin{border-left:3px solid #555;padding-left:12px}
+.sec-situation{border-left:3px solid #ff3b30;padding-left:12px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.kv-k{color:#888;font-size:11px;font-family:ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.06em}
+.kv-v{color:#e8e8e8;font-size:14px;text-align:right}
+.th-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.th-badge{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;letter-spacing:.08em;padding:3px 8px;border-radius:5px}
+.th-high{background:#3a1414;color:#ff6b60}
+.th-med{background:#3a2e14;color:#e8a33d}
+.th-low{background:#1a1a1a;color:#888}
+.facts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.fact{background:#2a1414;color:#ff8b80;border:1px solid #5a2020;border-radius:5px;padding:3px 8px;font-size:12px}
+.fact-tone{background:#14202a;color:#80b0d0;border-color:#204050}
+.inferred{margin-top:8px;color:#999;font-size:12px;font-style:italic}
+.camera{width:100%;border-radius:6px;background:#000;max-height:320px}
+.cam-reload{margin-top:6px;background:#1a1a1a;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:12px}
+.sec-transcript{opacity:.72}
+.transcript-secondary{max-height:140px;font-size:12px;color:#aaa}
 .bar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #222;padding:10px 0}
 .rec{display:flex;align-items:center;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase}
 .rec-text{color:#ff3b30}
@@ -423,23 +540,31 @@ const CLIENT_JS = `
       var d=document.createElement('div'); d.className='tline'; d.textContent=frags[i].text; box.appendChild(d);
     }
   }
-  function applyClassification(c){
-    var node=el('classification');
-    if(!c||!c.summary){return;}
-    var threat=c.threatLevel?c.threatLevel.toUpperCase():'—';
-    node.innerHTML='';
-    var s=document.createElement('div'); s.className='summary'; s.textContent=c.summary; node.appendChild(s);
-    // highlight transcript lines that match any classification category
-    if(c.matchedCategories && c.matchedCategories.length){
-      var lines=document.querySelectorAll('#transcript .tline');
-      for(var i=0;i<lines.length;i++){ lines[i].classList.add('hit'); }
-    }
-    var row=document.createElement('div'); row.className='threat-row';
-    row.innerHTML='<span class="muted-label">Threat</span><span class="threat-val">'+threat+'</span>';
-    node.appendChild(row);
+  // Latched situation renderer (Fix Brief 5 D2/D3) — assembled detected facts,
+  // monotonic threat, inferences marked. Mirrors the server situationHtml().
+  var SIT_LBL={weapon:'Weapon reference',violence:'Violence language',restraint:'Restraint language',compliance:'Coercion / compliance',fear:'Fear expressed',pain:'Pain expressed',medical:'Medical distress',disorientation:'Disorientation',bargaining:'Bargaining','profanity-distress':'Distress profanity'};
+  function sitEsc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function applySituation(s){
+    var node=el('situation'); if(!node||!s) return;
+    if(!s.hasSignal){ node.innerHTML='<div class="muted">No specific indicators detected yet. Audio + location active.</div>'; return; }
+    var lvl=s.threatLevel||'unknown';
+    var thc=(lvl==='critical'||lvl==='high')?'th-high':(lvl==='medium'?'th-med':'th-low');
+    var html='<div class="th-row"><span class="kv-k">Threat (rule-derived)</span><span class="th-badge '+thc+'">'+sitEsc(lvl.toUpperCase())+'</span></div>';
+    if(s.categories&&s.categories.length){ html+='<div class="facts">'; for(var i=0;i<s.categories.length;i++){ var c=s.categories[i].category; html+='<span class="fact">'+sitEsc(SIT_LBL[c]||c)+'</span>'; } html+='</div>'; }
+    if(s.toneIndicators&&s.toneIndicators.length){ html+='<div class="facts">'; for(var j=0;j<s.toneIndicators.length;j++){ html+='<span class="fact fact-tone">'+sitEsc(String(s.toneIndicators[j]).replace(/-/g,' '))+'</span>'; } html+='</div>'; }
+    if(s.multipleVoicesInferred){ html+='<div class="inferred">Multiple voices detected — inferred, low confidence</div>'; }
+    node.innerHTML=html;
   }
   applyTranscript(S.latestTranscriptFragments);
-  applyClassification(S.latestClassification);
+  applySituation(S.situation);
+
+  // ---- live camera (replays captured video feed; prominent when present) ----
+  (function(){
+    var cam=el('cam'); if(!cam) return;
+    function load(){ cam.src=api('/audio/full'); }
+    load();
+    var rb=el('camReload'); if(rb){ rb.onclick=load; }
+  })();
 
   // ---- progressive audio (MSE) with /audio/full fallback ----
   var audio=el('audio'), note=el('audioNote'), startBtn=el('audioStart');
@@ -496,7 +621,7 @@ const CLIENT_JS = `
       durationMs=st.durationMs; baseNow=Date.now();
       if(st.location){ lastLoc=st.location; lastTrail=st.trail; applyLocation(st.location, st.trail); }
       applyTranscript(st.latestTranscriptFragments);
-      applyClassification(st.latestClassification);
+      applySituation(st.situation);
       if(st.audio){ if(window.__pumpAudio) window.__pumpAudio(st.audio.latestSequence); }
       applyStatus(st);
     }).catch(function(){});

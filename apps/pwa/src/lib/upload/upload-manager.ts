@@ -168,6 +168,21 @@ export function uploadClassification(sessionId: string, classification: Classifi
   }).then(() => scheduleDrain(0));
 }
 
+/** Upload the frozen ORIGIN snapshot once (Fix Brief 5 D1). Write-once server-side. */
+export function uploadOrigin(sessionId: string, origin: Record<string, unknown>): void {
+  if (!uploadsEnabled) {
+    return;
+  }
+  void enqueueUpload({
+    sessionId,
+    kind: 'origin',
+    payload: origin,
+    attempts: 0,
+    nextAttemptAt: 0,
+    createdAt: Date.now(),
+  }).then(() => scheduleDrain(0));
+}
+
 export function uploadTranscript(sessionId: string, sequence: number, text: string): void {
   if (!uploadsEnabled) {
     return;

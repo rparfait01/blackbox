@@ -47,3 +47,7 @@ wrangler_secret_list.txt
 # Local secrets / scratch (never commit)
 workers/SendGrid Mail Send.txt
 *.secret
+
+# Stray scratch text files at repo root / workers (never commit; docs live in docs/*.md)
+/*.txt
+workers/*.txt

@@ -48,8 +48,41 @@ export interface ContactState {
   } | null;
   latestTranscriptFragments: Array<{ sequence: number; text: string }>;
   audio: { latestSequence: number | null; mimeType: string | null };
+  /** True when the captured media is video (camera feed exists). Fix Brief 5 D5. */
+  hasVideo: boolean;
+  /** Frozen ORIGIN snapshot — immutable initial-contact anchor. Fix Brief 5 D1. */
+  origin: OriginSnapshot | null;
+  /** Latched, monotonic situation summary assembled from detected facts. D2/D3. */
+  situation: Situation;
   emergency: EmergencyNumbers;
 }
+
+export interface OriginSnapshot {
+  triggerType: string;
+  dtgStart: number;
+  tzOffsetMinutes: number | null;
+  location: { lat: number; lon: number; accuracyM: number | null } | null;
+  audioFromSeq: number | null;
+  audioToSeq: number | null;
+  categories: string[];
+  threatLevel: string | null;
+  voiceCount: number | null;
+}
+
+export interface Situation {
+  /** Rule-derived threat level: the MAX ever observed (monotonic, never thrashes down). */
+  threatLevel: string;
+  /** Detected keyword categories with first-seen time (union; latches). */
+  categories: Array<{ category: string; firstSeenAt: number }>;
+  /** Acoustic indicators detected at any point (union; latches). */
+  toneIndicators: string[];
+  /** Whether >1 distinct voice was detected — INFERRED / low-confidence (D3). */
+  multipleVoicesInferred: boolean;
+  /** True once any signal has latched. */
+  hasSignal: boolean;
+}
+
+const THREAT_ORDER = ['unknown', 'low', 'medium', 'high', 'critical'];
 
 /** Best-effort IANA time zone for a locale. Defaults to the Japan pilot. */
 function localeToTimeZone(locale: string | null): string {
@@ -93,6 +126,49 @@ export function localeToEmergency(locale: string | null): EmergencyNumbers {
   }
   // EU-wide fallback.
   return { police: '112', ambulance: '112' };
+}
+
+/**
+ * Assemble the latched situation from all classification rows (Fix Brief 5
+ * D2/D3). Latching is structural: category union keeps the FIRST-seen time, the
+ * threat level is the MAX ever seen (monotonic — it can rise but never thrashes
+ * down), and tone indicators union. Nothing here generates free text; the
+ * dashboard renders these detected facts directly. Multiple-voice detection is
+ * surfaced as INFERRED, never asserted.
+ */
+function buildSituation(
+  rows: Array<{ threatLevel: string | null; matchedCategoriesJson: string | null; toneIndicatorsJson: string | null; timestamp: number }>,
+): Situation {
+  const firstSeen = new Map<string, number>();
+  const tone = new Set<string>();
+  let maxThreatIdx = 0;
+  for (const row of rows) {
+    const idx = THREAT_ORDER.indexOf(row.threatLevel ?? 'unknown');
+    if (idx > maxThreatIdx) {
+      maxThreatIdx = idx;
+    }
+    for (const m of safeParse(row.matchedCategoriesJson)) {
+      const category = (m as { category?: string }).category;
+      if (category && !firstSeen.has(category)) {
+        firstSeen.set(category, row.timestamp);
+      }
+    }
+    for (const t of safeParse(row.toneIndicatorsJson)) {
+      if (typeof t === 'string') {
+        tone.add(t);
+      }
+    }
+  }
+  const categories = [...firstSeen.entries()]
+    .map(([category, firstSeenAt]) => ({ category, firstSeenAt }))
+    .sort((a, b) => a.firstSeenAt - b.firstSeenAt);
+  return {
+    threatLevel: THREAT_ORDER[maxThreatIdx] ?? 'unknown',
+    categories,
+    toneIndicators: [...tone],
+    multipleVoicesInferred: tone.has('multi-speaker'),
+    hasSignal: categories.length > 0 || tone.size > 0 || maxThreatIdx > 1,
+  };
 }
 
 function safeParse(json: string | null): unknown[] {
@@ -171,6 +247,50 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
     .bind(eventId)
     .first<{ sequence: number; mimeType: string }>();
 
+  // Latched, monotonic SITUATION (Fix Brief 5 D2/D3): aggregate ALL
+  // classifications. Union of categories (first-seen wins), MAX threat level
+  // (never thrashes down). Inherently latching — adds/escalates only.
+  const allClass = await env.DB.prepare(
+    'SELECT threatLevel, matchedCategoriesJson, toneIndicatorsJson, timestamp FROM classifications_index WHERE eventId = ? ORDER BY timestamp ASC',
+  )
+    .bind(eventId)
+    .all<{ threatLevel: string | null; matchedCategoriesJson: string | null; toneIndicatorsJson: string | null; timestamp: number }>();
+  const situation = buildSituation(allClass.results ?? []);
+
+  const originRow = await env.DB.prepare(
+    'SELECT triggerType, dtgStart, tzOffsetMinutes, lat, lon, accuracyM, audioFromSeq, audioToSeq, initialCategoriesJson, initialThreatLevel, initialVoiceCount FROM event_origin WHERE eventId = ?',
+  )
+    .bind(eventId)
+    .first<{
+      triggerType: string;
+      dtgStart: number;
+      tzOffsetMinutes: number | null;
+      lat: number | null;
+      lon: number | null;
+      accuracyM: number | null;
+      audioFromSeq: number | null;
+      audioToSeq: number | null;
+      initialCategoriesJson: string | null;
+      initialThreatLevel: string | null;
+      initialVoiceCount: number | null;
+    }>();
+  const origin: OriginSnapshot | null = originRow
+    ? {
+        triggerType: originRow.triggerType,
+        dtgStart: originRow.dtgStart,
+        tzOffsetMinutes: originRow.tzOffsetMinutes,
+        location:
+          originRow.lat != null && originRow.lon != null
+            ? { lat: originRow.lat, lon: originRow.lon, accuracyM: originRow.accuracyM }
+            : null,
+        audioFromSeq: originRow.audioFromSeq,
+        audioToSeq: originRow.audioToSeq,
+        categories: safeParse(originRow.initialCategoriesJson) as string[],
+        threatLevel: originRow.initialThreatLevel,
+        voiceCount: originRow.initialVoiceCount,
+      }
+    : null;
+
   const active = event.status === 'active';
   return {
     active,
@@ -204,6 +324,9 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
     // Present latest-first for the contact (newest at top).
     latestTranscriptFragments: transcripts.results ?? [],
     audio: { latestSequence: audio?.sequence ?? null, mimeType: audio?.mimeType ?? null },
+    hasVideo: (audio?.mimeType ?? '').startsWith('video/'),
+    origin,
+    situation,
     emergency: localeToEmergency(event.locale),
   };
 }

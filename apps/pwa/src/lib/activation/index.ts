@@ -20,8 +20,10 @@ import {
   uploadChunk,
   uploadClassification,
   uploadLocation,
+  uploadOrigin,
   uploadTranscript,
 } from '@/lib/upload';
+import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 import { startSessionMonitor, stopSessionMonitor } from './session-monitor';
 import { startHeartbeat, stopHeartbeat } from './heartbeat';
@@ -32,6 +34,17 @@ const DEDUP_WINDOW_MS = 60_000;
 /** How often the descriptive classifier runs over the session so far. */
 const CLASSIFY_INTERVAL_MS = 5000;
 
+/** When to freeze the immutable ORIGIN snapshot (Fix Brief 5 D1). */
+const ORIGIN_CAPTURE_MS = 12_000;
+
+/**
+ * Map an activation source to an ORIGIN trigger type. Current sources are all
+ * user-initiated → 'manual'; deadman/tamper arrive with the hardware shell.
+ */
+function triggerTypeForSource(_source: ActivationSource): 'manual' | 'deadman' | 'tamper' {
+  return 'manual';
+}
+
 interface ActiveSession {
   sessionId: string;
   startTime: number;
@@ -41,6 +54,11 @@ interface ActiveSession {
   classifier: LocalClassifier;
   tone: ToneAnalyzer | null;
   classifyTimer: number | null;
+  /** The first deterministic classification, frozen into the ORIGIN snapshot. */
+  firstClassification: Classification | null;
+  /** Latest geolocation fix seen, for the ORIGIN snapshot's initial location. */
+  latestFix: GeoFix | null;
+  originCaptured: boolean;
 }
 
 let active: ActiveSession | null = null;
@@ -71,8 +89,13 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
   let sessionId: string | null = null;
   const bufferedFixes: GeoFix[] = [];
 
+  let latestFix: GeoFix | null = null;
   const tracker = new LocationTracker({
     onFix: (fix) => {
+      latestFix = fix;
+      if (active && active.tracker === tracker) {
+        active.latestFix = fix;
+      }
       if (sessionId === null) {
         // Session row not created yet — buffer until it exists.
         bufferedFixes.push(fix);
@@ -184,6 +207,9 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
       classifier,
       tone: null,
       classifyTimer: null,
+      firstClassification: null,
+      latestFix,
+      originCaptured: false,
     };
     active = session;
     ensureVisibilityReacquire();
@@ -207,6 +233,30 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
     session.classifyTimer = window.setInterval(() => {
       void runClassifyTick(session);
     }, CLASSIFY_INTERVAL_MS);
+
+    // Freeze the ORIGIN snapshot once, ~12s in (covers the first 10–15s of audio
+    // + the first deterministic classification + initial voice count). Write-once
+    // server-side; it never updates as the event evolves (Fix Brief 5 D1).
+    window.setTimeout(() => {
+      if (active !== session || session.originCaptured) {
+        return;
+      }
+      session.originCaptured = true;
+      const fix = session.latestFix;
+      const snap = session.tone?.getSnapshot();
+      const fc = session.firstClassification;
+      uploadOrigin(session.sessionId, {
+        triggerType: triggerTypeForSource(source),
+        dtgStart: startTime,
+        tzOffsetMinutes: new Date().getTimezoneOffset(),
+        location: fix ? { lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy } : null,
+        audioFromSeq: 0,
+        audioToSeq: Math.max(0, sequence - 1),
+        categories: fc ? fc.matchedCategories.map((m) => m.category) : [],
+        threatLevel: fc ? fc.threatLevel : null,
+        voiceCount: snap ? snap.speakerCount : null,
+      });
+    }, ORIGIN_CAPTURE_MS);
 
     await acquireWakeLock();
 
@@ -279,6 +329,10 @@ async function runClassifyTick(session: ActiveSession): Promise<void> {
     };
     const classification = await session.classifier.classify(transcript, context);
     if (classification) {
+      if (!session.firstClassification) {
+        // Freeze the first classification for the ORIGIN snapshot (Fix Brief 5 D1).
+        session.firstClassification = classification;
+      }
       await appendClassification(session.sessionId, classification);
       uploadClassification(session.sessionId, classification);
     }

@@ -892,6 +892,45 @@ app.post('/v1/events/:id/transcripts', async (c) => {
   return c.json({ ok: true, count: fragments.length }, 201);
 });
 
+// Frozen ORIGIN snapshot (Fix Brief 5 D1). Write-once: INSERT OR IGNORE so the
+// immutable "initial contact" anchor never changes once captured.
+interface OriginPayload {
+  triggerType?: string;
+  dtgStart?: number;
+  tzOffsetMinutes?: number;
+  location?: { lat?: number; lon?: number; accuracy?: number } | null;
+  audioFromSeq?: number;
+  audioToSeq?: number;
+  categories?: string[];
+  threatLevel?: string;
+  voiceCount?: number;
+}
+app.post('/v1/events/:id/origin', async (c) => {
+  const eventId = c.req.param('id');
+  const b = await c.req.json<OriginPayload>().catch(() => ({}) as OriginPayload);
+  const trigger = b.triggerType === 'deadman' || b.triggerType === 'tamper' ? b.triggerType : 'manual';
+  await c.env.DB.prepare(
+    'INSERT OR IGNORE INTO event_origin (eventId, triggerType, dtgStart, tzOffsetMinutes, lat, lon, accuracyM, audioFromSeq, audioToSeq, initialCategoriesJson, initialThreatLevel, initialVoiceCount, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  )
+    .bind(
+      eventId,
+      trigger,
+      b.dtgStart ?? Date.now(),
+      b.tzOffsetMinutes ?? null,
+      b.location?.lat ?? null,
+      b.location?.lon ?? null,
+      b.location?.accuracy ?? null,
+      b.audioFromSeq ?? null,
+      b.audioToSeq ?? null,
+      JSON.stringify(b.categories ?? []),
+      b.threatLevel ?? null,
+      typeof b.voiceCount === 'number' ? b.voiceCount : null,
+      Date.now(),
+    )
+    .run();
+  return c.json({ ok: true }, 201);
+});
+
 // Delivery + closure status the PWA polls. Its only on-device effect is the
 // closure teardown (when status is closed by contact_approval). The `delivered`
 // field is informational only — there is no on-device delivery feedback.
