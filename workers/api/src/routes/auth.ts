@@ -1,13 +1,19 @@
 /**
- * Sign-up + sign-in (W8A). Email-OTP only (SMS deferred). Sign-up is a 3-step
- * draft → email-verified → finalized progression; sign-in is OTP to a known
- * email. On success the user receives an HMAC session token (no expiry in v0).
+ * Sign-up + sign-in (Brief 14: email removed from the critical path).
+ *
+ * Accounts authenticate by PASSWORD, not an emailed code. Signing up creates the
+ * account immediately and never depends on an outbound email succeeding; the
+ * email is stored unverified and verification (if ever added back) is an optional,
+ * non-blocking step. Signing in checks the password — with a fallback to the
+ * existing closure-pin hash for legacy accounts that predate passwords — so no
+ * email or SMS provider is in the signup/login path for the pilot.
+ *
+ * On success the user receives an HMAC session token (no expiry in v0).
  */
 
 import { Hono } from 'hono';
 import { sessionSecret } from '../auth';
 import { hashSecret } from '../lib/crypto';
-import { generateOtp, sendOtpViaEmail, storeOtp, verifyOtp } from '../lib/otp';
 import { mintSession } from '../lib/session';
 import {
   claimByUserHash,
@@ -16,8 +22,8 @@ import {
   getUserByEmail,
   getUserById,
   isActive,
-  markEmailVerified,
   normalizeEmail,
+  verifyLoginCredential,
 } from '../lib/users';
 import type { Env, Vars } from '../types';
 
@@ -27,14 +33,30 @@ function isPin(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9]{3,6}$/.test(value);
 }
 
+function isPassword(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 6;
+}
+
 // --- Sign-up ---
+// One non-blocking step: create the account with a password and return its id.
+// NO email is sent and NO email delivery can fail here (Brief 14 P0).
 
 authRoutes.post('/signup/start', async (c) => {
   const body = await c.req
-    .json<{ name?: string; phone?: string; email?: string; regionId?: string; nationality?: string }>()
+    .json<{
+      name?: string;
+      phone?: string;
+      email?: string;
+      password?: string;
+      regionId?: string;
+      nationality?: string;
+    }>()
     .catch(() => ({}) as Record<string, string>);
   if (!body.name || !body.email) {
     return c.json({ error: 'name and email are required' }, 400);
+  }
+  if (!isPassword(body.password)) {
+    return c.json({ error: 'password must be at least 6 characters' }, 400);
   }
   const result = await createDraftUser(c.env, {
     name: body.name,
@@ -42,44 +64,12 @@ authRoutes.post('/signup/start', async (c) => {
     email: body.email,
     regionId: body.regionId ?? 'jp',
     nationality: body.nationality?.trim() ? body.nationality.trim() : null,
+    passwordHash: await hashSecret(body.password),
   });
   if (!result.ok || !result.userId) {
     return c.json({ error: result.reason ?? 'signup_failed' }, 409);
   }
-  const email = normalizeEmail(body.email);
-  const code = generateOtp();
-  const stored = await storeOtp(c.env, email, code, 'email');
-  if (!stored.ok) {
-    return c.json({ error: stored.reason ?? 'otp_failed' }, 429);
-  }
-  // Await the send: do NOT return 201 unless SendGrid accepted the message.
-  const sent = await sendOtpViaEmail(c.env, email, code);
-  if (!sent.ok) {
-    return c.json(
-      { error: 'email_send_failed', sendgridStatus: sent.status, sendgridBody: sent.body },
-      502,
-    );
-  }
-  return c.json({ signupId: result.userId, expiresAt: stored.expiresAt }, 201);
-});
-
-authRoutes.post('/signup/verify-email', async (c) => {
-  const body = await c.req
-    .json<{ signupId?: string; code?: string }>()
-    .catch(() => ({}) as Record<string, string>);
-  if (!body.signupId || !body.code) {
-    return c.json({ error: 'signupId and code are required' }, 400);
-  }
-  const user = await getUserById(c.env, body.signupId);
-  if (!user?.email) {
-    return c.json({ error: 'not found' }, 404);
-  }
-  const result = await verifyOtp(c.env, user.email, body.code);
-  if (!result.ok) {
-    return c.json({ error: result.reason ?? 'invalid' }, 400);
-  }
-  await markEmailVerified(c.env, user.id);
-  return c.json({ ok: true }, 200);
+  return c.json({ signupId: result.userId }, 201);
 });
 
 authRoutes.post('/signup/finalize', async (c) => {
@@ -108,9 +98,7 @@ authRoutes.post('/signup/finalize', async (c) => {
   if (!user) {
     return c.json({ error: 'not found' }, 404);
   }
-  if (!user.emailVerifiedAt) {
-    return c.json({ error: 'email_not_verified' }, 403);
-  }
+  // No email-verified gate (Brief 14): the account works without any email step.
   const secret = sessionSecret(c.env);
   if (!secret) {
     return c.json({ error: 'server_misconfigured' }, 500);
@@ -128,50 +116,28 @@ authRoutes.post('/signup/finalize', async (c) => {
 });
 
 // --- Sign-in ---
+// Email + password, no emailed code (Brief 14 P0). Legacy accounts without a
+// password fall back to their closure-pin hash inside verifyLoginCredential.
 
-authRoutes.post('/signin/start', async (c) => {
-  const body = await c.req.json<{ email?: string }>().catch(() => ({}) as Record<string, string>);
-  if (!body.email) {
-    return c.json({ error: 'email is required' }, 400);
+authRoutes.post('/signin', async (c) => {
+  const body = await c.req
+    .json<{ email?: string; password?: string }>()
+    .catch(() => ({}) as Record<string, string>);
+  if (!body.email || !body.password) {
+    return c.json({ error: 'email and password are required' }, 400);
   }
   const email = normalizeEmail(body.email);
   const user = await getUserByEmail(c.env, email);
-  // The pilot UX favors a clear "no account found" over enumeration resistance,
-  // so an unknown / unfinalized email returns 404.
+  // The pilot UX favors a clear "no account found" over enumeration resistance.
   if (!user || !isActive(user)) {
     return c.json({ error: 'user_not_found' }, 404);
   }
-  const code = generateOtp();
-  const stored = await storeOtp(c.env, email, code, 'email');
-  if (!stored.ok) {
-    return c.json({ error: stored.reason ?? 'otp_failed' }, 429);
+  if (!(await verifyLoginCredential(user, body.password))) {
+    return c.json({ error: 'invalid_credentials' }, 401);
   }
-  const sent = await sendOtpViaEmail(c.env, email, code);
-  if (!sent.ok) {
-    return c.json(
-      { error: 'email_send_failed', sendgridStatus: sent.status, sendgridBody: sent.body },
-      502,
-    );
-  }
-  return c.json({ ok: true, expiresAt: stored.expiresAt }, 200);
-});
-
-authRoutes.post('/signin/verify', async (c) => {
-  const body = await c.req
-    .json<{ email?: string; code?: string }>()
-    .catch(() => ({}) as Record<string, string>);
-  if (!body.email || !body.code) {
-    return c.json({ error: 'email and code are required' }, 400);
-  }
-  const email = normalizeEmail(body.email);
-  const result = await verifyOtp(c.env, email, body.code);
-  if (!result.ok) {
-    return c.json({ error: result.reason ?? 'invalid' }, 400);
-  }
-  const user = await getUserByEmail(c.env, email);
   const secret = sessionSecret(c.env);
-  if (!user || !isActive(user) || !secret) {
-    return c.json({ error: 'invalid' }, 400);
+  if (!secret) {
+    return c.json({ error: 'server_misconfigured' }, 500);
   }
   const sessionToken = await mintSession(secret, user.id);
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);

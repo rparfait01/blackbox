@@ -5,6 +5,7 @@
  */
 
 import type { Env } from '../types';
+import { verifySecret } from './crypto';
 
 export interface UserRow {
   id: string;
@@ -17,6 +18,7 @@ export interface UserRow {
   regionId: string | null;
   lockCodeHash: string | null;
   duressCodeHash: string | null;
+  passwordHash: string | null;
   guardianEnabled: number;
   nationality: string | null;
   createdAt: number;
@@ -24,7 +26,7 @@ export interface UserRow {
 }
 
 const USER_COLS =
-  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, guardianEnabled, nationality, createdAt, updatedAt';
+  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, createdAt, updatedAt';
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -64,7 +66,14 @@ export interface CreateDraftResult {
  */
 export async function createDraftUser(
   env: Env,
-  input: { name: string; phone: string; email: string; regionId: string; nationality?: string | null },
+  input: {
+    name: string;
+    phone: string;
+    email: string;
+    regionId: string;
+    nationality?: string | null;
+    passwordHash?: string | null;
+  },
 ): Promise<CreateDraftResult> {
   const email = normalizeEmail(input.email);
   const existing = await getUserByEmail(env, email);
@@ -79,11 +88,40 @@ export async function createDraftUser(
   }
   statements.push(
     env.DB.prepare(
-      'INSERT INTO users (id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, nationality, createdAt, updatedAt) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?)',
-    ).bind(id, input.name, normalizePhone(input.phone), email, input.regionId, input.nationality ?? null, now, now),
+      'INSERT INTO users (id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, nationality, createdAt, updatedAt) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?)',
+    ).bind(
+      id,
+      input.name,
+      normalizePhone(input.phone),
+      email,
+      input.regionId,
+      input.passwordHash ?? null,
+      input.nationality ?? null,
+      now,
+      now,
+    ),
   );
   await env.DB.batch(statements);
   return { ok: true, userId: id };
+}
+
+/**
+ * Verify a login credential (Brief 14). New accounts authenticate by password.
+ * Legacy accounts created under the old email-OTP flow have no password, so we
+ * fall back to the existing closure-pin hash (lockCodeHash) — letting a
+ * previously-good account sign in with no email delivery involved.
+ */
+export async function verifyLoginCredential(user: UserRow, credential: string): Promise<boolean> {
+  if (!credential) {
+    return false;
+  }
+  if (user.passwordHash) {
+    return verifySecret(credential, user.passwordHash);
+  }
+  if (user.lockCodeHash) {
+    return verifySecret(credential, user.lockCodeHash);
+  }
+  return false;
 }
 
 export async function markEmailVerified(env: Env, userId: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { CaretLeft } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
@@ -55,15 +56,28 @@ function PrimaryButton({
 function Shell({
   title,
   subtitle,
+  onBack,
   children,
 }: {
   title?: string;
   subtitle?: string;
+  /** When set, a back control is shown top-left (Brief 14 P1 — no dead ends). */
+  onBack?: () => void;
   children: React.ReactNode;
 }): JSX.Element {
   return (
     <main className="stillpoint-bg animate-hue-drift motion-reduce:animate-none flex min-h-full w-full flex-col items-center justify-center overflow-y-auto p-8 text-med-text">
       <div className="w-full max-w-sm">
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back"
+            className="-ml-2 mb-4 p-2 text-med-text/50 transition-colors hover:text-med-text"
+          >
+            <CaretLeft size={24} weight="light" />
+          </button>
+        ) : null}
         {title ? (
           <h1 className="mb-2 font-serif text-3xl font-light tracking-[0.04em]">{title}</h1>
         ) : null}
@@ -83,13 +97,12 @@ export function Onboarding(): JSX.Element {
   // account fields
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [country, setCountry] = useState<CountryOption>(defaultCountry());
   const [phoneLocal, setPhoneLocal] = useState('');
   const [regionId, setRegionId] = useState(defaultCountry().regionId);
   const [nationality, setNationality] = useState('');
   const [signupId, setSignupId] = useState('');
-  const [otp, setOtp] = useState('');
-  const [resend, setResend] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [emailExists, setEmailExists] = useState(false);
 
   // display + codes
@@ -119,58 +132,27 @@ export function Onboarding(): JSX.Element {
       setError('That email does not look right — please check it.');
       return;
     }
+    if (password.length < 6) {
+      setError('Please choose a password of at least 6 characters.');
+      return;
+    }
     setBusy(true);
+    // Brief 14: create the account immediately. No email is sent and no email
+    // delivery can fail here — we go straight on to display mode.
     const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
       auth: false,
-      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId, nationality },
+      body: { name: name.trim(), email: email.trim(), password, phone: phoneE164(), regionId, nationality },
     });
     setBusy(false);
     if (res.ok && res.data?.signupId) {
       setSignupId(res.data.signupId);
-      setStep(3);
+      setStep(4);
     } else if (res.status === 409) {
       setEmailExists(true);
-    } else if (res.status === 502) {
-      setError('We could not send the verification email. Please try again shortly.');
     } else if (res.status === 0) {
       setError('No connection — we couldn’t create your account. Check your signal and try again.');
     } else {
       setError('Something went wrong creating your account. Please try again.');
-    }
-  }
-
-  async function resendOtp(): Promise<void> {
-    setError(null);
-    setResend('sending');
-    // Re-issuing start replaces the draft and sends a fresh code; adopt the new
-    // signupId so verification targets the latest code.
-    const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
-      auth: false,
-      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId, nationality },
-    });
-    if (res.ok && res.data?.signupId) {
-      setSignupId(res.data.signupId);
-      setResend('sent');
-    } else {
-      setResend('error');
-    }
-    window.setTimeout(() => setResend('idle'), 2000);
-  }
-
-  async function verifyEmail(): Promise<void> {
-    setError(null);
-    setBusy(true);
-    const res = await api('/v1/auth/signup/verify-email', {
-      auth: false,
-      body: { signupId, code: otp },
-    });
-    setBusy(false);
-    if (res.ok) {
-      setStep(4);
-    } else if (res.status === 0) {
-      setError('No connection — we couldn’t verify the code. Check your signal and try again.');
-    } else {
-      setError('That code is not valid. Check the latest email and try again.');
     }
   }
 
@@ -259,10 +241,18 @@ export function Onboarding(): JSX.Element {
 
   if (step === 2) {
     return (
-      <Shell title="Create account" subtitle="Your email is verified; your phone is captured for later.">
+      <Shell
+        title="Create account"
+        subtitle="Set an email and password to sign in. Your phone is captured for later."
+        onBack={() => {
+          setError(null);
+          setStep(1);
+        }}
+      >
         <div className="space-y-5">
           <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name or alias" />
-          <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+          <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" />
+          <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" autoComplete="new-password" />
           <div className="flex gap-3">
             <label className="block w-28">
               <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">Code</span>
@@ -334,47 +324,23 @@ export function Onboarding(): JSX.Element {
         {error ? <p className="mt-4 text-sm text-status-active">{error}</p> : null}
         <div className="mt-8">
           <PrimaryButton onClick={startSignup} disabled={busy}>
-            {busy ? 'Sending code…' : 'Continue'}
+            {busy ? 'Creating account…' : 'Continue'}
           </PrimaryButton>
         </div>
       </Shell>
     );
   }
 
-  if (step === 3) {
-    return (
-      <Shell title="Verify your email" subtitle={`We sent a 6-digit code to ${email}.`}>
-        <input
-          value={otp}
-          onChange={(e) => setOtp(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-          inputMode="numeric"
-          placeholder="------"
-          className="mb-2 w-full border-b border-med-text/25 bg-transparent py-3 text-center font-mono text-3xl tracking-[0.4em] text-med-text outline-none placeholder:text-med-text/20"
-        />
-        {error ? <p className="mb-2 text-sm text-status-active">{error}</p> : null}
-        <button
-          onClick={resendOtp}
-          disabled={resend === 'sending'}
-          className="mb-8 text-sm text-med-text/50 underline disabled:no-underline disabled:opacity-60"
-        >
-          {resend === 'sending'
-            ? 'Sending…'
-            : resend === 'sent'
-              ? 'Code sent'
-              : resend === 'error'
-                ? 'Could not send — try again'
-                : 'Resend code'}
-        </button>
-        <PrimaryButton onClick={verifyEmail} disabled={busy || otp.length !== 6}>
-          {busy ? 'Verifying…' : 'Verify'}
-        </PrimaryButton>
-      </Shell>
-    );
-  }
-
   if (step === 4) {
     return (
-      <Shell title="Display mode" subtitle="How the app looks on your phone. You can change this later.">
+      <Shell
+        title="Display mode"
+        subtitle="How the app looks on your phone. You can change this later."
+        onBack={() => {
+          setError(null);
+          setStep(2);
+        }}
+      >
         <div className="space-y-4">
           <ModeCard
             active={displayMode === 'direct'}
@@ -398,7 +364,14 @@ export function Onboarding(): JSX.Element {
 
   if (step === 5) {
     return (
-      <Shell title="Set your closure pin">
+      <Shell
+        title="Set your closure pin"
+        onBack={() => {
+          setError(null);
+          setCodePhase('pin');
+          setStep(4);
+        }}
+      >
         <p className="mb-8 text-center font-serif text-lg font-light text-med-text/80">
           {codePhase === 'pin' ? 'Choose a 3-digit pin' : 'Re-enter your 3-digit pin'}
         </p>
@@ -421,7 +394,14 @@ export function Onboarding(): JSX.Element {
 
   if (step === 6) {
     return (
-      <Shell title="Add support contact" subtitle="The person we reach the moment you activate.">
+      <Shell
+        title="Add support contact"
+        subtitle="The person we reach the moment you activate."
+        onBack={() => {
+          setError(null);
+          setStep(5);
+        }}
+      >
         <ContactForm
           busy={busy}
           error={error}
@@ -442,7 +422,7 @@ export function Onboarding(): JSX.Element {
   const permsGranted = typeof perms === 'object';
 
   return (
-    <Shell title="You're set up">
+    <Shell title="You're set up" onBack={() => setStep(6)}>
       <div className="mb-6 rounded-lg border border-med-text/20 bg-black/20 p-5 text-sm leading-relaxed text-med-text/80">
         Email notifications enabled. Your support contact will receive an immediate email at
         activation. Most phones show this on the lock screen and on a connected watch.

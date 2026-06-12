@@ -5,10 +5,12 @@ import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
 
 /**
- * Sign in (W8A, BUG 2). For existing users on a new device. Email → OTP →
- * session. On success it populates ALL localStorage keys (session, user,
- * displayMode, setupComplete) so the new device renders the same display mode as
- * the original. Reachable only from the onboarding Welcome screen.
+ * Sign in (Brief 14: email removed from the critical path). Existing users on a
+ * new device authenticate with their email + password — no emailed code, no
+ * verification gate, no outbound email required. On success it populates ALL
+ * localStorage keys (session, user, displayMode, setupComplete) so the new device
+ * renders the same display mode as the original. Reachable from the onboarding
+ * Welcome screen.
  */
 
 function Shell({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }): JSX.Element {
@@ -39,46 +41,33 @@ export function SignIn(): JSX.Element {
   const location = useLocation();
   const prefill = (location.state as { email?: string } | null)?.email ?? '';
 
-  const [phase, setPhase] = useState<'email' | 'otp'>('email');
   const [email, setEmail] = useState(prefill);
-  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [resend, setResend] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
-  async function sendCode(): Promise<void> {
+  async function signIn(): Promise<void> {
     setError(null);
     setNotFound(false);
     setBusy(true);
-    const res = await api('/v1/auth/signin/start', { auth: false, body: { email: email.trim() } });
-    setBusy(false);
-    if (res.ok) {
-      setPhase('otp');
-    } else if (res.status === 404) {
+    const res = await api<{ sessionToken: string; displayMode: DisplayMode }>('/v1/auth/signin', {
+      auth: false,
+      body: { email: email.trim(), password },
+    });
+    if (res.status === 404) {
+      setBusy(false);
       setNotFound(true);
-    } else {
-      setError('Could not send a code. Try again.');
+      return;
     }
-  }
-
-  async function resendCode(): Promise<void> {
-    setResend('sending');
-    const res = await api('/v1/auth/signin/start', { auth: false, body: { email: email.trim() } });
-    setResend(res.ok ? 'sent' : 'error');
-    window.setTimeout(() => setResend('idle'), 2000);
-  }
-
-  async function verify(): Promise<void> {
-    setError(null);
-    setBusy(true);
-    const res = await api<{ sessionToken: string; displayMode: DisplayMode }>(
-      '/v1/auth/signin/verify',
-      { auth: false, body: { email: email.trim(), code } },
-    );
+    if (res.status === 401) {
+      setBusy(false);
+      setError('Email or password is incorrect.');
+      return;
+    }
     if (!res.ok || !res.data?.sessionToken) {
       setBusy(false);
-      setError('Invalid code. Try again.');
+      setError(res.status === 0 ? 'No connection — check your signal and try again.' : 'Could not sign in. Try again.');
       return;
     }
     const { sessionToken, displayMode } = res.data;
@@ -114,50 +103,34 @@ export function SignIn(): JSX.Element {
     );
   }
 
-  if (phase === 'email') {
-    return (
-      <Shell title="Sign in" subtitle="Enter your email and we'll send a 6-digit code.">
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          type="email"
-          placeholder="you@example.com"
-          className="mb-4 w-full border-b border-med-text/25 bg-transparent py-2 text-lg text-med-text outline-none placeholder:text-med-text/30"
-        />
-        {error ? <p className="mb-3 text-sm text-status-active">{error}</p> : null}
-        <PrimaryButton onClick={sendCode} disabled={busy || !email.includes('@')}>
-          {busy ? 'Sending…' : 'Send code'}
-        </PrimaryButton>
-      </Shell>
-    );
-  }
-
   return (
-    <Shell title="Verify your email" subtitle={`We sent a 6-digit code to ${email}.`}>
+    <Shell title="Sign in" subtitle="Enter your email and password.">
       <input
-        value={code}
-        onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-        inputMode="numeric"
-        placeholder="------"
-        className="mb-2 w-full border-b border-med-text/25 bg-transparent py-3 text-center font-mono text-3xl tracking-[0.4em] text-med-text outline-none placeholder:text-med-text/20"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        type="email"
+        autoComplete="email"
+        placeholder="you@example.com"
+        className="mb-4 w-full border-b border-med-text/25 bg-transparent py-2 text-lg text-med-text outline-none placeholder:text-med-text/30"
       />
-      {error ? <p className="mb-2 text-sm text-status-active">{error}</p> : null}
-      <button
-        onClick={resendCode}
-        disabled={resend === 'sending'}
-        className="mb-8 text-sm text-med-text/50 underline disabled:no-underline disabled:opacity-60"
-      >
-        {resend === 'sending'
-          ? 'Sending…'
-          : resend === 'sent'
-            ? 'Code sent'
-            : resend === 'error'
-              ? 'Could not send — try again'
-              : 'Resend code'}
-      </button>
-      <PrimaryButton onClick={verify} disabled={busy || code.length !== 6}>
-        {busy ? 'Verifying…' : 'Verify'}
+      <input
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        type="password"
+        autoComplete="current-password"
+        placeholder="Password"
+        className="mb-4 w-full border-b border-med-text/25 bg-transparent py-2 text-lg text-med-text outline-none placeholder:text-med-text/30"
+      />
+      {error ? <p className="mb-3 text-sm text-status-active">{error}</p> : null}
+      <PrimaryButton onClick={signIn} disabled={busy || !email.includes('@') || password.length < 1}>
+        {busy ? 'Signing in…' : 'Sign in'}
       </PrimaryButton>
+      <button
+        onClick={() => navigate('/onboarding')}
+        className="mt-5 block w-full text-center text-sm text-med-text/50 underline"
+      >
+        New here? Create an account
+      </button>
     </Shell>
   );
 }
