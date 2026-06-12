@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
 import { InstallHint } from '@/components/InstallHint';
+import { ContactForm, type ContactValues } from '@/components/ContactForm';
 import { hashPin } from '@/lib/crypto/pin';
 import { setStoredPin, setStoredDuressPin } from '@/lib/storage';
 import { getUserHash } from '@/lib/device';
@@ -101,12 +102,6 @@ export function Onboarding(): JSX.Element {
   // permissions priming (mic + location), requested from a user gesture here so
   // activation never triggers a permission dialog.
   const [perms, setPerms] = useState<'idle' | 'asking' | { mic: boolean; location: boolean }>('idle');
-
-  // guardian
-  const [gName, setGName] = useState('');
-  const [gEmail, setGEmail] = useState('');
-  const [gPhone, setGPhone] = useState('');
-  const [gRel, setGRel] = useState('');
 
   const phoneE164 = (): string => `${country.code}${phoneLocal.replace(/[^0-9]/g, '')}`;
 
@@ -226,21 +221,16 @@ export function Onboarding(): JSX.Element {
     }
   }
 
-  async function sendInvite(): Promise<void> {
+  async function saveGuardian(values: ContactValues): Promise<void> {
     setBusy(true);
     setError(null);
-    if (gName.trim() && gEmail.trim()) {
-      await api('/v1/guardians/invite', {
-        body: {
-          name: gName.trim(),
-          email: gEmail.trim(),
-          phone: gPhone.trim(),
-          relationship: gRel.trim(),
-        },
-      });
-    }
+    const res = await api('/v1/guardians/contact', { body: values });
     setBusy(false);
-    setStep(7);
+    if (res.ok) {
+      setStep(7);
+    } else {
+      setError('Could not save your support contact. Check the destination and try again.');
+    }
   }
 
   function finish(): void {
@@ -418,20 +408,15 @@ export function Onboarding(): JSX.Element {
   if (step === 6) {
     return (
       <Shell title="Add support contact" subtitle="The person we reach the moment you activate.">
-        <div className="space-y-5">
-          <Field label="Name" value={gName} onChange={(e) => setGName(e.target.value)} placeholder="Their name" />
-          <Field label="Email" type="email" value={gEmail} onChange={(e) => setGEmail(e.target.value)} placeholder="their@email.com" />
-          <Field label="Phone (optional)" value={gPhone} onChange={(e) => setGPhone(e.target.value)} placeholder="+81 90 …" inputMode="tel" />
-          <Field label="Relationship" value={gRel} onChange={(e) => setGRel(e.target.value)} placeholder="e.g. spouse, friend" />
-        </div>
-        <div className="mt-8 space-y-3">
-          <PrimaryButton onClick={sendInvite} disabled={busy}>
-            {busy ? 'Sending invite…' : 'Send invite'}
-          </PrimaryButton>
-          <button onClick={() => setStep(7)} className="block w-full text-center text-sm text-med-text/50 underline">
-            Skip — add later in settings
-          </button>
-        </div>
+        <ContactForm
+          busy={busy}
+          error={error}
+          submitLabel="Save support contact"
+          onSubmit={(v) => void saveGuardian(v)}
+        />
+        <button onClick={() => setStep(7)} className="mt-5 block w-full text-center text-sm text-med-text/50 underline">
+          Skip — add later in settings
+        </button>
       </Shell>
     );
   }

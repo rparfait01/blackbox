@@ -85,6 +85,28 @@ export async function addEndpoint(
     .run();
 }
 
+/**
+ * Set the contact's single preferred endpoint at priority 1 (Fix Brief 3 contact
+ * setup). The user picks ONE channel + destination; this replaces the contact's
+ * endpoints with that one at priority 1. Returns the contactId.
+ */
+export async function setPrimaryEndpoint(
+  env: Env,
+  userId: string,
+  displayName: string,
+  channel: string,
+  channelIdentifier: string,
+): Promise<string> {
+  const contactId = await ensureContactForUser(env, userId, displayName);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM contact_endpoints WHERE contactId = ?').bind(contactId),
+    env.DB.prepare(
+      'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, 1, ?, ?)',
+    ).bind(crypto.randomUUID(), contactId, channel, channelIdentifier, Date.now(), Date.now()),
+  ]);
+  return contactId;
+}
+
 export async function getContactEndpoints(
   env: Env,
   contactId: string,

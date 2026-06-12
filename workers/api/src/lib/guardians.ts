@@ -6,7 +6,7 @@
  */
 
 import type { Env } from '../types';
-import { addEndpoint, ensureContactForUser } from './contacts';
+import { addEndpoint, ensureContactForUser, setPrimaryEndpoint } from './contacts';
 import { getUserById } from './users';
 import { normalizeEmail, normalizePhone } from './users';
 
@@ -20,6 +20,61 @@ export interface GuardianInviteRow {
   status: string;
   createdAt: number;
   acceptedAt: number | null;
+  preferredChannel: string | null;
+  channelDestination: string | null;
+}
+
+const INVITE_COLS =
+  'id, userId, guardianName, guardianPhone, guardianEmail, relationship, status, createdAt, acceptedAt, preferredChannel, channelDestination';
+
+export type PreferredChannel = 'sms' | 'line' | 'email';
+
+/** Normalize a destination for its channel (phone → E.164-ish, email → lowercased). */
+export function normalizeDestination(channel: PreferredChannel, destination: string): string {
+  if (channel === 'sms') {
+    return normalizePhone(destination);
+  }
+  if (channel === 'email') {
+    return normalizeEmail(destination);
+  }
+  return destination.trim();
+}
+
+/**
+ * Save (add or edit) the user's guardian with a chosen primary channel +
+ * destination, stored as the priority-1 endpoint (Fix Brief 3 contact setup).
+ * The user vouches for the destination, so the endpoint is live immediately
+ * (status 'accepted'); no acceptance round-trip is required.
+ */
+export async function saveContact(
+  env: Env,
+  userId: string,
+  input: { name: string; relationship?: string; channel: PreferredChannel; destination: string },
+): Promise<void> {
+  const dest = normalizeDestination(input.channel, input.destination);
+  const id = crypto.randomUUID();
+  const email = input.channel === 'email' ? dest : null;
+  const phone = input.channel === 'sms' ? dest : null;
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM guardian_invites WHERE userId = ?').bind(userId),
+    env.DB.prepare(
+      'INSERT INTO guardian_invites (id, userId, guardianName, guardianPhone, guardianEmail, relationship, status, createdAt, acceptedAt, preferredChannel, channelDestination) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(
+      id,
+      userId,
+      input.name,
+      phone,
+      email,
+      input.relationship ?? null,
+      'accepted',
+      Date.now(),
+      Date.now(),
+      input.channel,
+      dest,
+    ),
+  ]);
+  const user = await getUserById(env, userId);
+  await setPrimaryEndpoint(env, userId, user?.name ?? 'BLACK BOX user', input.channel, dest);
 }
 
 export async function createInvite(
@@ -48,16 +103,14 @@ export async function createInvite(
 }
 
 export function getInvite(env: Env, id: string): Promise<GuardianInviteRow | null> {
-  return env.DB.prepare(
-    'SELECT id, userId, guardianName, guardianPhone, guardianEmail, relationship, status, createdAt, acceptedAt FROM guardian_invites WHERE id = ?',
-  )
+  return env.DB.prepare(`SELECT ${INVITE_COLS} FROM guardian_invites WHERE id = ?`)
     .bind(id)
     .first<GuardianInviteRow>();
 }
 
 export function getInviteForUser(env: Env, userId: string): Promise<GuardianInviteRow | null> {
   return env.DB.prepare(
-    'SELECT id, userId, guardianName, guardianPhone, guardianEmail, relationship, status, createdAt, acceptedAt FROM guardian_invites WHERE userId = ? ORDER BY createdAt DESC LIMIT 1',
+    `SELECT ${INVITE_COLS} FROM guardian_invites WHERE userId = ? ORDER BY createdAt DESC LIMIT 1`,
   )
     .bind(userId)
     .first<GuardianInviteRow>();

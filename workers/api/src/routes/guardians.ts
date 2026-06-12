@@ -14,6 +14,8 @@ import {
   getInvite,
   getInviteForUser,
   removeInvite,
+  saveContact,
+  type PreferredChannel,
 } from '../lib/guardians';
 import { mintMagicToken, verifyMagicTokenDetailed } from '../lib/magic-link';
 import { generateOtp, sendOtpViaEmail, sendOtpViaSms, storeOtp, verifyOtp } from '../lib/otp';
@@ -91,10 +93,34 @@ guardianRoutes.get('/', requireSession, async (c) => {
         name: invite.guardianName,
         relationship: invite.relationship,
         status: invite.status,
+        channel: invite.preferredChannel,
+        destination: invite.channelDestination,
       },
     },
     200,
   );
+});
+
+// Contact setup (Fix Brief 3): the user picks a preferred channel (sms/line/
+// email) + destination; we store it as the priority-1 endpoint immediately.
+guardianRoutes.post('/contact', requireSession, async (c) => {
+  const body = await c.req
+    .json<{ name?: string; relationship?: string; channel?: string; destination?: string }>()
+    .catch(() => ({}) as Record<string, string>);
+  const channel = body.channel as PreferredChannel | undefined;
+  if (!body.name?.trim() || !body.destination?.trim()) {
+    return c.json({ error: 'name and destination are required' }, 400);
+  }
+  if (channel !== 'sms' && channel !== 'line' && channel !== 'email') {
+    return c.json({ error: 'channel must be sms, line or email' }, 400);
+  }
+  await saveContact(c.env, c.get('userId'), {
+    name: body.name.trim(),
+    relationship: body.relationship?.trim(),
+    channel,
+    destination: body.destination.trim(),
+  });
+  return c.json({ ok: true }, 200);
 });
 
 guardianRoutes.post('/resend', requireSession, async (c) => {

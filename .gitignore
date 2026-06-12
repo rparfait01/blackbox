@@ -43,3 +43,7 @@ coverage/
 admin_token.txt
 Long Token - Long Lived.txt
 wrangler_secret_list.txt
+
+# Local secrets / scratch (never commit)
+workers/SendGrid Mail Send.txt
+*.secret

@@ -45,7 +45,13 @@ userRoutes.get('/', async (c) => {
       },
       region,
       guardian: invite
-        ? { name: invite.guardianName, relationship: invite.relationship, status: invite.status }
+        ? {
+            name: invite.guardianName,
+            relationship: invite.relationship,
+            status: invite.status,
+            channel: invite.preferredChannel,
+            destination: invite.channelDestination,
+          }
         : null,
     },
     200,
