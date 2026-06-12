@@ -35,6 +35,63 @@ export async function mintMagicToken(
   return `${expiry}.${signature}`;
 }
 
+/**
+ * Role-scoped tokens (Fix Brief 3). The guardian/coordinator path uses a legacy
+ * 2-part token (no role) and resolves straight to the live dashboard. The
+ * authority path uses a 3-part role token (`<role>.<expiry>.<sig>`) and is the
+ * ONLY thing that triggers the C1 verify-identity gate.
+ *
+ * Format: `<role>.<expiry>.<hmac(secret, "<eventId>.<role>.<expiry>")>`.
+ */
+export type TokenRole = 'guardian' | 'coordinator' | 'notified' | 'dispatch';
+
+export async function mintRoleToken(
+  secret: string,
+  eventId: string,
+  role: TokenRole,
+  now: number = Date.now(),
+  ttlMs: number = MAGIC_LINK_TTL_MS,
+): Promise<string> {
+  const expiry = now + ttlMs;
+  const signature = await hmacSha256Hex(secret, `${eventId}.${role}.${expiry}`);
+  return `${role}.${expiry}.${signature}`;
+}
+
+export interface RoleVerdict {
+  verdict: TokenVerdict;
+  /** Resolved role; a legacy (role-less) token resolves to 'guardian'. */
+  role: TokenRole;
+}
+
+const ROLES: TokenRole[] = ['guardian', 'coordinator', 'notified', 'dispatch'];
+
+/**
+ * Verify a token and resolve its role. Accepts both the legacy 2-part guardian
+ * token (role → 'guardian') and the 3-part role token.
+ */
+export async function verifyTokenRole(
+  secret: string,
+  eventId: string,
+  token: string,
+  now: number = Date.now(),
+): Promise<RoleVerdict> {
+  const parts = token.split('.');
+  if (parts.length === 3 && ROLES.includes(parts[0] as TokenRole)) {
+    const role = parts[0] as TokenRole;
+    const expiry = Number(parts[1]);
+    if (!Number.isFinite(expiry)) {
+      return { verdict: 'invalid', role };
+    }
+    const expected = await hmacSha256Hex(secret, `${eventId}.${role}.${expiry}`);
+    if (!constantTimeEqual(expected, parts[2]!)) {
+      return { verdict: 'invalid', role };
+    }
+    return { verdict: now > expiry ? 'expired' : 'ok', role };
+  }
+  // Legacy 2-part token → guardian path.
+  return { verdict: await verifyMagicTokenDetailed(secret, eventId, token, now), role: 'guardian' };
+}
+
 export type TokenVerdict = 'ok' | 'expired' | 'invalid';
 
 /**

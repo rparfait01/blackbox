@@ -10,15 +10,20 @@
  * audio + live updates require JS.
  */
 
-import { formatDtg } from '@blackbox/shared';
+import { formatDtg, formatLocalClock } from '@blackbox/shared';
 import type { ContactState } from '../lib/contact-state';
+
+/** Which role-scoped view to render (Fix Brief 3). */
+export type DashboardRole = 'coordinator' | 'dispatch';
 
 interface DashboardOpts {
   eventId: string;
   token: string;
   base: string;
   state: ContactState;
-  /** The verified recipient viewing this evidence (Fix Brief 2 #C1). */
+  /** coordinator (guardian live view) or dispatch (authority/CAD). */
+  role?: DashboardRole;
+  /** The verified recipient viewing this evidence (Fix Brief 2 #C1; dispatch). */
   recipient?: { id: string; fullName: string; agency: string };
 }
 
@@ -92,8 +97,31 @@ function clock(ms: number): string {
   return `${m}:${s}`;
 }
 
+/** Status banner copy + class (Fix Brief 3 R2). */
+function statusBanner(state: ContactState): { text: string; cls: string } {
+  if (!state.active) {
+    return { text: 'SESSION ENDED', cls: 'sb-ended' };
+  }
+  if (state.deviceDark) {
+    return { text: 'DEVICE WENT DARK — ALERT STILL ACTIVE', cls: 'sb-dark' };
+  }
+  return { text: 'ACTIVE', cls: 'sb-active' };
+}
+
+/** Escalation timeline line: started DTG + device-dark local time if any. */
+function timeline(state: ContactState): string {
+  const parts = [`Started ${formatDtg(state.startedAt)}`];
+  if (state.escalatedAt) {
+    parts.push(`device dark ${formatLocalClock(state.escalatedAt, state.tzOffsetMinutes)}`);
+  } else if (state.lostAt) {
+    parts.push(`client lost ${formatLocalClock(state.lostAt, state.tzOffsetMinutes)}`);
+  }
+  return parts.join(' · ');
+}
+
 export function renderDashboardPage(opts: DashboardOpts): string {
   const { eventId, token, base, state, recipient } = opts;
+  const role: DashboardRole = opts.role ?? 'coordinator';
   const cfg = {
     eventId,
     token,
@@ -102,6 +130,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     tile: TILE,
     emergency: state.emergency,
   };
+  const banner = statusBanner(state);
   const recording = state.active
     ? '<span class="dot"></span><span class="rec-text">Recording</span>'
     : '<span class="rec-text ended">Session ended</span>';
@@ -119,8 +148,10 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 </head>
 <body>
 <main class="wrap">
-  <div class="brand">BLACK BOX · Live</div>
+  <div class="brand">${role === 'dispatch' ? 'BLACK BOX · DISPATCH (CAD)' : 'BLACK BOX · Live'}</div>
+  <div class="status-banner ${banner.cls}">${banner.text}</div>
   <div class="dtg">INITIAL REPORT · ${formatDtg(state.startedAt)}</div>
+  <div class="timeline">${timeline(state)}</div>
   ${
     recipient
       ? `<div class="rcp">Accessed by ${escapeHtml(recipient.fullName)} · ${escapeHtml(
@@ -166,13 +197,23 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 
   <div class="actions">
     <button id="respond" class="btn btn-respond">I AM RESPONDING</button>
+    ${
+      role === 'coordinator'
+        ? '<button id="shareAuth" class="btn btn-share">SHARE WITH AUTHORITIES</button>'
+        : ''
+    }
+    ${
+      role === 'dispatch'
+        ? '<button id="exportPkg" class="btn btn-share">EXPORT EVIDENCE PACKAGE</button>'
+        : ''
+    }
     <button id="share" class="btn btn-share">SHARE LIVE LINK</button>
-    <button id="exportPkg" class="btn btn-share">EXPORT EVIDENCE PACKAGE</button>
     <a id="call" class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
-    <button id="standDown" class="btn btn-standdown" ${state.active ? '' : 'hidden'}>
-      <span class="sd-label">HOLD 3S TO STAND DOWN</span>
-      <span class="sd-fill" id="sdFill"></span>
-    </button>
+    ${
+      role === 'coordinator' && state.active
+        ? '<button id="standDownCode" class="btn btn-standdown">STAND DOWN (ENTER LOCK CODE)</button>'
+        : ''
+    }
   </div>
 
   <div class="ended-banner" id="endedBanner" ${state.active ? 'hidden' : ''}>
@@ -181,6 +222,45 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 </main>
 <script>window.__CFG=${JSON.stringify(cfg)};window.__STATE0=${JSON.stringify(state)};</script>
 <script>${CLIENT_JS}</script>
+</body>
+</html>`;
+}
+
+/**
+ * Notified (limited) view (Fix Brief 3 R1/R2) — for guardians who open the link
+ * after the coordinator has been claimed. Status only; no live media, no actions
+ * beyond calling emergency services.
+ */
+export function renderNotifiedPage(opts: { eventId: string; base: string; state: ContactState }): string {
+  const { state } = opts;
+  const banner = statusBanner(state);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="robots" content="noindex,nofollow" />
+<title>BLACK BOX · Alert</title>
+<style>${CSS}</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="brand">BLACK BOX · Alert</div>
+  <div class="status-banner ${banner.cls}">${banner.text}</div>
+  <div class="dtg">INITIAL REPORT · ${formatDtg(state.startedAt)}</div>
+  <div class="timeline">${timeline(state)}</div>
+  <section class="sec">
+    <div class="muted" style="font-size:14px;line-height:1.5">
+      Another responder is already coordinating this alert. You're receiving the
+      notified view — live audio, location and actions are with the coordinator.
+      If you can't reach them and believe someone is in danger, call emergency
+      services now.
+    </div>
+  </section>
+  <div class="actions">
+    <a class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
+  </div>
+</main>
 </body>
 </html>`;
 }
@@ -215,7 +295,12 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
 .wrap{max-width:520px;margin:0 auto;padding:16px 16px 48px}
 .brand{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#666;margin-bottom:4px}
 .dtg{font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.1em;color:#e8e8e8;margin-bottom:4px}
+.timeline{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.04em;color:#888;margin-bottom:8px}
 .rcp{font-family:ui-monospace,Menlo,monospace;font-size:10px;letter-spacing:.04em;color:#666;margin-bottom:8px}
+.status-banner{margin:6px 0;padding:10px 12px;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;letter-spacing:.08em;text-align:center}
+.sb-active{background:#13301a;color:#34c759}
+.sb-dark{background:#3a1414;color:#ff6b60;animation:pulse 1.2s infinite}
+.sb-ended{background:#1a1a1a;color:#888}
 .bar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #222;padding:10px 0}
 .rec{display:flex;align-items:center;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase}
 .rec-text{color:#ff3b30}
@@ -440,6 +525,33 @@ const CLIENT_JS = `
       else if(d&&d.url){ window.prompt('Copy this live link', d.url); }
     }).catch(function(){});
   };
+
+  // ---- share with authorities: mint a dispatch link (Fix Brief 3 R3) ----
+  var sa=el('shareAuth');
+  if(sa){ sa.onclick=function(){
+    sa.disabled=true; sa.textContent='MINTING…';
+    fetch(api('/dispatch-link')).then(function(r){ return r.json(); }).then(function(d){
+      sa.disabled=false; sa.textContent='SHARE WITH AUTHORITIES';
+      if(d&&d.url){
+        if(navigator.clipboard){ navigator.clipboard.writeText(d.url).catch(function(){}); }
+        window.prompt('Authority dispatch link (identity-verified on open). Send to responders:', d.url);
+      }
+    }).catch(function(){ sa.disabled=false; sa.textContent='SHARE WITH AUTHORITIES'; });
+  };}
+
+  // ---- coordinator stand down: requires the user's lock code (server-verified) ----
+  var sdc=el('standDownCode');
+  if(sdc){ sdc.onclick=function(){
+    var code=window.prompt('Enter the user lock code to stand the alert down:');
+    if(!code){ return; }
+    sdc.disabled=true; sdc.textContent='VERIFYING…';
+    fetch(api('/standdown'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok,d:d}; }); }).then(function(res){
+      if(res.ok && res.d && res.d.closed){ sdc.textContent='STOOD DOWN ✓'; }
+      else if(res.ok && res.d && res.d.duress){ sdc.disabled=false; sdc.textContent='STAND DOWN (ENTER LOCK CODE)'; alert('Signal received.'); }
+      else { sdc.disabled=false; sdc.textContent='STAND DOWN (ENTER LOCK CODE)'; alert('Code not accepted.'); }
+    }).catch(function(){ sdc.disabled=false; sdc.textContent='STAND DOWN (ENTER LOCK CODE)'; });
+  };}
 
   // ---- export = custody transfer + sealed vault (downloads the signed manifest) ----
   var exp=el('exportPkg');

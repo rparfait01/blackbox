@@ -30,6 +30,12 @@ export interface Env {
   SENDGRID_FROM_EMAIL?: string;
   /** Sender display name; defaults to "BLACK BOX". */
   SENDGRID_FROM_NAME?: string;
+  /** Twilio SMS (default primary channel). Account SID + auth token, plus EITHER
+   *  a Messaging Service SID (preferred) or a from-number. Set via secrets. */
+  TWILIO_ACCOUNT_SID?: string;
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_MESSAGING_SERVICE_SID?: string;
+  TWILIO_FROM_NUMBER?: string;
   /** Ed25519 PRIVATE key (PKCS8, base64) signing the integrity chain head +
    *  export manifests (Fix Brief 2 #C2). Set via `wrangler secret put`. */
   INTEGRITY_SIGNING_KEY?: string;

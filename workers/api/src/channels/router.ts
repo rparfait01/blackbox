@@ -13,6 +13,7 @@ import { recordDelivery } from '../lib/delivery';
 import type { Env } from '../types';
 import { LineChannel } from './line';
 import { SendGridEmailChannel } from './sendgrid-email';
+import { TwilioSmsChannel, twilioConfig } from './twilio-sms';
 import { StubChannel } from './stub';
 import type {
   ActivationAlertPayload,
@@ -55,13 +56,26 @@ function createChannel(
       return env.SENDGRID_API_KEY && env.SENDGRID_FROM_EMAIL
         ? new SendGridEmailChannel(env, identifier)
         : null;
+    case 'sms':
+      return twilioConfig(env) ? new TwilioSmsChannel(env, identifier) : new StubChannel('sms');
     case 'push':
     case 'telegram':
-    case 'sms':
       return new StubChannel(channel);
     default:
       return null;
   }
+}
+
+/**
+ * Default channel preference (Fix Brief 3 R4 + Twilio): SMS is the default
+ * primary, email is the fallback. This is a TIE-BREAKER only — a recipient's
+ * explicit per-endpoint priority always wins, so any recipient can be routed
+ * differently. No channel is hardcoded as the spine.
+ */
+const CHANNEL_RANK: Record<string, number> = { sms: 0, line: 1, push: 2, telegram: 3, email: 9 };
+
+function channelRank(channel: string): number {
+  return CHANNEL_RANK[channel] ?? 5;
 }
 
 /** Invoke the channel method matching the message kind. */
@@ -102,6 +116,9 @@ export async function dispatch(
     await audit(env, message.eventId, 'all_channels_failed', actorHash, { reason: 'no_endpoints' });
     return { delivered: false, channel: null };
   }
+  // Order by the recipient's explicit priority first; break ties by the default
+  // channel preference (SMS primary, email fallback). Channel-agnostic spine.
+  endpoints.sort((a, b) => a.priority - b.priority || channelRank(a.channel) - channelRank(b.channel));
 
   for (const endpoint of endpoints) {
     const channelName = endpoint.channel as ChannelName;

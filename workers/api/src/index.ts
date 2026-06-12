@@ -4,8 +4,7 @@ import { cors } from 'hono/cors';
 import { hmacSha256Hex, randomHex } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
-import { verifySecret } from './lib/crypto';
-import { getUserById } from './lib/users';
+import { attemptStandDown } from './lib/standdown';
 import { appendToChain, hashBytes } from './lib/integrity';
 import {
   getVerifiedRecipient,
@@ -25,10 +24,11 @@ import {
   upsertContact,
 } from './lib/contacts';
 import { notifyActivation, notifyEscalation } from './lib/notify';
-import { mintMagicToken, verifyMagicToken, verifyMagicTokenDetailed } from './lib/magic-link';
+import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
+import { getCookie, setCookie } from 'hono/cookie';
 import { verifySession } from './lib/session';
 import { getContactState } from './lib/contact-state';
-import { renderDashboardPage, renderTokenPage } from './dashboard/page';
+import { renderDashboardPage, renderNotifiedPage, renderTokenPage } from './dashboard/page';
 import { audioStream, locationStream } from './routes/contact-streams';
 import { dispatch } from './channels/router';
 import { formatLocalTime } from './lib/contact-state';
@@ -317,7 +317,10 @@ async function requireMagicToken(c: AppContext): Promise<boolean> {
   }
   const eventId = c.req.param('id') ?? '';
   const token = c.req.query('t') ?? '';
-  return verifyMagicToken(secret, eventId, token);
+  // Accept any valid role token (guardian/coordinator/notified/dispatch) so the
+  // dashboard sub-routes work on both the guardian and authority paths.
+  const { verdict } = await verifyTokenRole(secret, eventId, token);
+  return verdict === 'ok';
 }
 
 // The full dashboard HTML page (loud, contact-facing). Token verdict drives a
@@ -326,25 +329,126 @@ app.get('/c/:id', async (c) => {
   const secret = c.env.MAGIC_LINK_SECRET;
   const eventId = c.req.param('id');
   const token = c.req.query('t') ?? '';
-  const verdict = secret
-    ? await verifyMagicTokenDetailed(secret, eventId, token)
-    : ('invalid' as const);
+  const { verdict, role } = secret
+    ? await verifyTokenRole(secret, eventId, token)
+    : ({ verdict: 'invalid' as const, role: 'guardian' as const });
   if (verdict !== 'ok') {
     return c.html(renderTokenPage(verdict === 'expired' ? 'expired' : 'invalid'), 401);
   }
   const workerOrigin = new URL(c.req.url).origin;
-  // C1 — no anonymous access. Until the holder of this token has registered and
-  // verified an identity, serve the registration page, not the evidence.
-  const recipient = await getVerifiedRecipient(c.env, eventId, token);
-  if (!recipient) {
-    return c.html(renderRecipientRegistration({ eventId, token, base: workerOrigin }));
+
+  // AUTHORITY (dispatch) path — the C1 verify-identity gate applies HERE ONLY
+  // (Fix Brief 3 R3). Until the holder registers + verifies, serve the gate;
+  // then the CAD dispatch view with evidence + export.
+  if (role === 'dispatch') {
+    const recipient = await getVerifiedRecipient(c.env, eventId, token);
+    if (!recipient) {
+      return c.html(renderRecipientRegistration({ eventId, token, base: workerOrigin }));
+    }
+    const state = await getContactState(c.env, eventId);
+    if (!state) {
+      return c.html(renderTokenPage('invalid'), 404);
+    }
+    await logRecipientAction(c.env, recipient.id, eventId, 'view');
+    return c.html(
+      renderDashboardPage({ eventId, token, base: workerOrigin, state, recipient, role: 'dispatch' }),
+    );
   }
+
+  // GUARDIAN path (Fix Brief 3 R1) — the live view opens IMMEDIATELY, no identity
+  // form. Identity here is the pre-registered contact binding from onboarding (a
+  // known contact). The first opener claims coordinator; others get notified.
   const state = await getContactState(c.env, eventId);
   if (!state) {
     return c.html(renderTokenPage('invalid'), 404);
   }
-  await logRecipientAction(c.env, recipient.id, eventId, 'view');
-  return c.html(renderDashboardPage({ eventId, token, base: workerOrigin, state, recipient }));
+  const newKey = randomHex(16);
+  const claim = await c.env.DB.prepare(
+    'UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ? WHERE id = ? AND coordinatorClaimedAt IS NULL',
+  )
+    .bind(Date.now(), newKey, eventId)
+    .run();
+  let isCoordinator: boolean;
+  if (claim.meta.changes === 1) {
+    isCoordinator = true;
+    setCookie(c, 'bbcoord', newKey, {
+      path: `/c/${eventId}`,
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 60 * 60 * 24,
+    });
+  } else {
+    const row = await c.env.DB.prepare('SELECT coordinatorKey FROM events WHERE id = ?')
+      .bind(eventId)
+      .first<{ coordinatorKey: string | null }>();
+    const cookieKey = getCookie(c, 'bbcoord');
+    isCoordinator = !!cookieKey && !!row?.coordinatorKey && cookieKey === row.coordinatorKey;
+  }
+  await audit(c.env, eventId, isCoordinator ? 'coordinator_view' : 'notified_view', null, null);
+  if (isCoordinator) {
+    return c.html(
+      renderDashboardPage({ eventId, token, base: workerOrigin, state, role: 'coordinator' }),
+    );
+  }
+  return c.html(renderNotifiedPage({ eventId, base: workerOrigin, state }));
+});
+
+// Coordinator-only guard for the live guardian path (Fix Brief 3): a valid
+// guardian magic token PLUS the bbcoord cookie matching the claimed key.
+async function requireCoordinator(c: AppContext, eventId: string): Promise<boolean> {
+  if (!(await requireMagicToken(c))) {
+    return false;
+  }
+  const row = await c.env.DB.prepare('SELECT coordinatorKey FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ coordinatorKey: string | null }>();
+  const cookieKey = getCookie(c, 'bbcoord');
+  return !!cookieKey && !!row?.coordinatorKey && cookieKey === row.coordinatorKey;
+}
+
+// "Share with authorities" → mint a dispatch (authority) token (Fix Brief 3 R3).
+// The resulting link hits the C1 verify-identity gate before any evidence.
+app.get('/v1/c/:id/dispatch-link', async (c) => {
+  const eventId = c.req.param('id');
+  if (!(await requireCoordinator(c, eventId)) || !c.env.MAGIC_LINK_SECRET) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const token = await mintRoleToken(c.env.MAGIC_LINK_SECRET, eventId, 'dispatch');
+  const origin = new URL(c.req.url).origin;
+  await audit(c.env, eventId, 'dispatch_link_minted', null, null);
+  return c.json({ url: `${origin}/c/${eventId}?t=${token}` }, 200);
+});
+
+// Coordinator stand-down — requires the user's lock code, server-verified
+// (Fix Brief 1 #4 semantics on the coordinator path, Fix Brief 3 R2).
+app.post('/v1/c/:id/standdown', async (c) => {
+  const eventId = c.req.param('id');
+  if (!(await requireCoordinator(c, eventId))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const origin = new URL(c.req.url).origin;
+  const outcome = await attemptStandDown(
+    c.env,
+    eventId,
+    body.code ?? '',
+    origin,
+    'coordinator_lock_code',
+  );
+  switch (outcome) {
+    case 'not_found':
+      return c.json({ error: 'not found' }, 404);
+    case 'already_closed':
+    case 'closed':
+      return c.json({ ok: true, closed: true }, 200);
+    case 'duress':
+      return c.json({ ok: true, closed: false, duress: true }, 200);
+    case 'no_lock_code':
+      return c.json({ error: 'no_verifiable_lock_code' }, 409);
+    default:
+      return c.json({ error: 'invalid_code' }, 403);
+  }
 });
 
 // --- Recipient identity (C1): register + verify before evidence renders ---
@@ -682,74 +786,21 @@ app.post('/v1/events/:id/heartbeat', async (c) => {
 app.post('/v1/events/:id/standdown', async (c) => {
   const eventId = c.req.param('id');
   const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
-  const code = body.code ?? '';
-  const event = await c.env.DB.prepare(
-    'SELECT userId, userHash, status, locale FROM events WHERE id = ?',
-  )
-    .bind(eventId)
-    .first<{ userId: string | null; userHash: string | null; status: string; locale: string | null }>();
-  if (!event) {
-    return c.json({ error: 'not found' }, 404);
-  }
-  if (event.status === 'closed') {
-    return c.json({ ok: true, closed: true }, 200); // idempotent
-  }
-
-  const user = event.userId ? await getUserById(c.env, event.userId) : null;
-  if (!user?.lockCodeHash) {
-    // No account lock code to verify against — cannot stand down server-side.
-    return c.json({ error: 'no_verifiable_lock_code' }, 409);
-  }
-
-  let kind: 'normal' | 'duress' | 'wrong' = 'wrong';
-  if (await verifySecret(code, user.lockCodeHash)) {
-    kind = 'normal';
-  } else if (user.duressCodeHash && (await verifySecret(code, user.duressCodeHash))) {
-    kind = 'duress';
-  }
-
-  const contact = await getContactForEvent(c.env, event);
   const workerOrigin = new URL(c.req.url).origin;
-
-  if (kind === 'wrong') {
-    await audit(c.env, eventId, 'standdown_rejected', null, null);
-    return c.json({ error: 'invalid_code' }, 403);
+  const outcome = await attemptStandDown(c.env, eventId, body.code ?? '', workerOrigin, 'user_lock_code');
+  switch (outcome) {
+    case 'not_found':
+      return c.json({ error: 'not found' }, 404);
+    case 'already_closed':
+    case 'closed':
+      return c.json({ ok: true, closed: true }, 200);
+    case 'duress':
+      return c.json({ ok: true, closed: false, duress: true }, 200);
+    case 'no_lock_code':
+      return c.json({ error: 'no_verifiable_lock_code' }, 409);
+    default:
+      return c.json({ error: 'invalid_code' }, 403);
   }
-
-  if (kind === 'duress') {
-    // Escalate; never close. Recording continues no matter what.
-    await audit(c.env, eventId, 'standdown_duress', null, null);
-    if (contact && c.env.MAGIC_LINK_SECRET) {
-      const token = await mintMagicToken(c.env.MAGIC_LINK_SECRET, eventId);
-      const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
-      c.executionCtx.waitUntil(
-        dispatch(c.env, contact.id, {
-          kind: 'duress',
-          eventId,
-          payload: { userDisplayName: contact.displayName, dashboardUrl },
-        }),
-      );
-    }
-    return c.json({ ok: true, closed: false, duress: true }, 200);
-  }
-
-  // Normal lock code → server-authoritative close.
-  await c.env.DB.prepare(
-    'UPDATE events SET status = ?, closedAt = ?, closedBy = ? WHERE id = ? AND status = ?',
-  )
-    .bind('closed', Date.now(), 'user_lock_code', eventId, 'active')
-    .run();
-  await audit(c.env, eventId, 'standdown_by_user', null, null);
-  if (contact) {
-    c.executionCtx.waitUntil(
-      dispatch(c.env, contact.id, {
-        kind: 'closureConfirmation',
-        eventId,
-        payload: { userDisplayName: contact.displayName },
-      }),
-    );
-  }
-  return c.json({ ok: true, closed: true }, 200);
 });
 
 app.post('/v1/events/:id/chunks/:sequence', async (c) => {

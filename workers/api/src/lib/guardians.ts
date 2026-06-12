@@ -93,6 +93,12 @@ export async function acceptInvite(
   // The contact's displayName is the USER's name (the alert subject).
   const contactId = await ensureContactForUser(env, invite.userId, user.name ?? 'BLACK BOX user');
   await addEndpoint(env, contactId, channel, channelIdentifier, 1);
+  // Register the guardian's phone as an SMS endpoint too (same priority). SMS is
+  // the default primary channel; the dispatcher's channel-rank tie-break sends
+  // SMS before email, with email as the fallback (Fix Brief 3 R4 + Twilio).
+  if (invite.guardianPhone) {
+    await addEndpoint(env, contactId, 'sms', normalizePhone(invite.guardianPhone), 1);
+  }
   await env.DB.prepare(
     'UPDATE guardian_invites SET status = ?, acceptedAt = ? WHERE id = ?',
   )

@@ -23,6 +23,14 @@ export interface ContactState {
   status: string;
   startedAt: number;
   durationMs: number;
+  /** Canonical tz offset of the event (UTC + offset; render-only). #C6 */
+  tzOffsetMinutes: number | null;
+  /** Lifecycle flags for the coordinator status banner (Fix Brief 3 R2). */
+  lastHeartbeatAt: number | null;
+  lostAt: number | null;
+  escalatedAt: number | null;
+  /** True when an active event has gone dark (escalated or client lost). */
+  deviceDark: boolean;
   location: {
     lat: number;
     lon: number;
@@ -101,10 +109,19 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT createdAt, status, closedAt, locale FROM events WHERE id = ?',
+    'SELECT createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt FROM events WHERE id = ?',
   )
     .bind(eventId)
-    .first<{ createdAt: number; status: string; closedAt: number | null; locale: string | null }>();
+    .first<{
+      createdAt: number;
+      status: string;
+      closedAt: number | null;
+      locale: string | null;
+      tzOffsetMinutes: number | null;
+      lastHeartbeatAt: number | null;
+      lostAt: number | null;
+      escalatedAt: number | null;
+    }>();
   if (!event) {
     return null;
   }
@@ -154,11 +171,17 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
     .bind(eventId)
     .first<{ sequence: number; mimeType: string }>();
 
+  const active = event.status === 'active';
   return {
-    active: event.status === 'active',
+    active,
     status: event.status,
     startedAt: event.createdAt,
     durationMs: Math.max(0, endRef - event.createdAt),
+    tzOffsetMinutes: event.tzOffsetMinutes,
+    lastHeartbeatAt: event.lastHeartbeatAt,
+    lostAt: event.lostAt,
+    escalatedAt: event.escalatedAt,
+    deviceDark: active && (event.escalatedAt != null || event.lostAt != null),
     location: location
       ? {
           lat: location.lat,

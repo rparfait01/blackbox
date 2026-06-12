@@ -17,7 +17,7 @@ import {
 } from '../lib/guardians';
 import { mintMagicToken, verifyMagicTokenDetailed } from '../lib/magic-link';
 import { generateOtp, sendOtpViaEmail, sendOtpViaSms, storeOtp, verifyOtp } from '../lib/otp';
-import { getUserById, normalizeEmail, normalizePhone } from '../lib/users';
+import { getUserById, normalizeEmail } from '../lib/users';
 import type { Env, Vars } from '../types';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -197,12 +197,8 @@ guardianRoutes.post('/accept/:id/verify', async (c) => {
   if (!result.ok) {
     return c.json({ error: result.reason ?? 'invalid' }, 400);
   }
+  // acceptInvite registers the verified email endpoint AND (if present) the
+  // guardian's phone as an SMS endpoint — SMS is the default primary channel.
   const ok = await acceptInvite(c.env, invite, 'email', email);
-  // If the guardian also gave a phone, capture it as a lower-priority (stub)
-  // endpoint so it routes once SMS exists. Unverified, priority 2.
-  if (ok && invite.guardianPhone) {
-    /* phone endpoint capture deferred to keep v0 email-only; phone stays on the invite row */
-    void normalizePhone(invite.guardianPhone);
-  }
   return c.json({ ok }, ok ? 200 : 404);
 });
