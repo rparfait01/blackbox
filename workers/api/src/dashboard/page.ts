@@ -77,12 +77,14 @@ function transcriptHtml(state: ContactState): string {
 }
 
 function clock(ms: number): string {
-  const t = Math.floor(ms / 1000);
-  const m = Math.floor(t / 60)
-    .toString()
-    .padStart(2, '0');
-  const s = (t % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+  // Roll over to hh:mm:ss past an hour so a long session never reads as a
+  // runaway minute count like "2188:56" (Brief 12 P3).
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = t % 60;
+  const p = (n: number): string => n.toString().padStart(2, '0');
+  return h > 0 ? `${p(h)}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 }
 
 // Published category labels — mirrors the classifier's rule set so the rendered
@@ -298,7 +300,6 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   </section>
 
   <div class="actions">
-    <button id="respond" class="btn btn-respond">I AM RESPONDING</button>
     ${
       role === 'coordinator'
         ? '<button id="shareAuth" class="btn btn-share">SHARE WITH AUTHORITIES</button>'
@@ -312,7 +313,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     <a id="call" class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
     ${
       role === 'coordinator' && state.active
-        ? '<button id="standDownCode" class="btn btn-standdown">STAND DOWN (ENTER LOCK CODE)</button>'
+        ? '<button id="secureAlert" class="btn btn-secure">SECURE — END ALERT</button>'
         : ''
     }
   </div>
@@ -534,9 +535,8 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
 .btn-respond.done{background:#1a3a1f;color:#34c759;box-shadow:none}
 .btn-share{background:#1a1a1a;color:#e8e8e8;border:1px solid #333}
 .btn-call{background:#111;color:#ff3b30;border:1px solid #ff3b30}
-.btn-standdown{background:#141414;color:#888;border:1px solid #333;position:relative;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;font-size:13px;letter-spacing:.08em}
-.btn-standdown.done{color:#666}
-.sd-fill{position:absolute;left:0;bottom:0;height:3px;width:0;background:#888;transition:width .05s linear}
+.btn-secure{background:#13301a;color:#34c759;border:1px solid rgba(52,199,89,.45)}
+.btn-secure:disabled{opacity:.6}
 .ended-banner{margin-top:18px;padding:14px;border:1px solid #333;border-radius:6px;text-align:center;color:#888;font-size:13px}
 .expired{text-align:center;padding-top:80px}
 .expired h1{font-size:22px;font-weight:600;margin-bottom:12px}
@@ -554,7 +554,7 @@ const CLIENT_JS = `
 
   // ---- elapsed ticker ----
   var startedAt=S.startedAt, active=S.active, durationMs=S.durationMs, baseNow=Date.now();
-  function fmt(ms){var t=Math.floor(ms/1000);var m=Math.floor(t/60);var s=t%60;return (m<10?'0':'')+m+':'+(s<10?'0':'')+s;}
+  function fmt(ms){var t=Math.max(0,Math.floor(ms/1000));var h=Math.floor(t/3600);var m=Math.floor((t%3600)/60);var s=t%60;function p(n){return (n<10?'0':'')+n;}return h>0?(p(h)+':'+p(m)+':'+p(s)):(p(m)+':'+p(s));}
   setInterval(function(){ if(active){ el('elapsed').textContent=fmt(durationMs+(Date.now()-baseNow)); } },1000);
 
   // ---- self-rendered OSM slippy map ----
@@ -654,15 +654,10 @@ const CLIENT_JS = `
     html+='<div class="cw-row"><span>PIN</span><span class="'+(duress?'cw-bad':'cw-ok')+'">'+(duress?'UNSAT · DURESS':'SAT')+'</span></div>';
     if(duress){ html+='<div class="cw-warn">THREAT ONGOING — do not assume safe. Validate that the user is genuinely safe before securing.</div>'; }
     if(cl.reasonSecured){ html+='<div class="cw-reason">Reason for securing: '+sitEsc(cl.reasonSecured)+'</div>'; }
-    html+='<button id="secureBtn" class="btn btn-respond">SECURE ALERT</button>';
+    // Status only — the coordinator secures via the single SECURE control below
+    // (the confirm step), seeing PIN sat/unsat. They never enter the pin.
+    html+='<div class="cw-reason">Review, then use <b>SECURE — END ALERT</b> below to confirm. You never enter a pin.</div>';
     w.innerHTML=html;
-    var b=el('secureBtn'); if(b){ b.onclick=function(){
-      if(!window.confirm('Are you sure this person is safe?')){ return; }
-      b.disabled=true; b.textContent='SECURING…';
-      fetch(api('/secure'),{method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
-        if(d&&d.secured){ b.textContent='SECURED ✓'; } else { b.disabled=false; b.textContent='SECURE ALERT'; alert('Could not secure. Try again.'); }
-      }).catch(function(){ b.disabled=false; b.textContent='SECURE ALERT'; });
-    };}
   }
   applyClosure(S.closure);
 
@@ -718,7 +713,7 @@ const CLIENT_JS = `
       active=false;
       el('rec').innerHTML='<span class="rec-text ended">Session ended</span>';
       el('endedBanner').hidden=false;
-      var sd=el('standDown'); if(sd){ sd.hidden=true; }
+      var sa=el('secureAlert'); if(sa){ sa.style.display='none'; }
     }
   }
 
@@ -747,11 +742,20 @@ const CLIENT_JS = `
     es2.onerror=function(){ es2.close(); };
   }catch(x){}
 
-  // ---- action buttons ----
-  el('respond').onclick=function(){
-    var b=el('respond');
-    fetch(api('/responding'),{method:'POST'}).then(function(){ b.classList.add('done'); b.textContent='RESPONDING ✓'; }).catch(function(){});
-  };
+  // ---- coordinator secures (Brief 12 P2): a single, deliberate confirm step.
+  // No pin entry — the coordinator never types the user's code; they review the
+  // PIN sat/unsat status and confirm. This is also the only "responding" claim:
+  // coordination was already claimed by the deliberate Take-coordination POST,
+  // so there is no second "I am responding" affordance here. ----
+  var secureAlert=el('secureAlert');
+  if(secureAlert){ secureAlert.onclick=function(){
+    if(!window.confirm('Are you sure this person is safe? This ends the alert and stops recording.')){ return; }
+    secureAlert.disabled=true; secureAlert.textContent='SECURING…';
+    fetch(api('/secure'),{method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
+      if(d&&d.secured){ secureAlert.textContent='SECURED ✓'; }
+      else { secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; alert('Could not secure. Try again.'); }
+    }).catch(function(){ secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; });
+  };}
   // ---- share with authorities: mint a dispatch link + QR (Fix Brief 4 G1) ----
   var sa=el('shareAuth');
   if(sa){ sa.onclick=function(){
@@ -776,20 +780,6 @@ const CLIENT_JS = `
     };}
   })();
 
-  // ---- coordinator stand down: requires the user's lock code (server-verified) ----
-  var sdc=el('standDownCode');
-  if(sdc){ sdc.onclick=function(){
-    var code=window.prompt('Enter the user lock code to stand the alert down:');
-    if(!code){ return; }
-    sdc.disabled=true; sdc.textContent='VERIFYING…';
-    fetch(api('/standdown'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
-    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok,d:d}; }); }).then(function(res){
-      if(res.ok && res.d && res.d.closed){ sdc.textContent='STOOD DOWN ✓'; }
-      else if(res.ok && res.d && res.d.duress){ sdc.disabled=false; sdc.textContent='STAND DOWN (ENTER LOCK CODE)'; alert('Signal received.'); }
-      else { sdc.disabled=false; sdc.textContent='STAND DOWN (ENTER LOCK CODE)'; alert('Code not accepted.'); }
-    }).catch(function(){ sdc.disabled=false; sdc.textContent='STAND DOWN (ENTER LOCK CODE)'; });
-  };}
-
   // ---- export = custody transfer + sealed vault (downloads the signed manifest) ----
   var exp=el('exportPkg');
   if(exp){ exp.onclick=function(){
@@ -804,30 +794,5 @@ const CLIENT_JS = `
       } else { exp.disabled=false; exp.textContent='EXPORT EVIDENCE PACKAGE'; }
     }).catch(function(){ exp.disabled=false; exp.textContent='EXPORT EVIDENCE PACKAGE'; });
   };}
-
-  // ---- stand down (3s deliberate hold) ----
-  (function(){
-    var btn=el('standDown'); if(!btn) return;
-    var fill=el('sdFill'); var label=btn.querySelector('.sd-label');
-    var HOLD=3000, raf=null, start=0, done=false;
-    function reset(){ if(raf){ cancelAnimationFrame(raf); raf=null; } start=0; fill.style.width='0%'; }
-    function complete(){
-      done=true; reset(); btn.classList.add('done');
-      if(label){ label.textContent='STOOD DOWN'; }
-      fetch(api('/stand-down'),{method:'POST'}).catch(function(){});
-    }
-    function tick(now){
-      if(!start) return;
-      var p=Math.min((now-start)/HOLD,1);
-      fill.style.width=(p*100)+'%';
-      if(p>=1){ if(!done){ complete(); } return; }
-      raf=requestAnimationFrame(tick);
-    }
-    btn.addEventListener('pointerdown',function(e){ e.preventDefault(); if(done) return; start=performance.now(); raf=requestAnimationFrame(tick); });
-    function release(){ if(done) return; reset(); }
-    btn.addEventListener('pointerup',release);
-    btn.addEventListener('pointerleave',release);
-    btn.addEventListener('pointercancel',release);
-  })();
 })();
 `;

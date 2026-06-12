@@ -18,7 +18,7 @@ import { useActiveAlert } from '@/lib/active-alert';
 import { ContactTabs } from './ContactTabs';
 
 interface MeData {
-  user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; hasDuressCode: boolean };
+  user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean };
 }
 
 /**
@@ -79,7 +79,26 @@ export function Settings(): JSX.Element {
     navigate('/onboarding', { replace: true });
   }
 
+  async function deleteAccount(): Promise<void> {
+    if (!window.confirm('Delete your account? This erases your identity, contacts, and guardian. This cannot be undone.')) {
+      return;
+    }
+    if (!window.confirm('Are you absolutely sure? Tap OK to permanently delete.')) {
+      return;
+    }
+    const res = await api('/v1/me/account', { method: 'DELETE' });
+    if (res.ok) {
+      clearSession();
+      navigate('/onboarding', { replace: true });
+    } else if (res.status === 423) {
+      flash('Cannot delete during an active alert.');
+    } else {
+      flash('Could not delete your account. Try again.');
+    }
+  }
+
   const mode = getDisplayMode();
+  const present = mode === 'direct';
 
   // Back returns to the armed screen — Stillpoint in covert, BLACK BOX in direct.
   const goBack = (): void => navigate(mode === 'direct' ? '/blackbox' : '/', { replace: true });
@@ -103,22 +122,34 @@ export function Settings(): JSX.Element {
           <Row k="Name" v={me?.user.name ?? '—'} />
           <Row k="Email" v={me?.user.email ?? '—'} />
           <Row k="Phone" v={me?.user.phone ?? '—'} />
+          <Row k="Nationality" v={me?.user.nationality ?? '—'} />
         </Group>
 
-        <Group label="Display mode">
-          <div className="flex gap-3">
-            {(['direct', 'covert'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => void switchMode(m)}
-                className={`flex-1 rounded-lg border py-3 font-mono text-xs uppercase tracking-[0.1em] ${
-                  mode === m ? 'border-med-text/80 bg-med-text/10' : 'border-med-text/25 text-med-text/60'
+        {/* "Present" toggle (Brief 13 A4/B6). Deliberately ambiguous — no
+            safety-revealing subtext. Right = ON (overt instrument), left = OFF
+            (covert facade). switchMode carries the required second confirmation. */}
+        <Group label="Present">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={present}
+            aria-label="Present"
+            onClick={() => void switchMode(present ? 'covert' : 'direct')}
+            className="flex w-full items-center justify-between py-1"
+          >
+            <span className="text-med-text/80">{present ? 'On' : 'Off'}</span>
+            <span
+              className={`relative h-7 w-12 rounded-full border transition-colors ${
+                present ? 'border-med-text/80 bg-med-text/30' : 'border-med-text/25 bg-transparent'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-med-text transition-transform ${
+                  present ? 'translate-x-6' : 'translate-x-0.5'
                 }`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
+              />
+            </span>
+          </button>
         </Group>
 
         <Group label="Closure pin">
@@ -150,6 +181,19 @@ export function Settings(): JSX.Element {
         <button onClick={signOut} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
         </button>
+
+        {/* Delete account (Brief 13 B17) — behind a double confirmation; wipes the
+            account server-side and returns to signup. */}
+        <button
+          onClick={() => void deleteAccount()}
+          className="mt-3 w-full rounded-full border border-status-active/40 py-3 text-sm text-status-active/80"
+        >
+          Delete account
+        </button>
+
+        {/* Live build id (Brief 13 B1) — lets the device's running build be
+            confirmed against the latest deploy. */}
+        <p className="mt-6 text-center font-mono text-[10px] text-med-text/30">build {__BUILD_ID__}</p>
       </div>
 
       {toast ? (

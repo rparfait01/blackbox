@@ -119,6 +119,46 @@ export function formatLocalTime(locale: string | null, nowMs: number): string {
   }
 }
 
+/**
+ * Map an account region (the authoritative source) to local emergency numbers.
+ * Returns null for an unknown/absent region so the caller can fall back to the
+ * locale heuristic. The account region is preferred over the device locale
+ * because the device's `navigator.language` is frequently wrong abroad (e.g. an
+ * English phone used in Japan), which is exactly how the dashboard came to show
+ * the EU "112" while LINE said "110" (Brief 12 P3).
+ */
+export function regionToEmergency(regionId: string | null): EmergencyNumbers | null {
+  switch ((regionId ?? '').toLowerCase()) {
+    case 'jp':
+    case 'jp-47':
+      return { police: '110', ambulance: '119' };
+    case 'us':
+      return { police: '911', ambulance: '911' };
+    case 'gb':
+      return { police: '999', ambulance: '999' };
+    default:
+      return null;
+  }
+}
+
+/** Resolve emergency numbers for an event: account region first, then locale. */
+export async function resolveEmergency(
+  env: Env,
+  userId: string | null,
+  locale: string | null,
+): Promise<EmergencyNumbers> {
+  if (userId) {
+    const user = await env.DB.prepare('SELECT regionId FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ regionId: string | null }>();
+    const byRegion = regionToEmergency(user?.regionId ?? null);
+    if (byRegion) {
+      return byRegion;
+    }
+  }
+  return localeToEmergency(locale);
+}
+
 /** Map a BCP-47 locale to local emergency numbers. Defaults to the Japan pilot. */
 export function localeToEmergency(locale: string | null): EmergencyNumbers {
   const tag = (locale ?? '').toLowerCase();
@@ -192,10 +232,11 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered FROM events WHERE id = ?',
+    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
+      userId: string | null;
       createdAt: number;
       status: string;
       closedAt: number | null;
@@ -343,6 +384,6 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       reasonSecured: event.reasonSecured,
       reasonTriggered: event.reasonTriggered,
     },
-    emergency: localeToEmergency(event.locale),
+    emergency: await resolveEmergency(env, event.userId, event.locale),
   };
 }

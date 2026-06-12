@@ -31,7 +31,7 @@ function isPin(value: unknown): value is string {
 
 authRoutes.post('/signup/start', async (c) => {
   const body = await c.req
-    .json<{ name?: string; phone?: string; email?: string; regionId?: string }>()
+    .json<{ name?: string; phone?: string; email?: string; regionId?: string; nationality?: string }>()
     .catch(() => ({}) as Record<string, string>);
   if (!body.name || !body.email) {
     return c.json({ error: 'name and email are required' }, 400);
@@ -41,6 +41,7 @@ authRoutes.post('/signup/start', async (c) => {
     phone: body.phone ?? '',
     email: body.email,
     regionId: body.regionId ?? 'jp',
+    nationality: body.nationality?.trim() ? body.nationality.trim() : null,
   });
   if (!result.ok || !result.userId) {
     return c.json({ error: result.reason ?? 'signup_failed' }, 409);

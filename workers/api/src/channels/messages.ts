@@ -54,7 +54,10 @@ function infoRow(label: string, value: string): LineMessage {
 }
 
 /** EMERGENCY activation alert — red header, location, audio + dashboard links. */
-export function activationAlert(eventId: string, p: ActivationAlertPayload): BuiltMessage {
+export function activationAlert(_eventId: string, p: ActivationAlertPayload): BuiltMessage {
+  // Locale-correct emergency number (Brief 12 P3) — falls back to the JP pilot
+  // default so the LINE action never disagrees with the dashboard.
+  const police = p.emergency?.police ?? '110';
   const bodyContents: LineMessage[] = [
     { type: 'text', text: `${p.userDisplayName} activated BLACK BOX.`, weight: 'bold', wrap: true, size: 'md' },
     { type: 'text', text: 'Live audio + location active.', wrap: true, color: MUTE, size: 'sm' },
@@ -106,18 +109,13 @@ export function activationAlert(eventId: string, p: ActivationAlertPayload): Bui
             ],
           },
         },
+        // One claim only (Brief 12 P2): coordination is claimed by the deliberate
+        // "Take coordination" POST on the dashboard, so there is NO "I'm
+        // responding" quick reply here that would be a second claim for one
+        // commitment. The remaining quick action is the direct emergency call.
         quickReply: {
           items: [
-            {
-              type: 'action',
-              action: {
-                type: 'postback',
-                label: "I'm responding",
-                data: postbackData('responding', eventId),
-                displayText: "I'm responding",
-              },
-            },
-            { type: 'action', action: { type: 'uri', label: 'Call 110', uri: 'tel:110' } },
+            { type: 'action', action: { type: 'uri', label: `Call ${police}`, uri: `tel:${police}` } },
           ],
         },
       },

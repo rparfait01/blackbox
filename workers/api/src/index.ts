@@ -68,7 +68,11 @@ app.use('*', (c, next) =>
       }
       return allowed[0] ?? '';
     },
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    // DELETE is required by contact removal (DELETE /v1/me/contacts/:slot) and
+    // account deletion (DELETE /v1/me/account). Omitting it made the browser's
+    // preflight reject those cross-origin requests, surfacing as a silent
+    // "Could not clear" / "cannot remove contact" (Brief 13 B7).
+    allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowHeaders: [
       'Content-Type',
       'Authorization',
@@ -1053,13 +1057,21 @@ app.post('/v1/events/:id/origin', async (c) => {
   const eventId = c.req.param('id');
   const b = await c.req.json<OriginPayload>().catch(() => ({}) as OriginPayload);
   const trigger = b.triggerType === 'deadman' || b.triggerType === 'tamper' ? b.triggerType : 'manual';
+  // DTG must be the REAL activation time (Brief 12 P3): bind it to the event's
+  // server-stamped createdAt, not the device clock (which can be skewed and was
+  // the source of the "JUN 10" DTG mismatch). Falls back to the client value
+  // only if the event row somehow can't be read.
+  const ev = await c.env.DB.prepare('SELECT createdAt FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ createdAt: number }>();
+  const dtgStart = ev?.createdAt ?? b.dtgStart ?? Date.now();
   await c.env.DB.prepare(
     'INSERT OR IGNORE INTO event_origin (eventId, triggerType, dtgStart, tzOffsetMinutes, lat, lon, accuracyM, audioFromSeq, audioToSeq, initialCategoriesJson, initialThreatLevel, initialVoiceCount, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
     .bind(
       eventId,
       trigger,
-      b.dtgStart ?? Date.now(),
+      dtgStart,
       b.tzOffsetMinutes ?? null,
       b.location?.lat ?? null,
       b.location?.lon ?? null,

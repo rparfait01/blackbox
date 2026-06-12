@@ -28,6 +28,26 @@ export const COUNTRY_CODES: CountryOption[] = [
   { code: '+44', label: 'United Kingdom (+44)', regionId: 'gb' },
 ];
 
+/**
+ * Optional nationality (citizenship) options for sign-up — distinct from the
+ * operating Region (which drives emergency numbers). Brief 13 A2/B2. Stored as a
+ * plain string; an empty value means the user chose not to say.
+ */
+export const NATIONALITIES: string[] = [
+  'Japanese',
+  'American',
+  'British',
+  'Australian',
+  'Canadian',
+  'Chinese',
+  'Filipino',
+  'French',
+  'German',
+  'Indian',
+  'Korean',
+  'Other',
+];
+
 /** Best-effort default country from the browser locale (pilot defaults to Japan). */
 export function defaultCountry(): CountryOption {
   const tag = (typeof navigator !== 'undefined' ? navigator.language : '').toLowerCase();

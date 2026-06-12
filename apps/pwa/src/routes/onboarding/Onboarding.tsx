@@ -10,7 +10,7 @@ import { hashClosurePin } from '@/lib/crypto/pin';
 import { setStoredClosurePin } from '@/lib/storage';
 import { getUserHash } from '@/lib/device';
 import { PinPad } from '@/components/PinPad';
-import { COUNTRY_CODES, REGIONS, defaultCountry, type CountryOption } from '@/lib/regions';
+import { COUNTRY_CODES, NATIONALITIES, REGIONS, defaultCountry, type CountryOption } from '@/lib/regions';
 
 /**
  * Onboarding wizard (W8A). Seven deliberate steps in the Stillpoint design
@@ -86,6 +86,7 @@ export function Onboarding(): JSX.Element {
   const [country, setCountry] = useState<CountryOption>(defaultCountry());
   const [phoneLocal, setPhoneLocal] = useState('');
   const [regionId, setRegionId] = useState(defaultCountry().regionId);
+  const [nationality, setNationality] = useState('');
   const [signupId, setSignupId] = useState('');
   const [otp, setOtp] = useState('');
   const [resend, setResend] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -105,14 +106,23 @@ export function Onboarding(): JSX.Element {
   async function startSignup(): Promise<void> {
     setError(null);
     setEmailExists(false);
-    if (!name.trim() || !email.trim()) {
-      setError('Name and email are required.');
+    // Inline validation — surface exactly what is missing, never block silently.
+    if (!name.trim()) {
+      setError('Please add your name.');
+      return;
+    }
+    if (!email.trim()) {
+      setError('Please add your email.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('That email does not look right — please check it.');
       return;
     }
     setBusy(true);
     const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
       auth: false,
-      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId },
+      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId, nationality },
     });
     setBusy(false);
     if (res.ok && res.data?.signupId) {
@@ -122,8 +132,10 @@ export function Onboarding(): JSX.Element {
       setEmailExists(true);
     } else if (res.status === 502) {
       setError('We could not send the verification email. Please try again shortly.');
+    } else if (res.status === 0) {
+      setError('No connection — we couldn’t create your account. Check your signal and try again.');
     } else {
-      setError('Could not start sign-up.');
+      setError('Something went wrong creating your account. Please try again.');
     }
   }
 
@@ -134,7 +146,7 @@ export function Onboarding(): JSX.Element {
     // signupId so verification targets the latest code.
     const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
       auth: false,
-      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId },
+      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId, nationality },
     });
     if (res.ok && res.data?.signupId) {
       setSignupId(res.data.signupId);
@@ -155,6 +167,8 @@ export function Onboarding(): JSX.Element {
     setBusy(false);
     if (res.ok) {
       setStep(4);
+    } else if (res.status === 0) {
+      setError('No connection — we couldn’t verify the code. Check your signal and try again.');
     } else {
       setError('That code is not valid. Check the latest email and try again.');
     }
@@ -180,7 +194,14 @@ export function Onboarding(): JSX.Element {
       setSession(res.data.sessionToken, displayMode, { name: name.trim(), email: email.trim() });
       setStep(6);
     } else {
-      setError('Could not finish setting up your account.');
+      // Don't strand the user on a dead pin screen — surface why and let them
+      // re-enter the pin.
+      setError(
+        res.status === 0
+          ? 'No connection — we couldn’t finish setting up. Check your signal and try again.'
+          : 'Could not finish setting up your account. Please try again.',
+      );
+      setCodePhase('pin');
     }
   }
 
@@ -206,6 +227,8 @@ export function Onboarding(): JSX.Element {
     setBusy(false);
     if (res.ok) {
       setStep(7);
+    } else if (res.status === 0) {
+      setError('No connection — we couldn’t save your contact. Check your signal and try again.');
     } else {
       setError('Could not save your support contact. Check the destination and try again.');
     }
@@ -273,6 +296,25 @@ export function Onboarding(): JSX.Element {
               {REGIONS.map((r) => (
                 <option key={r.id} value={r.id} className="text-black">
                   {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">
+              Nationality (optional)
+            </span>
+            <select
+              value={nationality}
+              onChange={(e) => setNationality(e.target.value)}
+              className="w-full border-b border-med-text/25 bg-transparent py-2 text-lg text-med-text outline-none"
+            >
+              <option value="" className="text-black">
+                Prefer not to say
+              </option>
+              {NATIONALITIES.map((n) => (
+                <option key={n} value={n} className="text-black">
+                  {n}
                 </option>
               ))}
             </select>

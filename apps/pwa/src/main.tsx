@@ -20,6 +20,7 @@ import '@fontsource/ibm-plex-mono/700.css';
 import { router } from '@/app/router';
 import { resumeActiveSession } from '@/lib/activation';
 import { resumeUploads } from '@/lib/upload';
+import { UpdateBanner } from '@/components/UpdateBanner';
 import '@/index.css';
 
 // On launch, re-hydrate from the server (Fix Brief 6 LT5-1): an alert that is
@@ -46,5 +47,6 @@ if (!rootElement) {
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <RouterProvider router={router} />
+    <UpdateBanner />
   </React.StrictMode>,
 );

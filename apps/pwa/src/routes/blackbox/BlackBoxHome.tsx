@@ -47,6 +47,11 @@ export function BlackBoxHome(): JSX.Element {
   // event. Location only if the user opted in for THIS tap. Deliberately separate
   // from the activate disc.
   async function sendCheckin(): Promise<void> {
+    // Gated during an active event (Brief 12 P1): check-in is a non-emergency
+    // reassurance and must be inert while an alert is live.
+    if (alertActive) {
+      return;
+    }
     setCheckin('sending');
     let location: { lat: number; lon: number } | null = null;
     if (checkinLoc && 'geolocation' in navigator) {
@@ -119,24 +124,42 @@ export function BlackBoxHome(): JSX.Element {
         </button>
       </div>
 
-      {/* Check-in ("I'm OK") — Brief 10. The autonomy counterpart to the alert,
-          deliberately separate from the activate disc: calm green, no capture. */}
-      <div className="mb-4 rounded-xl border border-status-armed/20 bg-bb-elevated/40 p-4">
-        <button
-          type="button"
-          onClick={() => void sendCheckin()}
-          disabled={checkin !== 'idle'}
-          className="w-full rounded-full border border-[#34c759]/50 bg-[#13301a] py-3.5 font-mono text-sm font-medium uppercase tracking-[0.12em] text-[#34c759] disabled:opacity-60"
-        >
-          {checkin === 'done' ? '✓ Checked in' : checkin === 'sending' ? 'Sending…' : "I'm OK · Check in"}
-        </button>
-        <label className="mt-3 flex items-center justify-center gap-2 text-[11px] text-bb-text-secondary">
-          <input type="checkbox" checked={checkinLoc} onChange={(e) => setCheckinLoc(e.target.checked)} />
-          Include my location this time
-        </label>
-        <p className="mt-1 text-center font-mono text-[10px] text-bb-text-tertiary">
-          Reassurance only — no recording, no tracking.
-        </p>
+      {/* Check-in ("I'm OK") — Brief 10. Deliberately separated from the
+          stand-down / close affordance above (Brief 12 P2): its own divider and
+          "not an emergency" heading so it never reads as part of closing. Inert
+          during an active event (Brief 12 P1). */}
+      <div className="mb-4 mt-6 border-t border-bb-border-subtle pt-5">
+        <div className="mb-3 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-bb-text-tertiary">
+          Not an emergency
+        </div>
+        <div className="rounded-xl border border-status-armed/20 bg-bb-elevated/40 p-4">
+          <button
+            type="button"
+            onClick={() => void sendCheckin()}
+            disabled={alertActive || checkin !== 'idle'}
+            className="w-full select-none rounded-full border border-[#34c759]/50 bg-[#13301a] py-3.5 font-mono text-sm font-medium uppercase tracking-[0.12em] text-[#34c759] disabled:opacity-40"
+          >
+            {alertActive
+              ? 'Unavailable during an alert'
+              : checkin === 'done'
+                ? '✓ Checked in'
+                : checkin === 'sending'
+                  ? 'Sending…'
+                  : "I'm OK · Check in"}
+          </button>
+          <label className="mt-3 flex items-center justify-center gap-2 text-[11px] text-bb-text-secondary">
+            <input
+              type="checkbox"
+              checked={checkinLoc}
+              disabled={alertActive}
+              onChange={(e) => setCheckinLoc(e.target.checked)}
+            />
+            Include my location this time
+          </label>
+          <p className="mt-1 text-center font-mono text-[10px] text-bb-text-tertiary">
+            Reassurance only — no recording, no tracking.
+          </p>
+        </div>
       </div>
 
       <div className="space-y-4">

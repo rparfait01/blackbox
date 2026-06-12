@@ -37,6 +37,10 @@ interface SessionContext {
   /** A first location fix, seeded into the open POST so the very first
    *  notification can carry a position even before location uploads flush. */
   initialLocation?: { lat: number; lon: number; accuracy?: number };
+  /** In-flight open POST, shared so concurrent callers (the eager open + the
+   *  queue drain) never create two events for one session — which would fire two
+   *  activation notifications (Brief 12 P3 duplicate-LINE). */
+  openInFlight?: Promise<boolean>;
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -250,6 +254,26 @@ async function ensureEvent(ctx: SessionContext): Promise<boolean> {
   if (ctx.eventId && ctx.hmacSecret) {
     return true;
   }
+  // Single-flight: if an open POST is already in flight for this session, await
+  // it instead of firing a second POST /v1/events (which would create a second
+  // event and a duplicate activation notification).
+  if (ctx.openInFlight) {
+    return ctx.openInFlight;
+  }
+  const promise = openEvent(ctx);
+  ctx.openInFlight = promise;
+  try {
+    return await promise;
+  } finally {
+    // Clear the latch only if the open did not succeed, so a later caller can
+    // retry; on success ctx.eventId short-circuits at the top.
+    if (!ctx.eventId) {
+      ctx.openInFlight = undefined;
+    }
+  }
+}
+
+async function openEvent(ctx: SessionContext): Promise<boolean> {
   const userHash = await getUserHash();
   // locale lets the contact dashboard show the right emergency number (W7).
   const locale = typeof navigator !== 'undefined' ? navigator.language : '';

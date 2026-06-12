@@ -139,7 +139,13 @@ export async function upsertSlot(
   await env.DB.batch(statements);
 }
 
-/** Remove a slot entirely (contact row + endpoints). */
+/**
+ * Remove a slot entirely (contact row + endpoints). For the three priority-ordered
+ * Contact slots, the remaining contacts REINDEX up to close the gap so priority
+ * stays contiguous (1,2,3 — never 1,3): removing 'secondary' makes the old
+ * 'tertiary' the new 'secondary' (Brief 13 A5/B7). Guardian and emergency are
+ * standalone single slots and never reindex.
+ */
 export async function removeSlot(env: Env, userId: string, slot: SlotKey): Promise<void> {
   const addr = slotAddress(slot);
   if (!addr) {
@@ -150,10 +156,21 @@ export async function removeSlot(env: Env, userId: string, slot: SlotKey): Promi
   )
     .bind(userId, addr.role, addr.priority, addr.priority)
     .all<{ id: string }>();
+  const rows = existing.results ?? [];
   const statements = [];
-  for (const row of existing.results ?? []) {
+  for (const row of rows) {
     statements.push(env.DB.prepare('DELETE FROM contact_endpoints WHERE contactId = ?').bind(row.id));
     statements.push(env.DB.prepare('DELETE FROM contacts WHERE id = ?').bind(row.id));
+  }
+  // Close the priority gap left by removing a Contact: every contact below the
+  // removed priority shifts up by one, keeping the order contiguous. Only when a
+  // row was actually removed, so removing an already-empty slot is a no-op.
+  if (rows.length > 0 && addr.role === 'contact' && addr.priority != null) {
+    statements.push(
+      env.DB.prepare(
+        "UPDATE contacts SET priority = priority - 1 WHERE userId = ? AND role = 'contact' AND priority > ?",
+      ).bind(userId, addr.priority),
+    );
   }
   if (statements.length > 0) {
     await env.DB.batch(statements);

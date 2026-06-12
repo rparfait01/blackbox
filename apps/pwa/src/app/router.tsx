@@ -6,6 +6,7 @@ import { Settings } from '@/routes/settings/Settings';
 import { Onboarding } from '@/routes/onboarding/Onboarding';
 import { SignIn } from '@/routes/signin/SignIn';
 import { GuardianAccept } from '@/routes/guardian/GuardianAccept';
+import { ClosurePinGate } from '@/components/ClosurePinGate';
 import { RootGate } from './RootGate';
 
 // The contact dashboard is NOT a PWA route — it is served by the Worker at
@@ -14,7 +15,15 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
   { path: '/', element: <RootGate />, errorElement: <RootGate /> },
   { path: '/onboarding', element: <Onboarding />, errorElement: <MeditationHome /> },
   { path: '/signin', element: <SignIn />, errorElement: <MeditationHome /> },
-  { path: '/blackbox', element: <BlackBoxHome />, errorElement: <MeditationHome /> },
+  {
+    path: '/blackbox',
+    element: (
+      <ClosurePinGate>
+        <BlackBoxHome />
+      </ClosurePinGate>
+    ),
+    errorElement: <MeditationHome />,
+  },
   { path: '/settings', element: <Settings />, errorElement: <MeditationHome /> },
   { path: '/guardian-accept/:inviteId', element: <GuardianAccept />, errorElement: <MeditationHome /> },
   { path: '*', element: <RootGate />, errorElement: <RootGate /> },

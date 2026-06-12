@@ -18,6 +18,7 @@ import { dispatch } from '../channels/router';
 import type { Env } from '../types';
 import { audit } from './audit';
 import { getContactForEvent, listReachableContacts } from './contacts';
+import { regionToEmergency } from './contact-state';
 import { mintMagicToken } from './magic-link';
 
 async function latestSummary(env: Env, eventId: string): Promise<string | null> {
@@ -84,15 +85,31 @@ interface ActivationCtx {
   audioUrl: string;
   location: { lat: number; lon: number } | null;
   threatSummary: string | null;
+  /** Region-resolved emergency numbers (null when region unknown — the message
+   *  then falls back to the JP pilot default). Brief 12 P3. */
+  emergency: { police: string; ambulance: string } | null;
 }
 
-async function activationCtx(env: Env, eventId: string, workerOrigin: string): Promise<ActivationCtx> {
+async function activationCtx(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+  userId: string | null,
+): Promise<ActivationCtx> {
   const token = await mintMagicToken(env.MAGIC_LINK_SECRET as string, eventId);
+  let emergency: { police: string; ambulance: string } | null = null;
+  if (userId) {
+    const user = await env.DB.prepare('SELECT regionId FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ regionId: string | null }>();
+    emergency = regionToEmergency(user?.regionId ?? null);
+  }
   return {
     dashboardUrl: `${workerOrigin}/c/${eventId}?t=${token}`,
     audioUrl: `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`,
     location: await latestLocation(env, eventId),
     threatSummary: await latestSummary(env, eventId),
+    emergency,
   };
 }
 
@@ -115,6 +132,7 @@ async function dispatchStep(
         audioUrl: ctx.audioUrl,
         location: ctx.location,
         threatSummary: ctx.threatSummary,
+        emergency: ctx.emergency,
       },
     },
     actorHash,
@@ -159,7 +177,7 @@ export async function notifyActivation(
     return;
   }
   const interval = await cascadeIntervalMs(env, event.userId);
-  const ctx = await activationCtx(env, eventId, workerOrigin);
+  const ctx = await activationCtx(env, eventId, workerOrigin, event.userId);
 
   for (let step = 0; step < contacts.length; step += 1) {
     if (!(await advanceStep(env, eventId, step))) {
@@ -203,7 +221,7 @@ export async function advanceCascades(env: Env, workerOrigin: string): Promise<v
     const dueSteps = Math.min(contacts.length, Math.floor(elapsed / intervalSec) + 1);
     let step = ev.cascadeStep;
     if (step < dueSteps) {
-      const ctx = await activationCtx(env, ev.id, workerOrigin);
+      const ctx = await activationCtx(env, ev.id, workerOrigin, ev.userId);
       while (step < dueSteps) {
         if (!(await advanceStep(env, ev.id, step))) {
           break; // claimed / closed / raced with the in-request cascade
@@ -232,7 +250,7 @@ export async function advanceCascades(env: Env, workerOrigin: string): Promise<v
               .first<{ id: string; displayName: string }>()
           : null;
         if (emergency) {
-          const ctx = await activationCtx(env, ev.id, workerOrigin);
+          const ctx = await activationCtx(env, ev.id, workerOrigin, ev.userId);
           await dispatchStep(env, ev.id, ctx, emergency, ev.userHash);
           await audit(env, ev.id, 'emergency_fallback_dispatched', ev.userHash, { reason: 'no_coordinator' });
         } else {

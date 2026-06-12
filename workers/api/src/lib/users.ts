@@ -64,7 +64,7 @@ export interface CreateDraftResult {
  */
 export async function createDraftUser(
   env: Env,
-  input: { name: string; phone: string; email: string; regionId: string },
+  input: { name: string; phone: string; email: string; regionId: string; nationality?: string | null },
 ): Promise<CreateDraftResult> {
   const email = normalizeEmail(input.email);
   const existing = await getUserByEmail(env, email);
@@ -79,8 +79,8 @@ export async function createDraftUser(
   }
   statements.push(
     env.DB.prepare(
-      'INSERT INTO users (id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, createdAt, updatedAt) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?)',
-    ).bind(id, input.name, normalizePhone(input.phone), email, input.regionId, now, now),
+      'INSERT INTO users (id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, nationality, createdAt, updatedAt) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?)',
+    ).bind(id, input.name, normalizePhone(input.phone), email, input.regionId, input.nationality ?? null, now, now),
   );
   await env.DB.batch(statements);
   return { ok: true, userId: id };
@@ -146,6 +146,28 @@ export async function hasActiveEvent(env: Env, userId: string): Promise<boolean>
     .bind(userId)
     .first<{ x: number }>();
   return row != null;
+}
+
+/**
+ * Permanently delete a user account (Brief 13 B17). Wipes the identity row, all
+ * support-role contacts + their endpoints, and the guardian invite. After this
+ * the email is free to sign up again and the old account can never log back in
+ * (the users row is gone, so getUserByEmail returns null). Past evidence/custody
+ * records are intentionally retained — they are append-only chain-of-custody, not
+ * account data, and keyed independently.
+ */
+export async function deleteAccount(env: Env, userId: string): Promise<void> {
+  if (!userId) {
+    return;
+  }
+  await env.DB.batch([
+    env.DB.prepare(
+      'DELETE FROM contact_endpoints WHERE contactId IN (SELECT id FROM contacts WHERE userId = ?)',
+    ).bind(userId),
+    env.DB.prepare('DELETE FROM contacts WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM guardian_invites WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId),
+  ]);
 }
 
 /** Claim pre-existing pilot rows (keyed by userHash) into the new user account. */

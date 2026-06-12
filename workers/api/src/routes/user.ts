@@ -8,7 +8,7 @@ import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { hashSecret, verifySecret } from '../lib/crypto';
 import { getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
-import { getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
+import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
 import {
   guardianLoad,
   listSlots,
@@ -54,6 +54,7 @@ userRoutes.get('/', async (c) => {
         phone: user.phone,
         displayMode: user.displayMode,
         regionId: user.regionId,
+        nationality: user.nationality,
         hasDuressCode: user.duressCodeHash != null,
       },
       region,
@@ -167,6 +168,16 @@ userRoutes.delete('/contacts/:slot', async (c) => {
     return c.json({ error: 'invalid slot' }, 400);
   }
   await removeSlot(c.env, c.get('userId'), slot);
+  return c.json({ ok: true }, 200);
+});
+
+// Delete account (Brief 13 B17). Behind a client confirmation; blocked during an
+// active alert so an aggressor can't wipe the account to kill a live event.
+userRoutes.delete('/account', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  await deleteAccount(c.env, c.get('userId'));
   return c.json({ ok: true }, 200);
 });
 

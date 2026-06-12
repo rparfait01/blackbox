@@ -46,6 +46,23 @@
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
   }
+
+  /*
+   * Touch hardening (Brief 12 P2). On iOS Safari, buttons and the activation
+   * target otherwise flash a grey overlay and offer a text/image selection +
+   * callout on press, making the UI feel like it "selected an image." Suppress
+   * the selection, callout, and tap highlight on every interactive element.
+   */
+  button,
+  a,
+  [role='button'],
+  label,
+  summary {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 
 @layer components {

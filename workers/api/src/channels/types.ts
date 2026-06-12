@@ -26,6 +26,9 @@ export interface ActivationAlertPayload {
   location?: { lat: number; lon: number } | null;
   /** Latest descriptive classification summary, if any. */
   threatSummary?: string | null;
+  /** Locale-correct emergency numbers, resolved from the account region so the
+   *  LINE "Call" action matches the dashboard everywhere (Brief 12 P3). */
+  emergency?: { police: string; ambulance: string } | null;
 }
 
 export interface ClassificationUpdatePayload {

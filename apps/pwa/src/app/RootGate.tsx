@@ -1,6 +1,7 @@
 import { Navigate } from 'react-router-dom';
 
 import { MeditationHome } from '@/routes/meditation/MeditationHome';
+import { ClosurePinGate } from '@/components/ClosurePinGate';
 import { getDisplayMode, isSetupComplete } from '@/lib/auth';
 
 /**
@@ -17,5 +18,9 @@ export function RootGate(): JSX.Element {
   if (getDisplayMode() === 'direct') {
     return <Navigate to="/blackbox" replace />;
   }
-  return <MeditationHome />;
+  return (
+    <ClosurePinGate>
+      <MeditationHome />
+    </ClosurePinGate>
+  );
 }
