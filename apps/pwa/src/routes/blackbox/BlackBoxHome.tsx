@@ -23,6 +23,8 @@ export function BlackBoxHome(): JSX.Element {
   const [guardian, setGuardian] = useState<MeResponse['guardian']>(null);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
+  const [checkin, setCheckin] = useState<'idle' | 'sending' | 'done'>('idle');
+  const [checkinLoc, setCheckinLoc] = useState(false);
 
   useEffect(() => {
     void api<MeResponse>('/v1/me').then((res) => {
@@ -40,6 +42,32 @@ export function BlackBoxHome(): JSX.Element {
     // Covert by principle even here: produces no visible status change.
     void triggerActivation('direct-tap');
   };
+
+  // Check-in ("I'm OK") — Brief 10. NON-emergency reassurance; no capture, no
+  // event. Location only if the user opted in for THIS tap. Deliberately separate
+  // from the activate disc.
+  async function sendCheckin(): Promise<void> {
+    setCheckin('sending');
+    let location: { lat: number; lon: number } | null = null;
+    if (checkinLoc && 'geolocation' in navigator) {
+      location = await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+          () => resolve(null),
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
+        );
+      });
+    }
+    await api('/v1/me/checkin', {
+      body: {
+        includeLocation: checkinLoc && location != null,
+        location,
+        tzOffsetMinutes: new Date().getTimezoneOffset(),
+      },
+    });
+    setCheckin('done');
+    window.setTimeout(() => setCheckin('idle'), 3000);
+  }
 
   return (
     <main className="flex h-full w-full flex-col bg-bb-bg p-6 text-bb-text">
@@ -89,6 +117,26 @@ export function BlackBoxHome(): JSX.Element {
         >
           Enter code to stand down
         </button>
+      </div>
+
+      {/* Check-in ("I'm OK") — Brief 10. The autonomy counterpart to the alert,
+          deliberately separate from the activate disc: calm green, no capture. */}
+      <div className="mb-4 rounded-xl border border-status-armed/20 bg-bb-elevated/40 p-4">
+        <button
+          type="button"
+          onClick={() => void sendCheckin()}
+          disabled={checkin !== 'idle'}
+          className="w-full rounded-full border border-[#34c759]/50 bg-[#13301a] py-3.5 font-mono text-sm font-medium uppercase tracking-[0.12em] text-[#34c759] disabled:opacity-60"
+        >
+          {checkin === 'done' ? '✓ Checked in' : checkin === 'sending' ? 'Sending…' : "I'm OK · Check in"}
+        </button>
+        <label className="mt-3 flex items-center justify-center gap-2 text-[11px] text-bb-text-secondary">
+          <input type="checkbox" checked={checkinLoc} onChange={(e) => setCheckinLoc(e.target.checked)} />
+          Include my location this time
+        </label>
+        <p className="mt-1 text-center font-mono text-[10px] text-bb-text-tertiary">
+          Reassurance only — no recording, no tracking.
+        </p>
       </div>
 
       <div className="space-y-4">

@@ -14,6 +14,7 @@
 
 import type {
   ActivationAlertPayload,
+  CheckinPayload,
   ClassificationUpdatePayload,
   ClosureConfirmationPayload,
   ClosureRequestPayload,
@@ -61,6 +62,10 @@ export class TwilioSmsChannel implements NotificationChannel {
   }
   pushEscalation(_e: string, p: EscalationAlertPayload): Promise<boolean> {
     return this.send('escalation', `🚨 ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE, more urgent not resolved. Open: ${p.dashboardUrl}`);
+  }
+  pushCheckin(_e: string, p: CheckinPayload): Promise<boolean> {
+    const loc = p.location ? ` (loc: ${p.location.lat.toFixed(4)},${p.location.lon.toFixed(4)})` : '';
+    return this.send('checkin', `✓ ${p.userDisplayName} checked in — I'm OK at ${p.time}.${loc} Reassurance only, not an alert.`);
   }
   pushClassificationUpdate(_e: string, p: ClassificationUpdatePayload): Promise<boolean> {
     return this.send('classification', `BLACK BOX update — ${p.summary} (threat: ${p.threatLevel}). ${p.dashboardUrl}`);

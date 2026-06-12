@@ -16,6 +16,7 @@ import {
   upsertSlot,
   type SlotKey,
 } from '../lib/roles';
+import { sendCheckin } from '../lib/checkin';
 import type { Env, Vars } from '../types';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -167,6 +168,24 @@ userRoutes.delete('/contacts/:slot', async (c) => {
   }
   await removeSlot(c.env, c.get('userId'), slot);
   return c.json({ ok: true }, 200);
+});
+
+// Check-in ("I'm OK") — Brief 10. NON-emergency: no event, no capture. NOT
+// locked during an alert (it's a separate, harmless reassurance ping).
+userRoutes.post('/checkin', async (c) => {
+  const body = await c.req
+    .json<{ includeLocation?: boolean; location?: { lat: number; lon: number } | null; recipients?: string[]; tzOffsetMinutes?: number }>()
+    .catch(() => ({}) as Record<string, never>);
+  const recipients = Array.isArray(body.recipients)
+    ? (body.recipients.filter((r) => ['primary', 'secondary', 'tertiary', 'guardian'].includes(r)) as SlotKey[])
+    : undefined;
+  const result = await sendCheckin(c.env, c.get('userId'), {
+    includeLocation: body.includeLocation === true,
+    location: body.includeLocation === true ? body.location ?? null : null,
+    recipients,
+    tzOffsetMinutes: typeof body.tzOffsetMinutes === 'number' ? body.tzOffsetMinutes : null,
+  });
+  return c.json(result, 200);
 });
 
 userRoutes.post('/guardian-enabled', async (c) => {

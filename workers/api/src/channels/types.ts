@@ -72,6 +72,17 @@ export interface EscalationAlertPayload {
   location?: { lat: number; lon: number } | null;
 }
 
+/**
+ * Check-in ("I'm OK") — a calm, NON-emergency reassurance ping (Brief 10). No
+ * event, no capture. Location is included ONLY if the user opted in for this tap.
+ */
+export interface CheckinPayload {
+  userDisplayName: string;
+  /** Local time of the check-in, e.g. "18:42". */
+  time: string;
+  location?: { lat: number; lon: number } | null;
+}
+
 /** Every channel ('push' | 'line' | 'telegram' | 'sms' | 'email'). */
 export type ChannelName = 'push' | 'line' | 'telegram' | 'sms' | 'email';
 
@@ -87,6 +98,8 @@ export interface NotificationChannel {
   pushActivationAlert(eventId: string, payload: ActivationAlertPayload): Promise<boolean>;
   /** "Device went dark" escalation — interruption escalates, never cancels. */
   pushEscalation(eventId: string, payload: EscalationAlertPayload): Promise<boolean>;
+  /** Calm "I'm OK" check-in (Brief 10) — never resembles an emergency message. */
+  pushCheckin(eventId: string, payload: CheckinPayload): Promise<boolean>;
   pushClassificationUpdate(eventId: string, payload: ClassificationUpdatePayload): Promise<boolean>;
   pushClosureRequest(eventId: string, payload: ClosureRequestPayload): Promise<boolean>;
   /**

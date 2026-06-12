@@ -18,7 +18,7 @@ import { dispatch } from '../channels/router';
 import type { ChannelName } from '../channels/types';
 import type { Env } from '../types';
 import { audit } from './audit';
-import { getContactForEvent } from './contacts';
+import { getContactForEvent, listReachableContacts } from './contacts';
 import { mintMagicToken } from './magic-link';
 
 const RETRY_DELAY_MS = 5000;
@@ -67,8 +67,10 @@ export async function notifyActivation(
     return;
   }
   const actorHash = event.userHash;
-  const contact = await getContactForEvent(env, event);
-  if (!contact) {
+  // Fan out to EVERY contact (priority order) + the guardian if enabled — resolved
+  // fresh so a newly added contact is always included (Brief 10 P0).
+  const contacts = await listReachableContacts(env, event);
+  if (contacts.length === 0) {
     await audit(env, eventId, 'notification_skipped', actorHash, { reason: 'no_contact' });
     return;
   }
@@ -78,26 +80,37 @@ export async function notifyActivation(
   }
 
   const token = await mintMagicToken(env.MAGIC_LINK_SECRET, eventId);
-  // The Worker itself serves the contact dashboard at /c/:id.
+  // The Worker itself serves the contact dashboard at /c/:id. All contacts get
+  // the same link; the first to open claims coordinator (full access), the rest
+  // get the location-only view.
   const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
   const audioUrl = `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`;
+  const location = await latestLocation(env, eventId);
+  const threatSummary = await latestSummary(env, eventId);
 
-  const message = {
-    kind: 'activation' as const,
-    eventId,
-    payload: {
-      userDisplayName: contact.displayName,
-      dashboardUrl,
-      audioUrl,
-      location: await latestLocation(env, eventId),
-      threatSummary: await latestSummary(env, eventId),
-    },
+  const dispatchAll = async (): Promise<{ delivered: boolean; channel: ChannelName | null }> => {
+    let delivered = false;
+    let channel: ChannelName | null = null;
+    for (const contact of contacts) {
+      const message = {
+        kind: 'activation' as const,
+        eventId,
+        payload: { userDisplayName: contact.displayName, dashboardUrl, audioUrl, location, threatSummary },
+      };
+      const result = await dispatch(env, contact.id, message, actorHash);
+      if (result.delivered) {
+        delivered = true;
+        channel = channel ?? result.channel;
+      }
+    }
+    return { delivered, channel };
   };
 
-  let result = await dispatch(env, contact.id, message, actorHash);
+  let result = await dispatchAll();
   if (!result.delivered) {
+    // Nobody reached on any channel — retry the whole fan-out once.
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    result = await dispatch(env, contact.id, message, actorHash);
+    result = await dispatchAll();
   }
   if (result.delivered && result.channel) {
     await markDelivered(env, eventId, result.channel);

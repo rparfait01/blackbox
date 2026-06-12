@@ -51,6 +51,35 @@ export async function getContactForEvent(
   return event.userHash ? getContact(env, event.userHash) : null;
 }
 
+/**
+ * All contacts the activation alert fans out to (Brief 10 P0 + Brief 9 roles):
+ * every Contact in priority order, then the Guardian if enabled. Resolved fresh
+ * each call (no stale/cached recipient list) so a newly added contact is always
+ * included. Falls back to the single legacy contact for pre-roles events.
+ */
+export async function listReachableContacts(
+  env: Env,
+  event: { userId: string | null; userHash: string | null },
+): Promise<Array<{ id: string; displayName: string }>> {
+  if (event.userId) {
+    const user = await env.DB.prepare('SELECT guardianEnabled FROM users WHERE id = ?')
+      .bind(event.userId)
+      .first<{ guardianEnabled: number }>();
+    const guardianEnabled = (user?.guardianEnabled ?? 1) === 1;
+    const { results } = await env.DB.prepare(
+      "SELECT id, displayName, role FROM contacts WHERE userId = ? ORDER BY CASE role WHEN 'guardian' THEN 1 ELSE 0 END, priority ASC",
+    )
+      .bind(event.userId)
+      .all<{ id: string; displayName: string; role: string | null }>();
+    const rows = (results ?? []).filter((r) => r.role !== 'guardian' || guardianEnabled);
+    if (rows.length > 0) {
+      return rows.map((r) => ({ id: r.id, displayName: r.displayName }));
+    }
+  }
+  const legacy = await getContactForEvent(env, event);
+  return legacy ? [{ id: legacy.id, displayName: legacy.displayName }] : [];
+}
+
 /** Get-or-create the contact row for a user (used when a guardian accepts). */
 export async function ensureContactForUser(
   env: Env,

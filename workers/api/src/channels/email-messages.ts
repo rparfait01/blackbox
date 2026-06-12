@@ -8,6 +8,7 @@
 
 import type {
   ActivationAlertPayload,
+  CheckinPayload,
   ClassificationUpdatePayload,
   ClosureConfirmationPayload,
   ClosureRequestPayload,
@@ -204,6 +205,28 @@ export function emailStandDownConfirmation(p: StandDownConfirmationPayload): Bui
       ],
     }),
     text: `You stood down the alert for ${p.userDisplayName} at ${p.time}. Recording has stopped and the session is closed.`,
+  };
+}
+
+const CALM = '#34788a';
+export function emailCheckin(p: CheckinPayload): BuiltEmail {
+  const rows: Array<[string, string]> = [
+    ['Who', p.userDisplayName],
+    ['Status', "I'm OK"],
+    ['Time', p.time],
+  ];
+  if (p.location) {
+    rows.push(['Shared location', `${p.location.lat.toFixed(4)}°, ${p.location.lon.toFixed(4)}°`]);
+  }
+  return {
+    subject: `${p.userDisplayName} checked in — I'm OK`,
+    html: shell({
+      headerColor: CALM,
+      headerText: '✓ Check-in',
+      rows,
+      note: 'A reassurance check-in. This is NOT an alert — no recording, no tracking.',
+    }),
+    text: `${p.userDisplayName} checked in — I'm OK at ${p.time}.${p.location ? ` Location: ${p.location.lat.toFixed(4)}, ${p.location.lon.toFixed(4)}.` : ''} (Reassurance only — not an alert.)`,
   };
 }
 

@@ -18,6 +18,7 @@ import { StubChannel } from './stub';
 import type {
   ActivationAlertPayload,
   ChannelName,
+  CheckinPayload,
   ClassificationUpdatePayload,
   ClosureConfirmationPayload,
   ClosureRequestPayload,
@@ -30,6 +31,7 @@ import type {
 export type ChannelMessage =
   | { kind: 'activation'; eventId: string; payload: ActivationAlertPayload }
   | { kind: 'escalation'; eventId: string; payload: EscalationAlertPayload }
+  | { kind: 'checkin'; eventId: string; payload: CheckinPayload }
   | { kind: 'closure'; eventId: string; payload: ClosureRequestPayload }
   | { kind: 'duress'; eventId: string; payload: DuressAlertPayload }
   | { kind: 'closureConfirmation'; eventId: string; payload: ClosureConfirmationPayload }
@@ -85,6 +87,8 @@ function sendMessage(channel: NotificationChannel, message: ChannelMessage): Pro
       return channel.pushActivationAlert(message.eventId, message.payload);
     case 'escalation':
       return channel.pushEscalation(message.eventId, message.payload);
+    case 'checkin':
+      return channel.pushCheckin(message.eventId, message.payload);
     case 'closure':
       return channel.pushClosureRequest(message.eventId, message.payload);
     case 'duress':

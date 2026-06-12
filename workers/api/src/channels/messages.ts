@@ -10,6 +10,7 @@
 
 import type {
   ActivationAlertPayload,
+  CheckinPayload,
   ClassificationUpdatePayload,
   ClosureRequestPayload,
   DuressAlertPayload,
@@ -352,6 +353,13 @@ export function closureConfirmation(): BuiltMessage {
 /** Confirmation that the contact's own stand-down ended the alert. */
 export function standDownConfirmation(time: string): BuiltMessage {
   const text = `✓ You stood down the alert at ${time}. Recording has stopped and the session is closed.`;
+  return { messages: [{ type: 'text', text }], fallback: text };
+}
+
+/** Calm "I'm OK" check-in (Brief 10) — plain, reassuring, never emergency-styled. */
+export function checkinMessage(p: CheckinPayload): BuiltMessage {
+  const loc = p.location ? ` (shared location: ${p.location.lat.toFixed(4)}, ${p.location.lon.toFixed(4)})` : '';
+  const text = `✓ ${p.userDisplayName} checked in — I'm OK at ${p.time}.${loc}`;
   return { messages: [{ type: 'text', text }], fallback: text };
 }
 

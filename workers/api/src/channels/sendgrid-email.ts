@@ -12,6 +12,7 @@ import {
   emailClassificationUpdate,
   emailClosureConfirmation,
   emailClosureRequest,
+  emailCheckin,
   emailDuress,
   emailEscalation,
   emailStandDownConfirmation,
@@ -19,6 +20,7 @@ import {
 } from './email-messages';
 import type {
   ActivationAlertPayload,
+  CheckinPayload,
   ClassificationUpdatePayload,
   ClosureConfirmationPayload,
   ClosureRequestPayload,
@@ -137,6 +139,9 @@ export class SendGridEmailChannel implements NotificationChannel {
   }
   pushEscalation(_eventId: string, payload: EscalationAlertPayload): Promise<boolean> {
     return this.send('escalation', emailEscalation(payload));
+  }
+  pushCheckin(_eventId: string, payload: CheckinPayload): Promise<boolean> {
+    return this.send('checkin', emailCheckin(payload));
   }
   pushClassificationUpdate(_eventId: string, payload: ClassificationUpdatePayload): Promise<boolean> {
     return this.send('classification', emailClassificationUpdate(payload));

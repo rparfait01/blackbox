@@ -343,8 +343,12 @@ export function renderDashboardPage(opts: DashboardOpts): string {
  * beyond calling emergency services.
  */
 export function renderNotifiedPage(opts: { eventId: string; base: string; state: ContactState }): string {
-  const { state } = opts;
+  const { eventId, base, state } = opts;
   const banner = statusBanner(state);
+  // Location-only tier (Brief 9): the network sees the live MAP only — never
+  // audio/video. The page makes no /audio calls, so distressing capture never
+  // spreads across devices.
+  const cfg = { eventId, base, zoom: ZOOM, tile: TILE };
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -356,25 +360,52 @@ export function renderNotifiedPage(opts: { eventId: string; base: string; state:
 </head>
 <body>
 <main class="wrap">
-  <div class="brand">BLACK BOX · Alert</div>
+  <div class="brand">BLACK BOX · Alert · location only</div>
   <div class="status-banner ${banner.cls}">${banner.text}</div>
   <div class="dtg">INITIAL REPORT · ${formatDtg(state.startedAt)}</div>
   <div class="timeline">${timeline(state)}</div>
+
   <section class="sec">
-    <div class="muted" style="font-size:14px;line-height:1.5">
-      Another responder is already coordinating this alert. You're receiving the
-      notified view — live audio, location and actions are with the coordinator.
-      If you can't reach them and believe someone is in danger, call emergency
-      services now.
+    <div class="label">Location · Live</div>
+    <div class="map" id="map">${ssrMap(state)}</div>
+    <div class="coords" id="coords">${
+      state.location
+        ? `${state.location.lat.toFixed(4)}°, ${state.location.lon.toFixed(4)}°`
+        : '—'
+    }</div>
+  </section>
+
+  <section class="sec">
+    <div class="muted" style="font-size:13px;line-height:1.5">
+      A coordinator is handling this alert. You're in the network's location-only
+      view — audio and actions are with the coordinator. If you can't reach them
+      and believe someone is in danger, call emergency services now.
     </div>
   </section>
+
   <div class="actions">
     <a class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
   </div>
 </main>
+<script>window.__CFG=${JSON.stringify(cfg)};</script>
+<script>${NOTIFIED_JS}</script>
 </body>
 </html>`;
 }
+
+// Location-only poll for the notified view — refreshes coordinates every 5s.
+// Deliberately fetches NOTHING but /state.location (no audio).
+const NOTIFIED_JS = `
+(function(){
+  var CFG=window.__CFG;
+  function poll(){
+    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){return r.ok?r.json():null;}).then(function(st){
+      if(st&&st.location){ var c=document.getElementById('coords'); if(c){ c.textContent=st.location.lat.toFixed(4)+'°, '+st.location.lon.toFixed(4)+'°'; } }
+    }).catch(function(){});
+  }
+  setInterval(poll,5000);
+})();
+`;
 
 export function renderTokenPage(kind: 'expired' | 'invalid'): string {
   const heading = kind === 'expired' ? 'This live link has expired' : 'This link is not valid';

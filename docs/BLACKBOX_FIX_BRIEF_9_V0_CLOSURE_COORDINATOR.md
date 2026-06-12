@@ -48,6 +48,12 @@ clean build.
 - The user opens the app (dormant facade), invokes the hidden gesture, taps Request closure, and
   enters their 3-digit pin. The pin is an INTENT tool — evaluated on-device, NEVER transmitted.
   Only the resulting status is sent.
+- The pin pad has an EXPLICIT SUBMIT button. Entering digits does nothing until Submit is tapped —
+  never auto-submit on the Nth digit. On submit, the user gets clear feedback that the request was
+  received: "Closure requested — awaiting confirmation."
+- The user then sees an AWAITING-CONFIRMATION screen (the standdown-requested state), not a closed
+  or dormant screen, until the coordinator secures or holds. Under duress this screen stays calm
+  and identical, so an onlooker can't tell a duress signal was sent.
 - On-device evaluation:
   - Correct pin → status SAT.
   - Last digit altered (any wrong value in the last position) → status UNSAT = DURESS.
@@ -102,4 +108,6 @@ clean build.
    reaching the guardian, then emergency services.
 6. Securing a session generates the closure status report and includes it in the closure
    notification.
+7. The pin pad requires an explicit Submit (no auto-submit), and on submit the user sees an
+   "awaiting confirmation" screen until the coordinator acts.
 EOF

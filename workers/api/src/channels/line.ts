@@ -11,6 +11,7 @@
 import { sha256Hex } from '@blackbox/shared';
 import {
   activationAlert,
+  checkinMessage,
   classificationUpdate,
   closureConfirmation,
   closureRequest,
@@ -21,6 +22,7 @@ import {
 } from './messages';
 import type {
   ActivationAlertPayload,
+  CheckinPayload,
   ClassificationUpdatePayload,
   ClosureRequestPayload,
   DuressAlertPayload,
@@ -57,6 +59,10 @@ export class LineChannel implements NotificationChannel {
   }
   pushEscalation(eventId: string, payload: EscalationAlertPayload): Promise<boolean> {
     return this.send(eventId, 'escalation', escalationAlert(payload));
+  }
+  pushCheckin(eventId: string, payload: CheckinPayload): Promise<boolean> {
+    // Time-varying content → nonce in the key so distinct check-ins all send.
+    return this.send(`${eventId}:${payload.time}`, 'checkin', checkinMessage(payload));
   }
 
   pushClassificationUpdate(
