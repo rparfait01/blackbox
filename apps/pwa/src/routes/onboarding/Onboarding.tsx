@@ -6,8 +6,8 @@ import { setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
 import { InstallHint } from '@/components/InstallHint';
 import { ContactForm, type ContactValues } from '@/components/ContactForm';
-import { hashPin } from '@/lib/crypto/pin';
-import { setStoredPin, setStoredDuressPin } from '@/lib/storage';
+import { hashClosurePin } from '@/lib/crypto/pin';
+import { setStoredClosurePin } from '@/lib/storage';
 import { getUserHash } from '@/lib/device';
 import { PinPad } from '@/components/PinPad';
 import { COUNTRY_CODES, REGIONS, defaultCountry, type CountryOption } from '@/lib/regions';
@@ -93,11 +93,8 @@ export function Onboarding(): JSX.Element {
 
   // display + codes
   const [displayMode, setMode] = useState<DisplayMode>('covert');
-  const [codePhase, setCodePhase] = useState<'lock' | 'lock-confirm' | 'duress' | 'duress-confirm'>(
-    'lock',
-  );
+  const [codePhase, setCodePhase] = useState<'pin' | 'pin-confirm'>('pin');
   const [firstCode, setFirstCode] = useState('');
-  const [lockCode, setLockCode] = useState('');
 
   // permissions priming (mic + location), requested from a user gesture here so
   // activation never triggers a permission dialog.
@@ -163,21 +160,19 @@ export function Onboarding(): JSX.Element {
     }
   }
 
-  async function finalize(duressCode: string | undefined): Promise<void> {
+  async function finalize(pin: string): Promise<void> {
     setBusy(true);
     setError(null);
-    // Store the codes locally (hashed) so the covert closure flow can decide
-    // normal/duress/wrong without a network round-trip.
-    await setStoredPin(await hashPin(lockCode));
-    if (duressCode) {
-      await setStoredDuressPin(await hashPin(duressCode));
-    }
+    // Store the 3-digit closure pin ON-DEVICE only (full + prefix hashes) so the
+    // closure flow can decide sat / duress / wrong without transmitting the pin
+    // (Brief 9). The server pin hash is vestigial.
+    await setStoredClosurePin(await hashClosurePin(pin));
     const userHash = await getUserHash();
     const res = await api<{ sessionToken: string; displayMode: DisplayMode }>(
       '/v1/auth/signup/finalize',
       {
         auth: false,
-        body: { signupId, displayMode, lockCode, duressCode, claimUserHash: userHash },
+        body: { signupId, displayMode, lockCode: pin, claimUserHash: userHash },
       },
     );
     setBusy(false);
@@ -190,33 +185,16 @@ export function Onboarding(): JSX.Element {
   }
 
   function onCode(code: string): void {
-    if (codePhase === 'lock') {
+    if (codePhase === 'pin') {
       setFirstCode(code);
-      setCodePhase('lock-confirm');
-      setError(null);
-    } else if (codePhase === 'lock-confirm') {
-      if (code === firstCode) {
-        setLockCode(code);
-        setCodePhase('duress');
-        setError(null);
-      } else {
-        setError('Codes did not match. Start again.');
-        setCodePhase('lock');
-      }
-    } else if (codePhase === 'duress') {
-      if (code === lockCode) {
-        setError('Backup code must differ from your lock code.');
-        return;
-      }
-      setFirstCode(code);
-      setCodePhase('duress-confirm');
+      setCodePhase('pin-confirm');
       setError(null);
     } else {
       if (code === firstCode) {
         void finalize(code);
       } else {
-        setError('Backup codes did not match. Start again.');
-        setCodePhase('duress');
+        setError('Pins did not match. Start again.');
+        setCodePhase('pin');
       }
     }
   }
@@ -377,30 +355,24 @@ export function Onboarding(): JSX.Element {
   }
 
   if (step === 5) {
-    const prompts = {
-      lock: 'Set your session lock code',
-      'lock-confirm': 'Re-enter your session lock code',
-      duress: 'Set your backup code',
-      'duress-confirm': 'Re-enter your backup code',
-    } as const;
-    const onLockStep = codePhase === 'lock' || codePhase === 'lock-confirm';
     return (
-      <Shell title="Set your codes">
+      <Shell title="Set your closure pin">
         <p className="mb-8 text-center font-serif text-lg font-light text-med-text/80">
-          {prompts[codePhase]}
+          {codePhase === 'pin' ? 'Choose a 3-digit pin' : 'Re-enter your 3-digit pin'}
         </p>
-        <PinPad onComplete={onCode} resetKey={codePhase} />
+        <PinPad onComplete={onCode} resetKey={codePhase} length={3} />
         {error ? <p className="mt-4 text-center text-sm text-status-active">{error}</p> : null}
-        <p className="mt-8 text-center text-xs leading-relaxed text-med-text/50">
-          {onLockStep
-            ? 'Your session lock code ends an active alert — entering it stands the alert down.'
-            : 'The backup code looks like ending the alert, but instead it silently signals your support contact that you are in danger. The alert keeps running and only ends once they have reached you.'}
-        </p>
-        {codePhase === 'duress' ? (
-          <button onClick={() => void finalize(undefined)} className="mt-4 block w-full text-center text-sm text-med-text/40 underline">
-            Skip backup code for now
-          </button>
-        ) : null}
+        <div className="mt-8 space-y-3 text-center text-xs leading-relaxed text-med-text/55">
+          <p>
+            When you want to end an alert, you enter this pin to request closure. Your support
+            contact reviews and secures it — you’re always in the loop, never alone.
+          </p>
+          <p className="text-med-text/45">
+            If you are ever forced to end an alert against your will, enter your pin with the
+            <span className="text-med-text/70"> last digit wrong</span>. To anyone watching it looks
+            normal, but your contact is silently warned the danger is ongoing.
+          </p>
+        </div>
       </Shell>
     );
   }

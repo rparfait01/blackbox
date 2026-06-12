@@ -18,7 +18,8 @@ import { bumpTrust, listTrust } from './lib/trust';
 import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
 import { getContactForEvent, listContacts, listFollows, upsertContact } from './lib/contacts';
-import { notifyActivation, notifyEscalation } from './lib/notify';
+import { notifyActivation, notifyClosureRequest, notifyEscalation } from './lib/notify';
+import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
 import { getCookie, setCookie } from 'hono/cookie';
 import { verifySession } from './lib/session';
@@ -448,6 +449,58 @@ app.post('/v1/c/:id/standdown', async (c) => {
   }
 });
 
+// COORDINATOR SECURES the alert (Brief 9 Phase D). The deliberate close — only
+// the current coordinator can do it, after the explicit "Are you sure" client
+// confirmation. Generates the write-once closure report (Phase E) and confirms
+// to the network. Duress (unsat) does NOT block securing — the coordinator
+// validates with judgment — but the dashboard marks it unmistakably.
+app.post('/v1/c/:id/secure', async (c) => {
+  const eventId = c.req.param('id');
+  if (!(await requireCoordinator(c, eventId))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const event = await c.env.DB.prepare('SELECT userId, userHash, status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ userId: string | null; userHash: string | null; status: string }>();
+  if (!event) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  if (event.status !== 'closed') {
+    await c.env.DB.prepare(
+      'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ? WHERE id = ?',
+    )
+      .bind('closed', Date.now(), 'coordinator', Date.now(), 'coordinator', eventId)
+      .run();
+  }
+  await audit(c.env, eventId, 'secured_by_coordinator', null, null);
+  // Generate the write-once closure report and confirm to the network.
+  const report = await buildClosureReport(c.env, eventId);
+  const contact = await getContactForEvent(c.env, event);
+  if (contact) {
+    c.executionCtx.waitUntil(
+      dispatch(c.env, contact.id, {
+        kind: 'closureConfirmation',
+        eventId,
+        payload: { userDisplayName: contact.displayName },
+      }),
+    );
+  }
+  return c.json({ ok: true, secured: true, packageHash: report?.packageHash ?? null }, 200);
+});
+
+// The closure status report (coordinator-only) — the artifact reviewed at close.
+app.get('/v1/c/:id/closure-report', async (c) => {
+  const eventId = c.req.param('id');
+  if (!(await requireCoordinator(c, eventId))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const report = (await getClosureReport(c.env, eventId)) ?? (await buildClosureReport(c.env, eventId))?.report;
+  if (!report) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  return c.json(report, 200);
+});
+
 // --- Recipient identity (C1): register + verify before evidence renders ---
 app.post('/v1/c/:id/recipient/register', async (c) => {
   if (!(await requireMagicToken(c))) {
@@ -824,6 +877,46 @@ app.post('/v1/events/:id/standdown', async (c) => {
     default:
       return c.json({ error: 'invalid_code' }, 403);
   }
+});
+
+// Closure REQUEST (Brief 9 Phase D). The user's PWA evaluates the 3-digit pin
+// ON-DEVICE and sends only the resulting status (sat | unsat=duress) plus the
+// reason — NEVER the pin. This does NOT close the event; the coordinator secures.
+app.post('/v1/events/:id/closure-request', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req
+    .json<{ status?: string; reasonSecured?: string }>()
+    .catch(() => ({}) as { status?: string; reasonSecured?: string });
+  const status = body.status === 'unsat' ? 'unsat' : body.status === 'sat' ? 'sat' : null;
+  if (!status) {
+    return c.json({ error: 'status must be sat or unsat' }, 400);
+  }
+  const event = await c.env.DB.prepare('SELECT status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ status: string }>();
+  if (!event) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  await c.env.DB.prepare(
+    'UPDATE events SET closeRequestStatus = ?, reasonSecured = ?, closeRequestedAt = ?, closeRequestDuress = ? WHERE id = ?',
+  )
+    .bind(status, body.reasonSecured ?? null, Date.now(), status === 'unsat' ? 1 : 0, eventId)
+    .run();
+  await audit(c.env, eventId, status === 'unsat' ? 'closure_requested_duress' : 'closure_requested', null, null);
+  const workerOrigin = new URL(c.req.url).origin;
+  c.executionCtx.waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, status));
+  return c.json({ ok: true, awaitingCoordinator: true }, 200);
+});
+
+// Reason the event TRIGGERED — entered post-event (the user can't type during
+// covert activation). Part of the closure status report.
+app.post('/v1/events/:id/reason-triggered', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  await c.env.DB.prepare('UPDATE events SET reasonTriggered = ? WHERE id = ?')
+    .bind(body.reason ?? null, eventId)
+    .run();
+  return c.json({ ok: true }, 200);
 });
 
 app.post('/v1/events/:id/chunks/:sequence', async (c) => {

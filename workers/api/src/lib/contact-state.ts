@@ -54,6 +54,13 @@ export interface ContactState {
   origin: OriginSnapshot | null;
   /** Latched, monotonic situation summary assembled from detected facts. D2/D3. */
   situation: Situation;
+  /** Closure request the coordinator reviews (Brief 9 Phase D). */
+  closure: {
+    requested: boolean;
+    pin: 'sat' | 'unsat' | null;
+    reasonSecured: string | null;
+    reasonTriggered: string | null;
+  };
   emergency: EmergencyNumbers;
 }
 
@@ -185,7 +192,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt FROM events WHERE id = ?',
+    'SELECT createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -197,6 +204,9 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       lastHeartbeatAt: number | null;
       lostAt: number | null;
       escalatedAt: number | null;
+      closeRequestStatus: string | null;
+      reasonSecured: string | null;
+      reasonTriggered: string | null;
     }>();
   if (!event) {
     return null;
@@ -327,6 +337,12 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
     hasVideo: (audio?.mimeType ?? '').startsWith('video/'),
     origin,
     situation,
+    closure: {
+      requested: event.closeRequestStatus != null,
+      pin: event.closeRequestStatus === 'sat' ? 'sat' : event.closeRequestStatus === 'unsat' ? 'unsat' : null,
+      reasonSecured: event.reasonSecured,
+      reasonTriggered: event.reasonTriggered,
+    },
     emergency: localeToEmergency(event.locale),
   };
 }

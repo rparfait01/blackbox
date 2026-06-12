@@ -1,21 +1,18 @@
 import { log } from '@/lib/log';
-import type { StoredPin } from '@/lib/crypto/pin';
+import type { ClosurePin, StoredPin } from '@/lib/crypto/pin';
 import { getDB, promisifyRequest, transactionDone, STORE_USER_CONFIG } from './db';
 
 /**
- * userConfig store access (W6). Keyed single records. Currently holds the hashed
- * closure pin and duress pin; W9 will add the rest of the (disguised) settings.
+ * userConfig store access. Keyed single records. Holds the hashed closure pin
+ * (Brief 9: 3-digit, full + prefix hashes, on-device only) and the legacy
+ * 4-digit lock/duress pins.
  */
 
 const PIN_KEY = 'pin';
 const DURESS_PIN_KEY = 'duressPin';
+const CLOSURE_PIN_KEY = 'closurePin';
 
-interface ConfigRecord {
-  key: string;
-  value: StoredPin;
-}
-
-async function putConfig(key: string, value: StoredPin): Promise<void> {
+async function putConfig<T>(key: string, value: T): Promise<void> {
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_USER_CONFIG, 'readwrite');
@@ -26,11 +23,11 @@ async function putConfig(key: string, value: StoredPin): Promise<void> {
   }
 }
 
-async function getConfig(key: string): Promise<StoredPin | null> {
+async function getConfig<T>(key: string): Promise<T | null> {
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_USER_CONFIG, 'readonly');
-    const record = await promisifyRequest<ConfigRecord | undefined>(
+    const record = await promisifyRequest<{ key: string; value: T } | undefined>(
       tx.objectStore(STORE_USER_CONFIG).get(key),
     );
     await transactionDone(tx);
@@ -42,7 +39,13 @@ async function getConfig(key: string): Promise<StoredPin | null> {
 }
 
 export const setStoredPin = (value: StoredPin): Promise<void> => putConfig(PIN_KEY, value);
-export const getStoredPin = (): Promise<StoredPin | null> => getConfig(PIN_KEY);
+export const getStoredPin = (): Promise<StoredPin | null> => getConfig<StoredPin>(PIN_KEY);
 export const setStoredDuressPin = (value: StoredPin): Promise<void> =>
   putConfig(DURESS_PIN_KEY, value);
-export const getStoredDuressPin = (): Promise<StoredPin | null> => getConfig(DURESS_PIN_KEY);
+export const getStoredDuressPin = (): Promise<StoredPin | null> => getConfig<StoredPin>(DURESS_PIN_KEY);
+
+/** The 3-digit closure pin (full + prefix hashes), on-device only (Brief 9). */
+export const setStoredClosurePin = (value: ClosurePin): Promise<void> =>
+  putConfig(CLOSURE_PIN_KEY, value);
+export const getStoredClosurePin = (): Promise<ClosurePin | null> =>
+  getConfig<ClosurePin>(CLOSURE_PIN_KEY);

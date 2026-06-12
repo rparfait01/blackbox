@@ -10,21 +10,24 @@ import { Backspace } from '@phosphor-icons/react';
 export function PinPad({
   onComplete,
   resetKey,
+  length = 4,
 }: {
   onComplete: (code: string) => void;
   /** Change this to force the pad to clear (e.g. between enter and confirm). */
   resetKey?: string | number;
+  /** Number of digits (default 4; the v0 closure pin is 3). */
+  length?: number;
 }): JSX.Element {
   const [digits, setDigits] = useState('');
 
   const press = (d: string): void => {
     setDigits((cur) => {
-      if (cur.length >= 4) {
+      if (cur.length >= length) {
         return cur;
       }
       const next = cur + d;
-      if (next.length === 4) {
-        // Defer so the fourth dot paints before we hand the code up.
+      if (next.length === length) {
+        // Defer so the last dot paints before we hand the code up.
         window.setTimeout(() => {
           onComplete(next);
           setDigits('');
@@ -42,7 +45,7 @@ export function PinPad({
   return (
     <div>
       <div className="mb-8 flex items-center justify-center gap-4">
-        {[0, 1, 2, 3].map((i) => (
+        {Array.from({ length }, (_, i) => i).map((i) => (
           <span
             key={i}
             className={`h-3.5 w-3.5 rounded-full border transition-colors ${

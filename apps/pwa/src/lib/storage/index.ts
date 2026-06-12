@@ -39,6 +39,8 @@ export {
   setStoredPin,
   getStoredDuressPin,
   setStoredDuressPin,
+  getStoredClosurePin,
+  setStoredClosurePin,
 } from './user-config';
 
 /**

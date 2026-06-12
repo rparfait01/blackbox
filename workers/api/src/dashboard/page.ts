@@ -239,6 +239,8 @@ export function renderDashboardPage(opts: DashboardOpts): string {
       : ''
   }
 
+  ${role === 'coordinator' ? '<div class="closure-window" id="closureWindow" style="display:none"></div>' : ''}
+
   <div class="bar">
     <div class="rec" id="rec">${recording}</div>
     <div class="elapsed" id="elapsed">${clock(state.durationMs)}</div>
@@ -465,6 +467,14 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
    UA [hidden] rule that a bare .modal{display:flex} was overriding). */
 .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);align-items:center;justify-content:center;padding:20px;z-index:100}
 .modal.open{display:flex}
+.closure-window{border:2px solid #34c759;border-radius:10px;padding:14px;margin:8px 0}
+.closure-window.duress{border-color:#ff3b30}
+.cw-title{font-weight:700;font-size:15px;margin-bottom:8px}
+.cw-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:14px}
+.cw-ok{color:#34c759;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+.cw-bad{color:#ff6b60;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+.cw-warn{background:#3a1414;color:#ff6b60;border-radius:6px;padding:8px;font-size:12px;font-weight:700;margin:8px 0}
+.cw-reason{color:#cfcfcf;font-size:13px;margin:8px 0;line-height:1.4}
 .modal-card{background:#111;border:1px solid #333;border-radius:12px;padding:20px;max-width:360px;width:100%;text-align:center}
 .modal-title{font-weight:700;font-size:16px;margin-bottom:14px}
 .qr-box{background:#fff;border-radius:8px;padding:12px;display:inline-block;max-width:240px}
@@ -612,6 +622,31 @@ const CLIENT_JS = `
   applyTranscript(S.latestTranscriptFragments);
   applySituation(S.situation);
 
+  // Coordinator closure window (Brief 9 Phase D): shows the user's closure
+  // request — PIN sat/unsat (duress unmistakable), reason — and the SECURE
+  // action with an explicit "are you sure" confirmation.
+  function applyClosure(cl){
+    var w=el('closureWindow'); if(!w) return;
+    if(!cl || !cl.requested){ w.style.display='none'; w.innerHTML=''; return; }
+    var duress = cl.pin==='unsat';
+    w.style.display='block';
+    w.className = duress ? 'closure-window duress' : 'closure-window';
+    var html='<div class="cw-title">Closure requested by the user</div>';
+    html+='<div class="cw-row"><span>PIN</span><span class="'+(duress?'cw-bad':'cw-ok')+'">'+(duress?'UNSAT · DURESS':'SAT')+'</span></div>';
+    if(duress){ html+='<div class="cw-warn">THREAT ONGOING — do not assume safe. Validate that the user is genuinely safe before securing.</div>'; }
+    if(cl.reasonSecured){ html+='<div class="cw-reason">Reason for securing: '+sitEsc(cl.reasonSecured)+'</div>'; }
+    html+='<button id="secureBtn" class="btn btn-respond">SECURE ALERT</button>';
+    w.innerHTML=html;
+    var b=el('secureBtn'); if(b){ b.onclick=function(){
+      if(!window.confirm('Are you sure this person is safe?')){ return; }
+      b.disabled=true; b.textContent='SECURING…';
+      fetch(api('/secure'),{method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
+        if(d&&d.secured){ b.textContent='SECURED ✓'; } else { b.disabled=false; b.textContent='SECURE ALERT'; alert('Could not secure. Try again.'); }
+      }).catch(function(){ b.disabled=false; b.textContent='SECURE ALERT'; });
+    };}
+  }
+  applyClosure(S.closure);
+
   // ---- live camera (replays captured video feed; prominent when present) ----
   (function(){
     var cam=el('cam'); if(!cam) return;
@@ -676,6 +711,7 @@ const CLIENT_JS = `
       if(st.location){ lastLoc=st.location; lastTrail=st.trail; applyLocation(st.location, st.trail); }
       applyTranscript(st.latestTranscriptFragments);
       applySituation(st.situation);
+      applyClosure(st.closure);
       if(st.audio){ if(window.__pumpAudio) window.__pumpAudio(st.audio.latestSequence); }
       applyStatus(st);
     }).catch(function(){});

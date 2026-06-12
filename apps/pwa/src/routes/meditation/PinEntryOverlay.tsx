@@ -1,33 +1,43 @@
 import { useEffect, useState } from 'react';
 import { Backspace } from '@phosphor-icons/react';
 
-import { submitClosurePin } from '@/lib/closure';
+import { submitClosure } from '@/lib/closure';
 
 /**
- * Disguised closure pin entry (W6). Presents as a meditation app's "session lock
- * code" prompt: soft serif, no BLACK BOX wordmark, no "closure" or "emergency"
- * language. Slides up from the bottom.
+ * Closure request entry (Brief 9 Phase D), disguised as a meditation "session
+ * lock code" prompt. The user enters their 3-digit pin and an explicit SUBMIT —
+ * NEVER auto-submitting on the Nth digit. The pin is evaluated on-device and only
+ * the status leaves the device; the user can never close the alert themselves.
  *
- * On four digits entered:
- *  - active session  → close-request is sent; the panel shows "Awaiting
- *    confirmation…" (still meditation-app language). Normal and duress pins look
- *    identical here, by design.
- *  - wrong pin       → the dots clear silently; the user may try again.
- *  - no session      → the overlay closes silently (a tap already happened on
- *    the long-press start; the timer is untouched).
+ * On submit the user always lands on a calm "awaiting confirmation" screen
+ * (identical whether the pin was correct or a duress signal), so an onlooker
+ * cannot tell a duress signal was sent. A typo says "not recognized, try again";
+ * 3 wrong tries trigger a brief lockout.
  */
+const MAX = 3;
+const MAX_ATTEMPTS = 3;
+const LOCKOUT_MS = 30_000;
+
 export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
   const [mounted, setMounted] = useState(false);
   const [shown, setShown] = useState(false);
   const [digits, setDigits] = useState('');
+  const [reason, setReason] = useState('');
   const [awaiting, setAwaiting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState(0);
+  const [lockedUntil, setLockedUntil] = useState(0);
 
-  // Mount, then transition in on the next frame so the slide-up always plays.
   useEffect(() => {
     if (open) {
       setMounted(true);
       setDigits('');
+      setReason('');
       setAwaiting(false);
+      setError(null);
+      setAttempts(0);
+      setLockedUntil(0);
       const id = requestAnimationFrame(() => setShown(true));
       return () => cancelAnimationFrame(id);
     }
@@ -40,33 +50,42 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
     return null;
   }
 
-  const runSubmit = async (code: string): Promise<void> => {
-    const result = await submitClosurePin(code);
-    if (result === 'submitted') {
+  const locked = Date.now() < lockedUntil;
+
+  const press = (digit: string): void => {
+    // Append only; NEVER auto-submit (Brief 9). Submit is an explicit tap.
+    setError(null);
+    setDigits((current) => (current.length < MAX ? current + digit : current));
+  };
+  const backspace = (): void => setDigits((current) => current.slice(0, -1));
+
+  const submit = async (): Promise<void> => {
+    if (busy || locked || digits.length !== MAX) {
+      return;
+    }
+    setBusy(true);
+    const result = await submitClosure(digits, reason.trim());
+    setBusy(false);
+    if (result === 'awaiting') {
       setAwaiting(true);
     } else if (result === 'no-session') {
       onClose();
-    } else {
-      // wrong code: clear silently, allow another attempt
+    } else if (result === 'no-pin') {
+      setError('Set up your closure pin in settings first.');
       setDigits('');
+    } else {
+      // wrong / typo
+      const next = attempts + 1;
+      setAttempts(next);
+      setDigits('');
+      if (next >= MAX_ATTEMPTS) {
+        setLockedUntil(Date.now() + LOCKOUT_MS);
+        setError('Too many attempts. Please wait a moment and try again.');
+      } else {
+        setError('Not recognized, try again.');
+      }
     }
   };
-
-  const press = (digit: string): void => {
-    // Append the digit FIRST; submit only on the FULL 4 digits, deferred so the
-    // 4th dot paints before the panel switches to "Awaiting…" (Fix Brief 4 S3).
-    setDigits((current) => {
-      if (current.length >= 4 || awaiting) {
-        return current;
-      }
-      const next = current + digit;
-      if (next.length === 4) {
-        window.setTimeout(() => void runSubmit(next), 150);
-      }
-      return next;
-    });
-  };
-  const backspace = (): void => setDigits((current) => current.slice(0, -1));
 
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
@@ -83,17 +102,27 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
         {awaiting ? (
           <div className="flex min-h-[20rem] flex-col items-center justify-center text-center">
             <p className="animate-breath-label motion-reduce:animate-none font-serif text-xl font-light tracking-[0.1em] text-med-text/80">
-              Awaiting confirmation…
+              Closure requested — awaiting confirmation…
+            </p>
+            <p className="mt-4 max-w-xs text-xs leading-relaxed text-med-text/45">
+              Your support contact will confirm. This may take a few minutes.
             </p>
           </div>
         ) : (
           <>
-            <p className="mb-8 text-center font-serif text-lg font-light tracking-[0.08em] text-med-text/70">
-              Enter your session lock code
+            <p className="mb-6 text-center font-serif text-lg font-light tracking-[0.08em] text-med-text/70">
+              Request closure
             </p>
 
-            <div className="mb-10 flex items-center justify-center gap-4">
-              {[0, 1, 2, 3].map((i) => (
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Reason (optional)"
+              className="mb-6 w-full border-b border-med-text/25 bg-transparent py-2 text-center text-sm text-med-text outline-none placeholder:text-med-text/30"
+            />
+
+            <div className="mb-8 flex items-center justify-center gap-4">
+              {[0, 1, 2].map((i) => (
                 <span
                   key={i}
                   className={`h-3 w-3 rounded-full border transition-colors ${
@@ -111,7 +140,8 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
                   key={key}
                   type="button"
                   onClick={() => press(key)}
-                  className="mx-auto flex h-14 w-14 items-center justify-center rounded-full font-serif text-2xl font-light text-med-text/80 transition-colors hover:bg-med-text/10"
+                  disabled={locked}
+                  className="mx-auto flex h-14 w-14 items-center justify-center rounded-full font-serif text-2xl font-light text-med-text/80 transition-colors hover:bg-med-text/10 disabled:opacity-40"
                 >
                   {key}
                 </button>
@@ -120,7 +150,8 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
               <button
                 type="button"
                 onClick={() => press('0')}
-                className="mx-auto flex h-14 w-14 items-center justify-center rounded-full font-serif text-2xl font-light text-med-text/80 transition-colors hover:bg-med-text/10"
+                disabled={locked}
+                className="mx-auto flex h-14 w-14 items-center justify-center rounded-full font-serif text-2xl font-light text-med-text/80 transition-colors hover:bg-med-text/10 disabled:opacity-40"
               >
                 0
               </button>
@@ -133,6 +164,17 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
                 <Backspace size={24} weight="light" />
               </button>
             </div>
+
+            {error ? <p className="mt-6 text-center text-sm text-status-active">{error}</p> : null}
+
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={busy || locked || digits.length !== MAX}
+              className="mt-6 w-full rounded-full bg-med-text/90 py-3.5 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {busy ? 'Submitting…' : 'Submit'}
+            </button>
           </>
         )}
       </div>

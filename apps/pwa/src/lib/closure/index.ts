@@ -2,31 +2,33 @@ import { signRequest } from '@blackbox/shared';
 
 import { log } from '@/lib/log';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
-import { getActiveSession, getStoredDuressPin, getStoredPin } from '@/lib/storage';
-import { verifyPin } from '@/lib/crypto/pin';
+import { getActiveSession, getStoredClosurePin } from '@/lib/storage';
+import { evalClosurePin } from '@/lib/crypto/pin';
 
 /**
- * Closure flow (Fix Brief 1 #3/#4, user side). The user enters a 4-digit code in
- * the disguised overlay. We decide LOCALLY which code it is — normal, duress, or
- * wrong — for covert UX (duress and normal look identical, a wrong code clears
- * silently with no network call). The AUTHORITATIVE decision is the Worker's:
- * the raw code is POSTed to `/v1/events/:id/standdown`, which re-verifies it
- * against the account's lock/duress hash and:
+ * Closure flow (Brief 9 Phase D, user side). The user taps Request closure and
+ * enters their 3-digit pin. The pin is an INTENT tool — evaluated ON-DEVICE and
+ * NEVER transmitted. Only the resulting status leaves the device:
  *
- *  - lock code   → closes the event server-side (server-authoritative). The
- *                  session monitor sees `status=closed` and tears capture down.
- *  - duress code → ESCALATES (duress alert) and does NOT close; recording
- *                  continues. The event closes later only on confirmed voice
- *                  contact (a contact-side stand-down).
- *  - wrong code  → nothing leaves the device; the overlay clears silently.
+ *  - correct pin            → status 'sat'  → coordinator window shows SAT
+ *  - last digit altered     → status 'unsat' (DURESS) → "threat ongoing"
+ *  - other wrong patterns   → 'wrong' (a typo); the overlay retries / locks out
+ *
+ * The user can NEVER close the alert — only the coordinator secures. After a
+ * sat/unsat submit the user sees an awaiting-confirmation screen.
  */
 
-export type ClosureResult = 'submitted' | 'wrong' | 'no-session';
+export type ClosureResult = 'awaiting' | 'wrong' | 'no-session' | 'no-pin';
 
-async function postStandDown(eventId: string, secret: string, code: string): Promise<void> {
-  const path = `/v1/events/${eventId}/standdown`;
+async function postClosureRequest(
+  eventId: string,
+  secret: string,
+  status: 'sat' | 'unsat',
+  reasonSecured: string,
+): Promise<void> {
+  const path = `/v1/events/${eventId}/closure-request`;
   const timestamp = Date.now();
-  const body = new TextEncoder().encode(JSON.stringify({ code }));
+  const body = new TextEncoder().encode(JSON.stringify({ status, reasonSecured }));
   const signed = await signRequest({ secret, eventId, method: 'POST', path, timestamp, body });
   await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
@@ -36,36 +38,35 @@ async function postStandDown(eventId: string, secret: string, code: string): Pro
 }
 
 /**
- * Evaluate a submitted pin against the stored pins and, when it matches, send
- * the closure request. Returns the outcome the overlay uses to decide what to
- * show — note that duress and normal both return 'submitted' so the screen
- * (and any observer) cannot tell them apart.
+ * Evaluate the submitted pin on-device and, for sat/duress, send the STATUS
+ * (never the pin) to the coordinator. Returns the verdict the overlay uses to
+ * decide what to show — note that sat and duress BOTH return 'awaiting' so the
+ * screen (and any onlooker) cannot tell a duress signal was sent.
  */
-export async function submitClosurePin(digits: string): Promise<ClosureResult> {
+export async function submitClosure(digits: string, reasonSecured: string): Promise<ClosureResult> {
   const session = await getActiveSession();
   if (!session || session.status !== 'active') {
     return 'no-session';
   }
-
-  const [normal, duress] = await Promise.all([getStoredPin(), getStoredDuressPin()]);
-
-  const isNormal = normal ? await verifyPin(digits, normal) : false;
-  const isDuress = !isNormal && duress ? await verifyPin(digits, duress) : false;
-
-  if (!isNormal && !isDuress) {
+  const closurePin = await getStoredClosurePin();
+  if (!closurePin) {
+    return 'no-pin';
+  }
+  const verdict = await evalClosurePin(digits, closurePin);
+  if (verdict === 'wrong') {
     return 'wrong';
   }
-
-  // Hand the raw code to the Worker, which re-verifies it authoritatively and
-  // either closes the event (lock code) or escalates without closing (duress).
-  // If the event has not been created yet (very early closure) we still report
-  // 'submitted' so the overlay stays covert.
   if (uploadsEnabled && session.eventId && session.hmacSecret) {
     try {
-      await postStandDown(session.eventId, session.hmacSecret, digits);
+      await postClosureRequest(
+        session.eventId,
+        session.hmacSecret,
+        verdict === 'duress' ? 'unsat' : 'sat',
+        reasonSecured,
+      );
     } catch (error) {
-      log.error('standdown failed', error);
+      log.error('closure-request failed', error);
     }
   }
-  return 'submitted';
+  return 'awaiting';
 }

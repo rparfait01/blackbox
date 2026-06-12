@@ -77,3 +77,35 @@ export async function verifyPin(pin: string, stored: StoredPin): Promise<boolean
 export function pinHashWithSalt(stored: StoredPin): string {
   return `pbkdf2$${stored.iterations}$${stored.saltB64}$${stored.hashB64}`;
 }
+
+/**
+ * Closure pin (Brief 9): a 3-digit pin whose duress signal is "the last digit
+ * altered". Stored ON-DEVICE only as TWO hashes — the full pin and its
+ * (n-1)-digit prefix — so duress can be detected without ever keeping the
+ * plaintext and without transmitting anything. The pin itself is NEVER sent; the
+ * eval result (sat | duress | wrong) is the only thing that leaves the device.
+ */
+export interface ClosurePin {
+  full: StoredPin;
+  prefix: StoredPin;
+}
+
+export async function hashClosurePin(pin: string): Promise<ClosurePin> {
+  return { full: await hashPin(pin), prefix: await hashPin(pin.slice(0, -1)) };
+}
+
+export type ClosureEval = 'sat' | 'duress' | 'wrong';
+
+/**
+ * On-device evaluation. Correct pin → SAT. First (n-1) digits correct but the
+ * last differs → DURESS (UNSAT). Anything else → WRONG (typo).
+ */
+export async function evalClosurePin(entered: string, stored: ClosurePin): Promise<ClosureEval> {
+  if (await verifyPin(entered, stored.full)) {
+    return 'sat';
+  }
+  if (entered.length >= 2 && (await verifyPin(entered.slice(0, -1), stored.prefix))) {
+    return 'duress';
+  }
+  return 'wrong';
+}

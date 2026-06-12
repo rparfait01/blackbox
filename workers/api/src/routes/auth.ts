@@ -23,8 +23,8 @@ import type { Env, Vars } from '../types';
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
-function isFourDigits(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9]{4}$/.test(value);
+function isPin(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9]{3,6}$/.test(value);
 }
 
 // --- Sign-up ---
@@ -94,11 +94,14 @@ authRoutes.post('/signup/finalize', async (c) => {
   if (body.displayMode !== 'direct' && body.displayMode !== 'covert') {
     return c.json({ error: 'displayMode must be direct or covert' }, 400);
   }
-  if (!body.signupId || !isFourDigits(body.lockCode)) {
-    return c.json({ error: 'signupId and a 4-digit lockCode are required' }, 400);
+  // Brief 9: the closure pin is now 3-digit and on-device only. The server pin
+  // hash is vestigial (closure is coordinator-secured), so accept a 3–6 digit
+  // lockCode and store it harmlessly. Duress is no longer a separate code.
+  if (!body.signupId || !isPin(body.lockCode)) {
+    return c.json({ error: 'signupId and a 3-6 digit lockCode are required' }, 400);
   }
-  if (body.duressCode !== undefined && !isFourDigits(body.duressCode)) {
-    return c.json({ error: 'duressCode must be 4 digits' }, 400);
+  if (body.duressCode !== undefined && !isPin(body.duressCode)) {
+    return c.json({ error: 'duressCode must be 3-6 digits' }, 400);
   }
   const user = await getUserById(c.env, body.signupId);
   if (!user) {

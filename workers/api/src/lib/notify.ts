@@ -118,6 +118,39 @@ export async function notifyActivation(
 }
 
 /**
+ * Notify the network that the user has REQUESTED closure (Brief 9 Phase D). The
+ * coordinator reviews + secures; this just pings the contacts so they look. A
+ * duress (unsat) request sends the duress message ("threat ongoing"), a normal
+ * (sat) request sends the closure-review message. Never closes anything.
+ */
+export async function notifyClosureRequest(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+  status: 'sat' | 'unsat',
+): Promise<void> {
+  const event = await env.DB.prepare('SELECT userId, userHash FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ userId: string | null; userHash: string | null }>();
+  if (!event || !env.MAGIC_LINK_SECRET) {
+    return;
+  }
+  const contacts = await listReachableContacts(env, event);
+  if (contacts.length === 0) {
+    return;
+  }
+  const token = await mintMagicToken(env.MAGIC_LINK_SECRET, eventId);
+  const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
+  for (const contact of contacts) {
+    const message =
+      status === 'unsat'
+        ? ({ kind: 'duress', eventId, payload: { userDisplayName: contact.displayName, dashboardUrl } } as const)
+        : ({ kind: 'closure', eventId, payload: { userDisplayName: contact.displayName, dashboardUrl } } as const);
+    await dispatch(env, contact.id, message, event.userHash);
+  }
+}
+
+/**
  * "Device went dark" escalation (Fix Brief 1 #3). Fired when an active event's
  * heartbeat goes stale (cron) or the client reports itself lost (pagehide
  * beacon). Sets `events.escalatedAt` exactly once so it never re-fires. An
