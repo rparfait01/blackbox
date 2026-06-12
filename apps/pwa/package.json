@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint src",
     "typecheck": "tsc -b",
+    "test": "vitest run",
     "deploy:pages": "wrangler pages deploy dist --project-name=blackbox-pwa"
   },
   "dependencies": {
@@ -39,6 +40,7 @@
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
     "vite-plugin-pwa": "^0.21.1",
+    "vitest": "^2.1.9",
     "wrangler": "^3.99.0"
   }
 }

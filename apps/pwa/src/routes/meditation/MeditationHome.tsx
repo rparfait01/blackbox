@@ -5,6 +5,7 @@ import { Gear } from '@phosphor-icons/react';
 import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
 import { triggerActivation } from '@/lib/activation';
+import { useActiveAlert } from '@/lib/active-alert';
 import { BreathingCircles } from './BreathingCircles';
 import { HoldProgressRing } from './HoldProgressRing';
 import { useActivationHold } from './use-activation-hold';
@@ -30,6 +31,9 @@ export function MeditationHome(): JSX.Element {
   const sessionStart = useRef<number>(performance.now());
   const [sessionMs, setSessionMs] = useState(0);
   const [pinOpen, setPinOpen] = useState(false);
+  // Settings is locked during an active alert (Fix Brief 8 P0). Covert: the gear
+  // simply does nothing (no message that would reveal the lockdown to an aggressor).
+  const alertActive = useActiveAlert();
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -46,13 +50,22 @@ export function MeditationHome(): JSX.Element {
 
   return (
     <main className="stillpoint-bg animate-hue-drift motion-reduce:animate-none relative flex h-full w-full select-none flex-col items-center justify-center overflow-hidden p-8 text-med-text">
-      <Link
-        to="/settings"
-        aria-label="Preferences"
-        className="absolute right-6 top-6 p-2 text-med-text/40 transition-colors hover:text-med-text/70"
-      >
-        <Gear size={22} weight="light" />
-      </Link>
+      {alertActive ? (
+        <span
+          aria-hidden="true"
+          className="absolute right-6 top-6 p-2 text-med-text/40"
+        >
+          <Gear size={22} weight="light" />
+        </span>
+      ) : (
+        <Link
+          to="/settings"
+          aria-label="Preferences"
+          className="absolute right-6 top-6 p-2 text-med-text/40 transition-colors hover:text-med-text/70"
+        >
+          <Gear size={22} weight="light" />
+        </Link>
+      )}
 
       <h1 className="mb-12 text-center font-serif text-2xl font-light tracking-[0.1em] text-med-text/70">
         Stillpoint

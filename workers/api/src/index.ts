@@ -554,6 +554,33 @@ app.get('/v1/c/:id/state', async (c) => {
   return c.json(state, 200);
 });
 
+/** Parse a single HTTP Range header against a known total size. */
+function parseRange(header: string, total: number): { start: number; end: number } | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) {
+    return null;
+  }
+  const hasStart = m[1] !== '';
+  const hasEnd = m[2] !== '';
+  let start: number;
+  let end: number;
+  if (!hasStart) {
+    if (!hasEnd) {
+      return null;
+    }
+    // suffix: last N bytes
+    start = Math.max(0, total - Number(m[2]));
+    end = total - 1;
+  } else {
+    start = Number(m[1]);
+    end = hasEnd ? Math.min(Number(m[2]), total - 1) : total - 1;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
+    return null;
+  }
+  return { start, end };
+}
+
 /** Stream a single R2 object as the response body. */
 async function streamChunk(c: AppContext, r2Key: string, mimeType: string): Promise<Response> {
   const object = await c.env.MEDIA.get(r2Key);
@@ -589,20 +616,49 @@ app.get('/v1/c/:id/audio/full', async (c) => {
   }
   const eventId = c.req.param('id');
   const { results } = await c.env.DB.prepare(
-    'SELECT r2Key, mimeType FROM chunks_index WHERE eventId = ? ORDER BY sequence ASC',
+    'SELECT r2Key, mimeType, sizeBytes FROM chunks_index WHERE eventId = ? ORDER BY sequence ASC',
   )
     .bind(eventId)
-    .all<{ r2Key: string; mimeType: string }>();
+    .all<{ r2Key: string; mimeType: string; sizeBytes: number }>();
   const keys = results ?? [];
   if (keys.length === 0) {
     return c.json({ error: 'no audio yet' }, 404);
   }
   const media = c.env.MEDIA;
+  const mime = keys[0]?.mimeType || 'application/octet-stream';
+  const total = keys.reduce((sum, k) => sum + (k.sizeBytes || 0), 0);
+
+  // HTTP Range support (Fix Brief 8): media elements — iOS Safari especially —
+  // require byte-range / 206 responses, or the <audio> element errors. Without
+  // this the concatenated recording would not play (this was the audio "ERROR").
+  const rangeHeader = c.req.header('Range');
+  const range = rangeHeader ? parseRange(rangeHeader, total) : null;
+  if (rangeHeader && !range) {
+    return new Response('range not satisfiable', {
+      status: 416,
+      headers: { 'Content-Range': `bytes */${total}`, 'Accept-Ranges': 'bytes' },
+    });
+  }
+  const start = range ? range.start : 0;
+  const end = range ? range.end : total - 1;
+
   const stream = new ReadableStream({
-    async pull(controller) {
-      // Pull all sequentially then close. (Chunks are ~1s of opus, small.)
+    async start(controller) {
+      let offset = 0;
       for (const k of keys) {
-        const object = await media.get(k.r2Key);
+        const size = k.sizeBytes || 0;
+        const chunkStart = offset;
+        const chunkEnd = offset + size - 1;
+        offset += size;
+        if (size === 0 || chunkEnd < start || chunkStart > end) {
+          continue; // wholly outside the requested range
+        }
+        const from = Math.max(start, chunkStart) - chunkStart;
+        const len = Math.min(end, chunkEnd) - chunkStart - from + 1;
+        const object =
+          from === 0 && len === size
+            ? await media.get(k.r2Key)
+            : await media.get(k.r2Key, { range: { offset: from, length: len } });
         if (object) {
           controller.enqueue(new Uint8Array(await object.arrayBuffer()));
         }
@@ -610,11 +666,15 @@ app.get('/v1/c/:id/audio/full', async (c) => {
       controller.close();
     },
   });
+
   return new Response(stream, {
-    status: 200,
+    status: range ? 206 : 200,
     headers: {
-      'Content-Type': keys[0]?.mimeType || 'application/octet-stream',
+      'Content-Type': mime,
       'Cache-Control': 'no-store',
+      'Accept-Ranges': 'bytes',
+      'Content-Length': String(end - start + 1),
+      ...(range ? { 'Content-Range': `bytes ${start}-${end}/${total}` } : {}),
     },
   });
 });

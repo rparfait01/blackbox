@@ -244,7 +244,21 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     <div class="elapsed" id="elapsed">${clock(state.durationMs)}</div>
   </div>
 
-  <!-- D5 order: ORIGIN → SITUATION → CAMERA → TRANSCRIPT(secondary) → location/audio/devices -->
+  <!-- Fix Brief 8: the live map leads the coordinator view. Then
+       ORIGIN → SITUATION → CAMERA → TRANSCRIPT(secondary) → audio/devices. -->
+  <section class="sec">
+    <div class="label">Location · Live</div>
+    <div class="map" id="map">${ssrMap(state)}</div>
+    <div class="coords" id="coords">${
+      state.location
+        ? `${state.location.lat.toFixed(4)}°, ${state.location.lon.toFixed(4)}°`
+        : '—'
+    }</div>
+    <div class="coords-meta" id="coordsMeta">${
+      state.location?.accuracyM != null ? `±${Math.round(state.location.accuracyM)}m` : ''
+    }</div>
+  </section>
+
   <section class="sec sec-origin">
     <div class="label">Origin · Frozen at activation</div>
     <div id="origin">${originHtml(state)}</div>
@@ -267,19 +281,6 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   <section class="sec sec-transcript">
     <div class="label">Live transcript · secondary (evidence/replay)</div>
     <div class="transcript transcript-secondary" id="transcript">${transcriptHtml(state)}</div>
-  </section>
-
-  <section class="sec">
-    <div class="label">Location · Live</div>
-    <div class="map" id="map">${ssrMap(state)}</div>
-    <div class="coords" id="coords">${
-      state.location
-        ? `${state.location.lat.toFixed(4)}°, ${state.location.lon.toFixed(4)}°`
-        : '—'
-    }</div>
-    <div class="coords-meta" id="coordsMeta">${
-      state.location?.accuracyM != null ? `±${Math.round(state.location.accuracyM)}m` : ''
-    }</div>
   </section>
 
   <section class="sec">

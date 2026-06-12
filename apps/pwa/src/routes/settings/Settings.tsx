@@ -15,6 +15,7 @@ import { setStoredDuressPin, setStoredPin } from '@/lib/storage';
 import { REGIONS } from '@/lib/regions';
 import { PinPad } from '@/components/PinPad';
 import { ContactForm, type ContactChannel, type ContactValues } from '@/components/ContactForm';
+import { useActiveAlert } from '@/lib/active-alert';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; hasDuressCode: boolean };
@@ -36,6 +37,7 @@ const CHANNEL_LABEL: Record<ContactChannel, string> = { sms: 'Text', line: 'LINE
  */
 export function Settings(): JSX.Element {
   const navigate = useNavigate();
+  const alertActive = useActiveAlert();
   const [me, setMe] = useState<MeData | null>(null);
   const [codeOverlay, setCodeOverlay] = useState<'lock' | 'duress' | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
@@ -50,6 +52,11 @@ export function Settings(): JSX.Element {
 
   if (!isSetupComplete()) {
     return <Navigate to="/onboarding" replace />;
+  }
+  // Active-alert lockdown (Fix Brief 8 P0): never render Settings during an alert,
+  // even via deep-link or back-navigation. Return to the armed screen.
+  if (alertActive) {
+    return <Navigate to={getDisplayMode() === 'direct' ? '/blackbox' : '/'} replace />;
   }
 
   const flash = (msg: string): void => {

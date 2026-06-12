@@ -5,6 +5,7 @@ import { Gear } from '@phosphor-icons/react';
 import { api } from '@/lib/api';
 import { isSetupComplete } from '@/lib/auth';
 import { triggerActivation } from '@/lib/activation';
+import { useActiveAlert } from '@/lib/active-alert';
 import { PinEntryOverlay } from '@/routes/meditation/PinEntryOverlay';
 
 /**
@@ -21,6 +22,7 @@ interface MeResponse {
 export function BlackBoxHome(): JSX.Element {
   const [guardian, setGuardian] = useState<MeResponse['guardian']>(null);
   const [pinOpen, setPinOpen] = useState(false);
+  const alertActive = useActiveAlert();
 
   useEffect(() => {
     void api<MeResponse>('/v1/me').then((res) => {
@@ -43,9 +45,19 @@ export function BlackBoxHome(): JSX.Element {
     <main className="flex h-full w-full flex-col bg-bb-bg p-6 text-bb-text">
       <div className="flex items-center justify-between">
         <span className="font-display text-lg font-bold tracking-[0.12em]">BLACK BOX</span>
-        <Link to="/settings" aria-label="Settings" className="p-2 text-bb-text-secondary hover:text-bb-text">
-          <Gear size={22} weight="light" />
-        </Link>
+        {alertActive ? (
+          <span
+            aria-label="Settings locked during an active alert"
+            title="Locked during an active alert"
+            className="p-2 text-bb-text-tertiary opacity-40"
+          >
+            <Gear size={22} weight="light" />
+          </span>
+        ) : (
+          <Link to="/settings" aria-label="Settings" className="p-2 text-bb-text-secondary hover:text-bb-text">
+            <Gear size={22} weight="light" />
+          </Link>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center">
