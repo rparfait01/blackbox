@@ -344,8 +344,14 @@ export function renderDashboardPage(opts: DashboardOpts): string {
  * after the coordinator has been claimed. Status only; no live media, no actions
  * beyond calling emergency services.
  */
-export function renderNotifiedPage(opts: { eventId: string; base: string; state: ContactState }): string {
-  const { eventId, base, state } = opts;
+export function renderNotifiedPage(opts: {
+  eventId: string;
+  base: string;
+  state: ContactState;
+  /** Show the "Take coordination" button (no coordinator claimed yet). */
+  claimable?: boolean;
+}): string {
+  const { eventId, base, state, claimable } = opts;
   const banner = statusBanner(state);
   // Location-only tier (Brief 9): the network sees the live MAP only — never
   // audio/video. The page makes no /audio calls, so distressing capture never
@@ -379,13 +385,16 @@ export function renderNotifiedPage(opts: { eventId: string; base: string; state:
 
   <section class="sec">
     <div class="muted" style="font-size:13px;line-height:1.5">
-      A coordinator is handling this alert. You're in the network's location-only
-      view — audio and actions are with the coordinator. If you can't reach them
-      and believe someone is in danger, call emergency services now.
+      ${
+        claimable
+          ? 'You can take coordination of this alert — you would then get live audio and the actions. Only do so if you are able to respond.'
+          : "A coordinator is handling this alert. You're in the network's location-only view — audio and actions are with the coordinator. If you can't reach them and believe someone is in danger, call emergency services now."
+      }
     </div>
   </section>
 
   <div class="actions">
+    ${claimable ? '<button id="takeCoord" class="btn btn-respond">TAKE COORDINATION</button>' : ''}
     <a class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
   </div>
 </main>
@@ -406,6 +415,16 @@ const NOTIFIED_JS = `
     }).catch(function(){});
   }
   setInterval(poll,5000);
+  // Take coordination: deliberate claim, then reload into the full coordinator view.
+  var tc=document.getElementById('takeCoord');
+  if(tc){ tc.onclick=function(){
+    tc.disabled=true; tc.textContent='CLAIMING…';
+    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/claim-coordinator'+location.search,{method:'POST'})
+      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok,d:d}; }); }).then(function(res){
+        if(res.ok && res.d && res.d.claimed){ window.location.reload(); }
+        else { tc.disabled=false; tc.textContent='TAKE COORDINATION'; alert('Another responder has already taken coordination.'); }
+      }).catch(function(){ tc.disabled=false; tc.textContent='TAKE COORDINATION'; });
+  };}
 })();
 `;
 

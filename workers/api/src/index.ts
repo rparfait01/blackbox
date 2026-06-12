@@ -351,11 +351,45 @@ app.get('/c/:id', async (c) => {
   }
 
   // GUARDIAN path (Fix Brief 3 R1) — the live view opens IMMEDIATELY, no identity
-  // form. Identity here is the pre-registered contact binding from onboarding (a
-  // known contact). The first opener claims coordinator; others get notified.
+  // form. Coordinator is claimed only by a DELIBERATE "Take coordination" POST
+  // (Brief 7 / grooming): merely opening the link must NOT claim it, or duress
+  // would route to whoever happened to open first. Until someone claims, every
+  // opener sees the location-only view with a Take-coordination button.
   const state = await getContactState(c.env, eventId);
   if (!state) {
     return c.html(renderTokenPage('invalid'), 404);
+  }
+  const row = await c.env.DB.prepare(
+    'SELECT coordinatorKey, coordinatorClaimedAt FROM events WHERE id = ?',
+  )
+    .bind(eventId)
+    .first<{ coordinatorKey: string | null; coordinatorClaimedAt: number | null }>();
+  const claimed = row?.coordinatorClaimedAt != null;
+  const cookieKey = getCookie(c, 'bbcoord');
+  const isCoordinator = claimed && !!cookieKey && cookieKey === row?.coordinatorKey;
+  if (isCoordinator) {
+    await audit(c.env, eventId, 'coordinator_view', null, null);
+    return c.html(
+      renderDashboardPage({ eventId, token, base: workerOrigin, state, role: 'coordinator' }),
+    );
+  }
+  // Location-only view. Offer to take coordination only when unclaimed.
+  await audit(c.env, eventId, claimed ? 'notified_view' : 'claimable_view', null, null);
+  return c.html(renderNotifiedPage({ eventId, base: workerOrigin, state, claimable: !claimed }));
+});
+
+// Deliberate coordinator claim (Brief 7 / grooming). Atomic: the first POST that
+// flips coordinatorClaimedAt from NULL wins and gets the bbcoord cookie; everyone
+// else is told it is already claimed. This is the ONLY way coordination is taken
+// — never by passively loading the dashboard.
+app.post('/v1/c/:id/claim-coordinator', async (c) => {
+  const secret = c.env.MAGIC_LINK_SECRET;
+  const eventId = c.req.param('id');
+  const token = c.req.query('t') ?? '';
+  const verdict = secret ? await verifyTokenRole(secret, eventId, token) : null;
+  // Guardian-path tokens only; the dispatch (authority) path never coordinates.
+  if (!verdict || verdict.verdict !== 'ok' || verdict.role === 'dispatch') {
+    return c.json({ error: 'unauthorized' }, 401);
   }
   const newKey = randomHex(16);
   const claim = await c.env.DB.prepare(
@@ -363,11 +397,7 @@ app.get('/c/:id', async (c) => {
   )
     .bind(Date.now(), newKey, eventId)
     .run();
-  let isCoordinator: boolean;
   if (claim.meta.changes === 1) {
-    isCoordinator = true;
-    // Path '/' so the cookie is also sent on the /v1/c/:id/* API calls (e.g.
-    // dispatch-link, standdown) — not just the /c/:id page (Fix Brief 4 G1).
     setCookie(c, 'bbcoord', newKey, {
       path: '/',
       httpOnly: true,
@@ -375,20 +405,18 @@ app.get('/c/:id', async (c) => {
       sameSite: 'Lax',
       maxAge: 60 * 60 * 24,
     });
-  } else {
-    const row = await c.env.DB.prepare('SELECT coordinatorKey FROM events WHERE id = ?')
-      .bind(eventId)
-      .first<{ coordinatorKey: string | null }>();
-    const cookieKey = getCookie(c, 'bbcoord');
-    isCoordinator = !!cookieKey && !!row?.coordinatorKey && cookieKey === row.coordinatorKey;
+    await audit(c.env, eventId, 'coordinator_claimed', null, null);
+    return c.json({ claimed: true }, 200);
   }
-  await audit(c.env, eventId, isCoordinator ? 'coordinator_view' : 'notified_view', null, null);
-  if (isCoordinator) {
-    return c.html(
-      renderDashboardPage({ eventId, token, base: workerOrigin, state, role: 'coordinator' }),
-    );
+  // Already claimed — if it's this viewer, report success (idempotent).
+  const row = await c.env.DB.prepare('SELECT coordinatorKey FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ coordinatorKey: string | null }>();
+  const cookieKey = getCookie(c, 'bbcoord');
+  if (cookieKey && row?.coordinatorKey === cookieKey) {
+    return c.json({ claimed: true }, 200);
   }
-  return c.html(renderNotifiedPage({ eventId, base: workerOrigin, state }));
+  return c.json({ claimed: false, reason: 'already_claimed' }, 409);
 });
 
 // Coordinator-only guard for the live guardian path (Fix Brief 3): a valid
