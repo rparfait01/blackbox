@@ -10,8 +10,8 @@ import {
   setDisplayMode,
   type DisplayMode,
 } from '@/lib/auth';
-import { hashPin } from '@/lib/crypto/pin';
-import { setStoredDuressPin, setStoredPin } from '@/lib/storage';
+import { hashClosurePin, verifyPin } from '@/lib/crypto/pin';
+import { getStoredClosurePin, setStoredClosurePin } from '@/lib/storage';
 import { REGIONS } from '@/lib/regions';
 import { PinPad } from '@/components/PinPad';
 import { useActiveAlert } from '@/lib/active-alert';
@@ -30,7 +30,7 @@ export function Settings(): JSX.Element {
   const navigate = useNavigate();
   const alertActive = useActiveAlert();
   const [me, setMe] = useState<MeData | null>(null);
-  const [codeOverlay, setCodeOverlay] = useState<'lock' | 'duress' | null>(null);
+  const [pinOverlay, setPinOverlay] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const load = (): void => {
@@ -121,13 +121,14 @@ export function Settings(): JSX.Element {
           </div>
         </Group>
 
-        <Group label="Codes">
-          <button onClick={() => setCodeOverlay('lock')} className="block w-full py-2 text-left text-med-text/80">
-            Change session lock code
+        <Group label="Closure pin">
+          <button onClick={() => setPinOverlay(true)} className="block w-full py-2 text-left text-med-text/80">
+            Change closure pin
           </button>
-          <button onClick={() => setCodeOverlay('duress')} className="block w-full py-2 text-left text-med-text/80">
-            Change backup code
-          </button>
+          <p className="mt-1 text-[11px] leading-relaxed text-med-text/45">
+            Your 3-digit pin ends an alert (your contact confirms). To signal duress, enter it with
+            the last digit wrong — it looks normal but warns your contact.
+          </p>
         </Group>
 
         <Group label="Region">
@@ -157,15 +158,13 @@ export function Settings(): JSX.Element {
         </div>
       ) : null}
 
-      {codeOverlay ? (
-        <CodeChangeOverlay
-          kind={codeOverlay}
+      {pinOverlay ? (
+        <ClosurePinOverlay
           onDone={(msg) => {
-            setCodeOverlay(null);
+            setPinOverlay(false);
             flash(msg);
-            load();
           }}
-          onClose={() => setCodeOverlay(null)}
+          onClose={() => setPinOverlay(false)}
         />
       ) : null}
     </main>
@@ -189,60 +188,55 @@ function Row({ k, v }: { k: string; v: string }): JSX.Element {
   );
 }
 
-/** Change lock or backup code: enter authorising code, then new code twice. */
-function CodeChangeOverlay({
-  kind,
+/**
+ * Change the ONE 3-digit closure pin (Brief 12). This is the single source of
+ * truth — the same pin closure evaluates (SAT = exact; DURESS = last digit
+ * altered). Stored on-device only; never transmitted. Requires the current pin
+ * to change it (when one is already set). No backup code exists.
+ */
+function ClosurePinOverlay({
   onDone,
   onClose,
 }: {
-  kind: 'lock' | 'duress';
   onDone: (msg: string) => void;
   onClose: () => void;
 }): JSX.Element {
   const [phase, setPhase] = useState<'auth' | 'new' | 'confirm'>('auth');
-  const [authCode, setAuthCode] = useState('');
   const [firstNew, setFirstNew] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // If no pin is set yet, skip straight to choosing one.
+  useEffect(() => {
+    void getStoredClosurePin().then((existing) => {
+      if (!existing) {
+        setPhase('new');
+      }
+    });
+  }, []);
+
   const prompts = {
-    auth: kind === 'lock' ? 'Enter current lock code' : 'Enter your lock code',
-    new: kind === 'lock' ? 'Enter new lock code' : 'Enter new backup code',
-    confirm: 'Re-enter the new code',
+    auth: 'Enter your current pin',
+    new: 'Choose a new 3-digit pin',
+    confirm: 'Re-enter your new pin',
   };
 
-  async function submit(newCode: string): Promise<void> {
-    const path = kind === 'lock' ? '/v1/me/lock-code' : '/v1/me/duress-code';
-    const body =
-      kind === 'lock'
-        ? { oldCode: authCode, newCode }
-        : { lockCode: authCode, newDuressCode: newCode };
-    const res = await api(path, { body });
-    if (res.ok) {
-      const hashed = await hashPin(newCode);
-      if (kind === 'lock') {
-        await setStoredPin(hashed);
-      } else {
-        await setStoredDuressPin(hashed);
-      }
-      onDone(kind === 'lock' ? 'Lock code changed' : 'Backup code changed');
-    } else {
-      setError('That code is incorrect. Start again.');
-      setPhase('auth');
-    }
-  }
-
-  function onCode(code: string): void {
+  async function onCode(code: string): Promise<void> {
     setError(null);
     if (phase === 'auth') {
-      setAuthCode(code);
-      setPhase('new');
+      const existing = await getStoredClosurePin();
+      if (existing && (await verifyPin(code, existing.full))) {
+        setPhase('new');
+      } else {
+        setError('That pin is incorrect. Try again.');
+      }
     } else if (phase === 'new') {
       setFirstNew(code);
       setPhase('confirm');
     } else if (code === firstNew) {
-      void submit(code);
+      await setStoredClosurePin(await hashClosurePin(code));
+      onDone('Closure pin changed');
     } else {
-      setError('Codes did not match. Start again.');
+      setError('Pins did not match. Start again.');
       setPhase('new');
     }
   }
@@ -251,7 +245,7 @@ function CodeChangeOverlay({
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm p-8" onClick={onClose}>
       <div className="stillpoint-bg w-full max-w-sm rounded-2xl p-8 text-med-text" onClick={(e) => e.stopPropagation()}>
         <p className="mb-8 text-center font-serif text-lg font-light text-med-text/80">{prompts[phase]}</p>
-        <PinPad onComplete={onCode} resetKey={phase} />
+        <PinPad onComplete={(code) => void onCode(code)} resetKey={phase} length={3} />
         {error ? <p className="mt-4 text-center text-sm text-status-active">{error}</p> : null}
         <button onClick={onClose} className="mt-6 block w-full text-center text-sm text-med-text/40 underline">
           Cancel
