@@ -12,7 +12,7 @@ import { ContactForm, type ContactChannel, type ContactValues } from '@/componen
  * during an active alert (the Settings route itself is blocked then).
  */
 
-type SlotKey = 'primary' | 'secondary' | 'tertiary' | 'guardian';
+type SlotKey = 'primary' | 'secondary' | 'tertiary' | 'guardian' | 'emergency';
 
 interface Slot {
   slot: SlotKey;
@@ -33,6 +33,7 @@ const SLOT_LABEL: Record<SlotKey, string> = {
   secondary: 'Secondary',
   tertiary: 'Tertiary',
   guardian: 'Guardian',
+  emergency: 'Emergency',
 };
 const CHANNEL_LABEL: Record<ContactChannel, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
 
@@ -93,8 +94,8 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
         Support roles
       </div>
 
-      <div className="mb-4 flex gap-2">
-        {(['primary', 'secondary', 'tertiary', 'guardian'] as SlotKey[]).map((key) => {
+      <div className="mb-4 grid grid-cols-5 gap-1.5">
+        {(['primary', 'secondary', 'tertiary', 'guardian', 'emergency'] as SlotKey[]).map((key) => {
           const s = data?.slots.find((x) => x.slot === key);
           const active = selected === key;
           return (
@@ -156,6 +157,13 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
             </>
           )}
 
+          {selected === 'emergency' ? (
+            <p className="mt-3 border-t border-med-text/15 pt-3 text-[11px] leading-relaxed text-med-text/45">
+              Emergency fallback. Notified only if the whole cascade — every contact and your
+              guardian — passes without anyone taking coordination. Not part of the normal cascade.
+              For testing, use a number you control, not a live emergency line.
+            </p>
+          ) : null}
           {selected === 'guardian' ? (
             <div className="mt-4 border-t border-med-text/15 pt-4">
               <div className="flex items-center justify-between">

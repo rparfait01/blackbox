@@ -108,7 +108,7 @@ userRoutes.post('/lock-code', async (c) => {
 });
 
 // --- Roles: 3 contacts + 1 guardian (Brief 9 / Brief 8 contact tabs) ---
-const VALID_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary', 'guardian'];
+const VALID_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary', 'guardian', 'emergency'];
 
 userRoutes.get('/contacts', async (c) => {
   const userId = c.get('userId');

@@ -11,8 +11,8 @@
 
 import type { Env } from '../types';
 
-export type SlotRole = 'contact' | 'guardian';
-export type SlotKey = 'primary' | 'secondary' | 'tertiary' | 'guardian';
+export type SlotRole = 'contact' | 'guardian' | 'emergency';
+export type SlotKey = 'primary' | 'secondary' | 'tertiary' | 'guardian' | 'emergency';
 
 interface SlotAddress {
   role: SlotRole;
@@ -30,6 +30,10 @@ export function slotAddress(slot: string): SlotAddress | null {
       return { role: 'contact', priority: 3 };
     case 'guardian':
       return { role: 'guardian', priority: null };
+    case 'emergency':
+      // The emergency-services fallback target (Brief 11). NOT part of the
+      // cascade — fired only after the chain completes unclaimed.
+      return { role: 'emergency', priority: null };
     default:
       return null;
   }
@@ -54,6 +58,9 @@ function keyFor(role: string | null, priority: number | null): SlotKey | null {
   if (role === 'guardian') {
     return 'guardian';
   }
+  if (role === 'emergency') {
+    return 'emergency';
+  }
   if (role === 'contact') {
     return priority === 1 ? 'primary' : priority === 2 ? 'secondary' : priority === 3 ? 'tertiary' : null;
   }
@@ -74,6 +81,7 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
     secondary: { slot: 'secondary', filled: false, contactName: null, channel: null, destination: null },
     tertiary: { slot: 'tertiary', filled: false, contactName: null, channel: null, destination: null },
     guardian: { slot: 'guardian', filled: false, contactName: null, channel: null, destination: null },
+    emergency: { slot: 'emergency', filled: false, contactName: null, channel: null, destination: null },
   };
 
   for (const row of rows) {
@@ -94,7 +102,7 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
       destination: endpoint?.channelIdentifier ?? null,
     };
   }
-  return [slots.primary, slots.secondary, slots.tertiary, slots.guardian];
+  return [slots.primary, slots.secondary, slots.tertiary, slots.guardian, slots.emergency];
 }
 
 /** Insert or replace a single slot with its chosen channel + destination. */

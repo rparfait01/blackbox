@@ -67,10 +67,12 @@ export async function listReachableContacts(
       .first<{ guardianEnabled: number }>();
     const guardianEnabled = (user?.guardianEnabled ?? 1) === 1;
     const { results } = await env.DB.prepare(
-      "SELECT id, displayName, role FROM contacts WHERE userId = ? ORDER BY CASE role WHEN 'guardian' THEN 1 ELSE 0 END, priority ASC",
+      "SELECT id, displayName, role FROM contacts WHERE userId = ? AND role IN ('contact','guardian') ORDER BY CASE role WHEN 'guardian' THEN 1 ELSE 0 END, priority ASC",
     )
       .bind(event.userId)
       .all<{ id: string; displayName: string; role: string | null }>();
+    // The 'emergency' slot is NOT in the cascade — it is the fallback fired only
+    // after the chain completes unclaimed (Brief 11).
     const rows = (results ?? []).filter((r) => r.role !== 'guardian' || guardianEnabled);
     if (rows.length > 0) {
       return rows.map((r) => ({ id: r.id, displayName: r.displayName }));

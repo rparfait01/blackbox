@@ -220,10 +220,24 @@ export async function advanceCascades(env: Env, workerOrigin: string): Promise<v
         .bind(now, ev.id)
         .run();
       if (claim.meta.changes === 1) {
-        // v0 has no configured emergency-services SMS/LINE target — record the
-        // fallback so it is observable. Wire a per-account emergency endpoint to
-        // actually dispatch here.
-        await audit(env, ev.id, 'emergency_fallback', ev.userHash, { reason: 'no_coordinator' });
+        // Dispatch to the account's configured emergency target if set (Brief 11
+        // emergency-services fallback). The 'emergency' slot is a per-account
+        // endpoint (channel + destination) the operator configures — for the
+        // pilot/testing it can be a monitored number, NOT live 911.
+        const emergency = ev.userId
+          ? await env.DB.prepare(
+              "SELECT id, displayName FROM contacts WHERE userId = ? AND role = 'emergency' LIMIT 1",
+            )
+              .bind(ev.userId)
+              .first<{ id: string; displayName: string }>()
+          : null;
+        if (emergency) {
+          const ctx = await activationCtx(env, ev.id, workerOrigin);
+          await dispatchStep(env, ev.id, ctx, emergency, ev.userHash);
+          await audit(env, ev.id, 'emergency_fallback_dispatched', ev.userHash, { reason: 'no_coordinator' });
+        } else {
+          await audit(env, ev.id, 'emergency_fallback', ev.userHash, { reason: 'no_target' });
+        }
       }
     }
   }
