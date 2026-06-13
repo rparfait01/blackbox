@@ -48,6 +48,19 @@ wrangler_secret_list.txt
 workers/SendGrid Mail Send.txt
 *.secret
 
+# API keys & credentials anywhere in the tree (never commit) — added after a
+# SendGrid API-key file was scrubbed from history. Belt-and-suspenders with the
+# scoped *.txt rules below.
+*.key
+*.pem
+*.pfx
+*.p12
+*API Key*
+*api*key*
+*apikey*
+*credentials*
+.dev.vars.*
+
 # Stray scratch text files at repo root / workers (never commit; docs live in docs/*.md)
 /*.txt
 workers/*.txt
