@@ -138,14 +138,18 @@ export function Settings(): JSX.Element {
             className="flex w-full items-center justify-between py-1"
           >
             <span className="text-med-text/80">{present ? 'On' : 'Off'}</span>
+            {/* Proper switch: ON = filled active track + knob right; OFF = muted
+                track + knob left. `block` so the width/height actually apply (an
+                inline span ignores them); knob pinned via left so position can't
+                drift from the label. Right = ON (overt), left = OFF (covert). */}
             <span
-              className={`relative h-7 w-12 rounded-full border transition-colors ${
-                present ? 'border-med-text/80 bg-med-text/30' : 'border-med-text/25 bg-transparent'
+              className={`relative block h-7 w-12 shrink-0 rounded-full transition-colors ${
+                present ? 'bg-[#34c759]' : 'bg-med-text/20'
               }`}
             >
               <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-med-text transition-transform ${
-                  present ? 'translate-x-6' : 'translate-x-0.5'
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  present ? 'left-6' : 'left-1'
                 }`}
               />
             </span>
