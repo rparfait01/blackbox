@@ -175,6 +175,15 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
             >
               {busy ? 'Submitting…' : 'Submit'}
             </button>
+
+            {/* Explicit back/cancel — never rely on a blind backdrop tap. */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-4 block w-full text-center text-sm text-med-text/45 underline"
+            >
+              Cancel
+            </button>
           </>
         )}
       </div>

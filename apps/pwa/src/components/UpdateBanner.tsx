@@ -4,24 +4,21 @@ import { useActiveAlert } from '@/lib/active-alert';
 import { log } from '@/lib/log';
 
 /**
- * In-app "update available — reload" path (Brief 13 B1). The user cannot hard
- * reset the installed PWA on their phone, so a stale build could otherwise live
- * forever. This registers the service worker emitted by vite-plugin-pwa, polls
- * for a newer build every minute while the app is open, and — when one is waiting
- * — shows a single-tap "Reload" banner. Tapping it tells the waiting worker to
- * skipWaiting and reloads once it takes control, so the new build is live
- * immediately.
+ * Self-update path (Brief 13/14 B1). The user cannot hard-reset the installed PWA
+ * on their phone, so a stale build could otherwise live forever. This registers
+ * the service worker, polls for a newer build every minute while the app is open,
+ * and applies it:
  *
- * Why native instead of virtual:pwa-register: the generated SW (registerType
- * 'prompt') already listens for the SKIP_WAITING message and clientsClaim()s, so
- * a handful of lines of native API gives us full control without dragging in
- * workbox-window. Registration is production-only (no /sw.js exists under `vite
- * dev`).
+ *  - DORMANT (no active alert): the update is applied AUTOMATICALLY — the waiting
+ *    worker is told to skipWaiting, it clientsClaim()s, and `controllerchange`
+ *    reloads the page onto the fresh build. No tap, no hard reset.
+ *  - ACTIVE alert: auto-apply is suppressed (a reload would tear down the
+ *    recording session). A single generic "Reload" banner is shown so the user
+ *    can choose to apply it; otherwise it applies automatically once the alert
+ *    ends. The copy never reveals the app's true purpose (covert-safe).
  *
- * The banner is suppressed during an active alert: reloading mid-event would tear
- * down the recording session, so the update waits until the alert is secured. The
- * copy is generic ("A new version is ready") so it never reveals the app's true
- * purpose on the covert surface.
+ * The first-ever install (no prior controller) does NOT reload — only true
+ * updates do — so there is no first-load reload loop.
  */
 const UPDATE_CHECK_INTERVAL_MS = 60_000;
 
@@ -33,6 +30,9 @@ export function UpdateBanner(): JSX.Element | null {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) {
       return;
     }
+    // Whether a controller already exists at startup — distinguishes a true update
+    // (reload) from the first install (do not reload).
+    const hadController = navigator.serviceWorker.controller != null;
     let interval: number | undefined;
 
     const offerWaiting = (sw: ServiceWorker | null): void => {
@@ -46,8 +46,6 @@ export function UpdateBanner(): JSX.Element | null {
         return;
       }
       sw.addEventListener('statechange', () => {
-        // A new worker reaching 'installed' while one already controls the page
-        // means a fresh build is waiting.
         if (sw.state === 'installed' && navigator.serviceWorker.controller) {
           offerWaiting(registration.waiting);
         }
@@ -57,17 +55,16 @@ export function UpdateBanner(): JSX.Element | null {
     navigator.serviceWorker
       .register('/sw.js', { scope: '/' })
       .then((registration) => {
-        // Already-waiting worker from a previous visit.
         offerWaiting(registration.waiting);
         registration.addEventListener('updatefound', () => watchInstalling(registration));
         interval = window.setInterval(() => void registration.update(), UPDATE_CHECK_INTERVAL_MS);
       })
       .catch((error) => log.error('sw register failed', error));
 
-    // When the new worker takes control, reload so the fresh assets are used.
     let reloading = false;
     const onControllerChange = (): void => {
-      if (reloading) {
+      // Only reload for an actual update, never the first install.
+      if (reloading || !hadController) {
         return;
       }
       reloading = true;
@@ -83,7 +80,16 @@ export function UpdateBanner(): JSX.Element | null {
     };
   }, []);
 
-  if (!waiting || alertActive) {
+  // Apply automatically while dormant; defer while an alert is live.
+  useEffect(() => {
+    if (waiting && !alertActive) {
+      waiting.postMessage({ type: 'SKIP_WAITING' });
+    }
+  }, [waiting, alertActive]);
+
+  // The banner only appears during an active alert (auto-apply is paused then),
+  // giving the user a deliberate, safe way to update mid-session if they choose.
+  if (!waiting || !alertActive) {
     return null;
   }
 

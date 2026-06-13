@@ -15,21 +15,37 @@ import { PinEntryOverlay } from '@/routes/meditation/PinEntryOverlay';
  * disc activates silently.
  */
 
-interface MeResponse {
-  guardian: { name: string | null; status: string } | null;
+interface SlotView {
+  slot: string;
+  filled: boolean;
+  contactName: string | null;
+  channel: string | null;
 }
+interface ContactsResponse {
+  slots: SlotView[];
+}
+const CHANNEL_LABEL: Record<string, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
 
 export function BlackBoxHome(): JSX.Element {
-  const [guardian, setGuardian] = useState<MeResponse['guardian']>(null);
+  // Read the SAME slot model Settings + the cascade use (single source of truth),
+  // so a contact added at signup shows here with no re-add.
+  const [support, setSupport] = useState<{ name: string; channel: string | null; role: string } | null>(null);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
   const [checkin, setCheckin] = useState<'idle' | 'sending' | 'done'>('idle');
   const [checkinLoc, setCheckinLoc] = useState(false);
 
   useEffect(() => {
-    void api<MeResponse>('/v1/me').then((res) => {
+    void api<ContactsResponse>('/v1/me/contacts').then((res) => {
       if (res.ok && res.data) {
-        setGuardian(res.data.guardian);
+        // Prefer the primary contact; otherwise show the guardian.
+        const order = ['primary', 'secondary', 'tertiary', 'guardian'];
+        const filled = res.data.slots
+          .filter((s) => s.filled && order.includes(s.slot))
+          .sort((a, b) => order.indexOf(a.slot) - order.indexOf(b.slot))[0];
+        setSupport(
+          filled ? { name: filled.contactName ?? 'Contact', channel: filled.channel, role: filled.slot } : null,
+        );
       }
     });
   }, []);
@@ -169,12 +185,12 @@ export function BlackBoxHome(): JSX.Element {
             No external hardware paired
           </div>
         </Section>
-        <Section label="Primary Contact">
-          {guardian ? (
+        <Section label={support?.role === 'guardian' ? 'Guardian' : 'Primary Contact'}>
+          {support ? (
             <>
-              <div className="text-sm text-bb-text">{guardian.name}</div>
+              <div className="text-sm text-bb-text">{support.name}</div>
               <div className="mt-0.5 font-mono text-[11px] text-bb-text-secondary">
-                {guardian.status === 'accepted' ? 'Email · Verified' : `Waiting for ${guardian.name}`}
+                {support.channel ? CHANNEL_LABEL[support.channel] ?? support.channel : 'Active'}
               </div>
             </>
           ) : (

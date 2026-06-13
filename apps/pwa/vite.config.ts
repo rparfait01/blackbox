@@ -62,6 +62,11 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff,woff2}'],
+        // Take control of open pages as soon as the new SW activates, so a fresh
+        // build's assets are used without a manual hard reset (Brief 13/14 B1).
+        // skipWaiting stays message-driven (UpdateBanner) so we never tear down an
+        // active recording session.
+        clientsClaim: true,
       },
     }),
   ],

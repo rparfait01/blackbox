@@ -105,6 +105,10 @@ export function Onboarding(): JSX.Element {
   const [signupId, setSignupId] = useState('');
   const [emailExists, setEmailExists] = useState(false);
 
+  // support person captured at signup (Brief: persists to the SAME slots model
+  // Settings + the cascade use — primary contact or guardian).
+  const [supportRole, setSupportRole] = useState<'primary' | 'guardian'>('primary');
+
   // display + codes
   const [displayMode, setMode] = useState<DisplayMode>('covert');
   const [codePhase, setCodePhase] = useState<'pin' | 'pin-confirm'>('pin');
@@ -202,10 +206,17 @@ export function Onboarding(): JSX.Element {
     }
   }
 
-  async function saveGuardian(values: ContactValues): Promise<void> {
+  async function saveSupport(values: ContactValues): Promise<void> {
     setBusy(true);
     setError(null);
-    const res = await api('/v1/guardians/contact', { body: values });
+    // Write to the SAME slot model Settings and the alert cascade read, so she
+    // persists in the right role and is visible in Settings immediately — no
+    // re-add. Not gated on email/OTP verification (Brief 14). The session exists
+    // here (finalize ran at step 5), so this authenticated call succeeds.
+    const slot = supportRole === 'guardian' ? 'guardian' : 'primary';
+    const res = await api(`/v1/me/contacts/${slot}`, {
+      body: { contactName: values.name, channel: values.channel, destination: values.destination },
+    });
     setBusy(false);
     if (res.ok) {
       setStep(7);
@@ -402,11 +413,38 @@ export function Onboarding(): JSX.Element {
           setStep(5);
         }}
       >
+        {/* Role (Brief): land her in the right slot — a Primary contact (first in
+            the cascade) or your Guardian (the failsafe). Both are the same source
+            of truth Settings shows. */}
+        <div className="mb-5">
+          <span className="mb-2 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">
+            Their role
+          </span>
+          <div className="flex gap-2">
+            {([
+              { key: 'primary', label: 'Primary contact' },
+              { key: 'guardian', label: 'Guardian' },
+            ] as const).map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                onClick={() => setSupportRole(r.key)}
+                className={`flex-1 rounded-lg border py-3 font-mono text-xs uppercase tracking-[0.08em] transition-colors ${
+                  supportRole === r.key
+                    ? 'border-med-text/80 bg-med-text/10 text-med-text'
+                    : 'border-med-text/25 text-med-text/55'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <ContactForm
           busy={busy}
           error={error}
           submitLabel="Save support contact"
-          onSubmit={(v) => void saveGuardian(v)}
+          onSubmit={(v) => void saveSupport(v)}
         />
         <button onClick={() => setStep(7)} className="mt-5 block w-full text-center text-sm text-med-text/50 underline">
           Skip — add later in settings
