@@ -214,7 +214,7 @@ export function Onboarding(): JSX.Element {
     // re-add. Not gated on email/OTP verification (Brief 14). The session exists
     // here (finalize ran at step 5), so this authenticated call succeeds.
     const slot = supportRole === 'guardian' ? 'guardian' : 'primary';
-    const res = await api(`/v1/me/contacts/${slot}`, {
+    const res = await api<{ error?: string; message?: string }>(`/v1/me/contacts/${slot}`, {
       body: { contactName: values.name, channel: values.channel, destination: values.destination },
     });
     setBusy(false);
@@ -222,6 +222,8 @@ export function Onboarding(): JSX.Element {
       setStep(7);
     } else if (res.status === 0) {
       setError('No connection — we couldn’t save your contact. Check your signal and try again.');
+    } else if (res.data?.error === 'channel_not_available') {
+      setError(res.data.message ?? 'That channel is not available yet — use Email.');
     } else {
       setError('Could not save your support contact. Check the destination and try again.');
     }

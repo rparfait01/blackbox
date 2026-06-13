@@ -17,6 +17,7 @@ import {
   type SlotKey,
 } from '../lib/roles';
 import { sendCheckin } from '../lib/checkin';
+import { isChannelDeliverable } from '../channels/router';
 import type { Env, Vars } from '../types';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -148,6 +149,18 @@ userRoutes.post('/contacts/:slot', async (c) => {
   }
   if (channel !== 'sms' && channel !== 'line' && channel !== 'email') {
     return c.json({ error: 'channel must be sms, line or email' }, 400);
+  }
+  // Never accept a contact on a channel that cannot deliver in this deployment —
+  // it would fail silently at alert time. Refuse with a clear, surfaced reason.
+  if (!isChannelDeliverable(c.env, channel)) {
+    return c.json(
+      {
+        error: 'channel_not_available',
+        channel,
+        message: `${channel.toUpperCase()} is not available yet — this contact would not be reached. Use Email.`,
+      },
+      400,
+    );
   }
   const user = await getUserById(c.env, c.get('userId'));
   await upsertSlot(c.env, c.get('userId'), slot, {

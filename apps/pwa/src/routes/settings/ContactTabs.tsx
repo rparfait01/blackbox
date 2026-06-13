@@ -54,7 +54,7 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
   async function save(values: ContactValues): Promise<void> {
     setBusy(true);
     setError(null);
-    const res = await api(`/v1/me/contacts/${selected}`, {
+    const res = await api<{ error?: string; message?: string }>(`/v1/me/contacts/${selected}`, {
       body: { contactName: values.name, channel: values.channel, destination: values.destination },
     });
     setBusy(false);
@@ -64,6 +64,9 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
       load();
     } else if (res.status === 423) {
       setError('Locked during an active alert.');
+    } else if (res.data?.error === 'channel_not_available') {
+      // Never let a non-deliverable channel be saved silently.
+      setError(res.data.message ?? 'That channel is not available yet.');
     } else {
       setError('Could not save. Check the destination and try again.');
     }

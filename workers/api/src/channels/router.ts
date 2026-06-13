@@ -43,6 +43,27 @@ export interface DispatchResult {
   channel: ChannelName | null;
 }
 
+/**
+ * Whether a channel can ACTUALLY deliver in this deployment — the single source
+ * of truth for "is this channel real?". A channel that would resolve to a stub
+ * (or to no implementation) is NOT deliverable, so saving a contact on it must be
+ * refused rather than silently accepted and then failing at alert time.
+ */
+export function isChannelDeliverable(env: Env, channel: string): boolean {
+  switch (channel) {
+    case 'email':
+      return !!(env.SENDGRID_API_KEY && env.SENDGRID_FROM_EMAIL);
+    case 'line':
+      return !!env.LINE_CHANNEL_ACCESS_TOKEN;
+    case 'sms':
+      // SMS only delivers with a real Twilio config; otherwise it is a stub.
+      return !!twilioConfig(env);
+    default:
+      // push / telegram are stubs.
+      return false;
+  }
+}
+
 /** Build the channel implementation for an endpoint, or null if unconfigured. */
 function createChannel(
   env: Env,

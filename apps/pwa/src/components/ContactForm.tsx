@@ -16,11 +16,26 @@ export interface ContactValues {
   destination: string;
 }
 
-const CHANNELS: Array<{ key: ContactChannel; label: string; hint: string; inputMode: 'tel' | 'email' | 'text'; placeholder: string }> = [
-  { key: 'sms', label: 'Text', hint: 'Phone number', inputMode: 'tel', placeholder: '+1 555 123 4567' },
-  { key: 'line', label: 'LINE', hint: 'LINE ID', inputMode: 'text', placeholder: 'their LINE ID' },
-  { key: 'email', label: 'Email', hint: 'Email address', inputMode: 'email', placeholder: 'their@email.com' },
-];
+interface ChannelMeta {
+  label: string;
+  hint: string;
+  inputMode: 'tel' | 'email' | 'text';
+  placeholder: string;
+}
+
+// Metadata for every channel (used to render whichever channel a contact is on).
+const CHANNEL_META: Record<ContactChannel, ChannelMeta> = {
+  email: { label: 'Email', hint: 'Email address', inputMode: 'email', placeholder: 'their@email.com' },
+  line: { label: 'LINE', hint: 'LINE user ID', inputMode: 'text', placeholder: 'their LINE user ID' },
+  sms: { label: 'Text', hint: 'Phone number', inputMode: 'tel', placeholder: '+1 555 123 4567' },
+};
+
+// Only channels that can ACTUALLY deliver are offered. SMS is omitted until the
+// SMS channel is implemented — presenting it would let a contact be saved that
+// silently never gets reached. Email is the default (the reliably-delivering
+// channel for the pilot). The server also rejects a non-deliverable channel, so
+// this is belt-and-suspenders, never the only guard.
+const SELECTABLE_CHANNELS: ContactChannel[] = ['email', 'line'];
 
 export function ContactForm({
   initial,
@@ -37,10 +52,10 @@ export function ContactForm({
 }): JSX.Element {
   const [name, setName] = useState(initial?.name ?? '');
   const [relationship, setRelationship] = useState(initial?.relationship ?? '');
-  const [channel, setChannel] = useState<ContactChannel>(initial?.channel ?? 'sms');
+  const [channel, setChannel] = useState<ContactChannel>(initial?.channel ?? 'email');
   const [destination, setDestination] = useState(initial?.destination ?? '');
 
-  const active = CHANNELS.find((ch) => ch.key === channel)!;
+  const active = CHANNEL_META[channel];
   const canSubmit = name.trim().length > 0 && destination.trim().length > 0 && !busy;
 
   return (
@@ -60,21 +75,27 @@ export function ContactForm({
           Preferred channel
         </span>
         <div className="flex gap-2">
-          {CHANNELS.map((ch) => (
+          {SELECTABLE_CHANNELS.map((key) => (
             <button
-              key={ch.key}
+              key={key}
               type="button"
-              onClick={() => setChannel(ch.key)}
+              onClick={() => setChannel(key)}
               className={`flex-1 rounded-lg border py-3 font-mono text-xs uppercase tracking-[0.1em] transition-colors ${
-                channel === ch.key
+                channel === key
                   ? 'border-med-text/80 bg-med-text/10 text-med-text'
                   : 'border-med-text/25 text-med-text/55'
               }`}
             >
-              {ch.label}
+              {CHANNEL_META[key].label}
             </button>
           ))}
         </div>
+        {channel === 'line' ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-med-text/45">
+            LINE needs their LINE <span className="text-med-text/70">user ID</span> (from following
+            the bot), not their display name. If unsure, use Email.
+          </p>
+        ) : null}
       </div>
 
       <label className="block">

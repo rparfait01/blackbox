@@ -17,6 +17,7 @@ import {
   saveContact,
   type PreferredChannel,
 } from '../lib/guardians';
+import { isChannelDeliverable } from '../channels/router';
 import { mintMagicToken, verifyMagicTokenDetailed } from '../lib/magic-link';
 import { generateOtp, sendOtpViaEmail, sendOtpViaSms, storeOtp, verifyOtp } from '../lib/otp';
 import { getUserById, hasActiveEvent, normalizeEmail } from '../lib/users';
@@ -119,6 +120,16 @@ guardianRoutes.post('/contact', requireSession, async (c) => {
   }
   if (channel !== 'sms' && channel !== 'line' && channel !== 'email') {
     return c.json({ error: 'channel must be sms, line or email' }, 400);
+  }
+  if (!isChannelDeliverable(c.env, channel)) {
+    return c.json(
+      {
+        error: 'channel_not_available',
+        channel,
+        message: `${channel.toUpperCase()} is not available yet — this contact would not be reached. Use Email.`,
+      },
+      400,
+    );
   }
   await saveContact(c.env, c.get('userId'), {
     name: body.name.trim(),
