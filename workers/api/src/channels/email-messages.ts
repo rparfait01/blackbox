@@ -105,6 +105,54 @@ export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
 }
 
 export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
+  // A re-issued link (the prior link expired on an unresolved event) is its own
+  // message: it carries a FRESH working link plus full provenance, so the
+  // recipient knows exactly what they must resolve. The path never dead-ends.
+  if (p.reason === 'link_reissued') {
+    const pv = p.provenance;
+    const rows: Array<[string, string]> = [
+      ['Who', p.userDisplayName],
+      ['Status', 'ALERT STILL ACTIVE — NOBODY HAS SECURED IT YET'],
+    ];
+    if (pv?.triggeredByName || pv?.triggeredByEmail) {
+      rows.push(['Triggered by', [pv.triggeredByName, pv.triggeredByEmail].filter(Boolean).join(' · ')]);
+    }
+    if (pv?.triggeredAt) {
+      rows.push(['Triggered at', pv.triggeredAt]);
+    }
+    if (pv?.linkExpiredAt) {
+      rows.push(['Old link expired', pv.linkExpiredAt]);
+    }
+    if (pv?.notifiedAt) {
+      rows.push(['This notice sent', pv.notifiedAt]);
+    }
+    if (pv?.closerName || pv?.closerEmail) {
+      rows.push(['Must confirm closure', [pv.closerName, pv.closerEmail].filter(Boolean).join(' · ')]);
+    }
+    return {
+      subject: `🚨 BLACK BOX — ${p.userDisplayName} STILL NEEDS HELP — fresh link inside 🚨`,
+      html: shell({
+        headerColor: RED,
+        headerText: '🚨 STILL ACTIVE — NEW LINK',
+        rows,
+        ctaUrl: p.dashboardUrl,
+        ctaText: 'OPEN LIVE DASHBOARD (NEW LINK)',
+        note: 'The earlier link expired and no one has secured this alert. This link is live now. The alert has NOT been cancelled — open it and confirm she is safe.',
+      }),
+      text:
+        `STILL ACTIVE — ${p.userDisplayName}'s alert has not been secured. The earlier link expired; here is a fresh, working one.\n` +
+        (pv?.triggeredByName || pv?.triggeredByEmail
+          ? `Triggered by: ${[pv.triggeredByName, pv.triggeredByEmail].filter(Boolean).join(' · ')}\n`
+          : '') +
+        (pv?.triggeredAt ? `Triggered at: ${pv.triggeredAt}\n` : '') +
+        (pv?.linkExpiredAt ? `Old link expired: ${pv.linkExpiredAt}\n` : '') +
+        (pv?.notifiedAt ? `This notice sent: ${pv.notifiedAt}\n` : '') +
+        (pv?.closerName || pv?.closerEmail
+          ? `Must confirm closure: ${[pv.closerName, pv.closerEmail].filter(Boolean).join(' · ')}\n`
+          : '') +
+        `Open the live dashboard (new link): ${p.dashboardUrl}`,
+    };
+  }
   const why =
     p.reason === 'client_lost'
       ? 'Her phone closed the app or lost connection while the alert was still active.'

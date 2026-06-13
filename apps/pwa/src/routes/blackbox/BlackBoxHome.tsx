@@ -24,6 +24,8 @@ interface SlotView {
 }
 interface ContactsResponse {
   slots: SlotView[];
+  /** True only when a recipient could actually be reached on activation. */
+  armable: boolean;
 }
 const CHANNEL_LABEL: Record<string, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
 
@@ -31,6 +33,10 @@ export function BlackBoxHome(): JSX.Element {
   // Read the SAME slot model Settings + the cascade use (single source of truth),
   // so a contact added at signup shows here with no re-add.
   const [support, setSupport] = useState<{ name: string; channel: string | null; role: string } | null>(null);
+  // Armable: an alert must be able to reach someone. Until /v1/me/contacts loads
+  // we assume armable (true) so a transient fetch failure never blocks a real
+  // activation; the server still enforces the guarantee at POST /v1/events.
+  const [armable, setArmable] = useState(true);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
   // Elapsed alert time (overt: the instrument shows the live recording clock).
@@ -55,6 +61,7 @@ export function BlackBoxHome(): JSX.Element {
         setSupport(
           filled ? { name: filled.contactName ?? 'Contact', channel: filled.channel, role: filled.slot } : null,
         );
+        setArmable(res.data.armable);
       }
     });
   }, []);
@@ -64,6 +71,12 @@ export function BlackBoxHome(): JSX.Element {
   }
 
   const activate = (): void => {
+    // Never arm into the notify-no-one deadlock: with no reachable recipient the
+    // activate disc is inert and the UI directs the user to add a contact. (The
+    // server also rejects POST /v1/events with no deliverable recipient.)
+    if (!armable) {
+      return;
+    }
     // Covert by principle even here: produces no visible status change.
     void triggerActivation('direct-tap');
   };
@@ -133,16 +146,21 @@ export function BlackBoxHome(): JSX.Element {
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-status-active" />
               Alert active · Recording
             </>
-          ) : (
+          ) : armable ? (
             'Armed · Listening'
+          ) : (
+            'Not armed · No contact to reach'
           )}
         </div>
 
         <button
           type="button"
           onClick={activate}
-          aria-label="Activate"
-          className="relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none]"
+          disabled={!armable && !alertActive}
+          aria-label={armable || alertActive ? 'Activate' : 'Add a contact to arm'}
+          className={`relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none] ${
+            !armable && !alertActive ? 'opacity-40' : ''
+          }`}
         >
           <span
             className={`absolute inset-0 rounded-full border ${
@@ -168,10 +186,20 @@ export function BlackBoxHome(): JSX.Element {
               Contacts are being notified
             </div>
           </div>
-        ) : (
+        ) : armable ? (
           <div className="mt-10 font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
             Tap to activate
           </div>
+        ) : (
+          <Link
+            to="/settings"
+            className="mt-10 text-center font-mono text-sm font-medium uppercase tracking-[0.18em] text-status-armed"
+          >
+            Add a contact to arm
+            <span className="mt-1 block font-sans text-[11px] normal-case tracking-normal text-bb-text-secondary">
+              An alert must be able to reach someone. Add a contact or guardian in settings.
+            </span>
+          </Link>
         )}
 
         {/* Stand down: enter the lock code to end an active alert. Duress code

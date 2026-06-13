@@ -11,6 +11,7 @@ import { getInviteForUser, normalizeDestination, type PreferredChannel } from '.
 import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
 import {
   guardianLoad,
+  hasDeliverableRecipient,
   listSlots,
   removeSlot,
   upsertSlot,
@@ -127,6 +128,11 @@ userRoutes.get('/contacts', async (c) => {
       guardianEnabled: (user?.guardianEnabled ?? 1) === 1,
       // Surface the guardian's load so the user can judge reliability (Brief 9 caps).
       guardianAlsoFailsafeFor: othersLoad,
+      // Armability: true only when at least one recipient could ACTUALLY be
+      // reached on activation. The client gates the activate affordance on this so
+      // the user can never arm into the notify-no-one deadlock; the server also
+      // enforces it at POST /v1/events.
+      armable: await hasDeliverableRecipient(c.env, userId),
     },
     200,
   );

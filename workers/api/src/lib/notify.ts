@@ -12,14 +12,22 @@
  * the PWA, and never changes anything the PWA observes.
  */
 
-import { formatLocalClock } from '@blackbox/shared';
+import { formatLocal, formatLocalClock, isLinkReissueDue } from '@blackbox/shared';
 
 import { dispatch } from '../channels/router';
 import type { Env } from '../types';
 import { audit } from './audit';
 import { getContactForEvent, listReachableContacts } from './contacts';
 import { regionToEmergency } from './contact-state';
-import { mintMagicToken } from './magic-link';
+import { mintMagicToken, MAGIC_LINK_TTL_MS } from './magic-link';
+
+/** Mark when the current coordinator magic-link was (re)minted (UTC ms), so the
+ *  reissue cron can detect an expired link on an unresolved event. */
+async function markLinkIssued(env: Env, eventId: string): Promise<void> {
+  await env.DB.prepare('UPDATE events SET lastLinkIssuedAt = ? WHERE id = ?')
+    .bind(Date.now(), eventId)
+    .run();
+}
 
 async function latestSummary(env: Env, eventId: string): Promise<string | null> {
   const row = await env.DB.prepare(
@@ -104,6 +112,9 @@ async function activationCtx(
       .first<{ regionId: string | null }>();
     emergency = regionToEmergency(user?.regionId ?? null);
   }
+  // A fresh coordinator link was just minted — record it so the reissue cron can
+  // tell when it later expires on an unresolved event.
+  await markLinkIssued(env, eventId);
   return {
     dashboardUrl: `${workerOrigin}/c/${eventId}?t=${token}`,
     audioUrl: `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`,
@@ -342,6 +353,7 @@ export async function notifyEscalation(
     return;
   }
   const token = await mintMagicToken(env.MAGIC_LINK_SECRET, eventId);
+  await markLinkIssued(env, eventId);
   const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
   const lastSeen = event.lastHeartbeatAt
     ? formatLocalClock(event.lastHeartbeatAt, event.tzOffsetMinutes)
@@ -363,4 +375,141 @@ export async function notifyEscalation(
     },
     actorHash,
   );
+}
+
+/** The account owner's name + email — "triggered by" in a reissue notice. */
+async function triggererIdentity(
+  env: Env,
+  userId: string | null,
+): Promise<{ name: string | null; email: string | null }> {
+  if (!userId) {
+    return { name: null, email: null };
+  }
+  const u = await env.DB.prepare('SELECT name, email FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
+  return { name: u?.name ?? null, email: u?.email ?? null };
+}
+
+/**
+ * The "contact required to confirm closure" — the coordinator of last resort.
+ * Prefers the Guardian (when enabled); falls back to the lowest-priority Contact
+ * if there is no usable guardian. Name + reach destination (usually an email).
+ */
+async function closerIdentity(
+  env: Env,
+  userId: string | null,
+): Promise<{ name: string | null; email: string | null }> {
+  if (!userId) {
+    return { name: null, email: null };
+  }
+  const user = await env.DB.prepare('SELECT guardianEnabled FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ guardianEnabled: number }>();
+  const guardianEnabled = (user?.guardianEnabled ?? 1) === 1;
+  const roleFilter = guardianEnabled ? "('contact','guardian')" : "('contact')";
+  const row = await env.DB.prepare(
+    `SELECT c.contactName AS name, ep.channelIdentifier AS dest
+       FROM contacts c LEFT JOIN contact_endpoints ep ON ep.contactId = c.id
+      WHERE c.userId = ? AND c.role IN ${roleFilter}
+      ORDER BY CASE c.role WHEN 'guardian' THEN 1 ELSE 0 END DESC, c.priority DESC
+      LIMIT 1`,
+  )
+    .bind(userId)
+    .first<{ name: string | null; dest: string | null }>();
+  return { name: row?.name ?? null, email: row?.dest ?? null };
+}
+
+/**
+ * Reissue expired coordinator links (the orphaned-event failsafe). For every
+ * active, UNRESOLVED event whose coordinator link has been alive longer than the
+ * magic-link TTL with no coordinator claimed, mint a FRESH live link and
+ * re-notify ALL current recipients with full provenance. The re-notification
+ * carries a working link — never a bare FYI — so the path to closure regenerates
+ * and never dead-ends. New-party escalation stays bounded (cascade → guardian →
+ * emergency); this keeps the last-resort coordinator's link alive indefinitely.
+ *
+ * Runs from the 1-min cron. Each event is claimed atomically (CAS on
+ * lastLinkIssuedAt) so concurrent crons never double-reissue.
+ */
+export async function reissueExpiredLinks(env: Env, workerOrigin: string): Promise<void> {
+  if (!env.MAGIC_LINK_SECRET) {
+    return;
+  }
+  const now = Date.now();
+  const { results } = await env.DB.prepare(
+    "SELECT id, userId, userHash, createdAt, notifiedAt, coordinatorClaimedAt, lastLinkIssuedAt, tzOffsetMinutes FROM events WHERE status = 'active' AND coordinatorClaimedAt IS NULL AND notifiedAt IS NOT NULL AND lastLinkIssuedAt IS NOT NULL",
+  ).all<{
+    id: string;
+    userId: string | null;
+    userHash: string | null;
+    createdAt: number;
+    notifiedAt: number | null;
+    coordinatorClaimedAt: number | null;
+    lastLinkIssuedAt: number | null;
+    tzOffsetMinutes: number | null;
+  }>();
+
+  for (const ev of results ?? []) {
+    const due = isLinkReissueDue({
+      now,
+      status: 'active',
+      coordinatorClaimedAt: ev.coordinatorClaimedAt,
+      notifiedAt: ev.notifiedAt,
+      lastLinkIssuedAt: ev.lastLinkIssuedAt,
+      ttlMs: MAGIC_LINK_TTL_MS,
+    });
+    if (!due) {
+      continue;
+    }
+    // Claim atomically: only the writer that advances lastLinkIssuedAt from the
+    // exact value it read proceeds, so two crons can't both reissue.
+    const claim = await env.DB.prepare(
+      "UPDATE events SET lastLinkIssuedAt = ?, linkReissueCount = linkReissueCount + 1 WHERE id = ? AND status = 'active' AND coordinatorClaimedAt IS NULL AND lastLinkIssuedAt = ?",
+    )
+      .bind(now, ev.id, ev.lastLinkIssuedAt)
+      .run();
+    if (claim.meta.changes !== 1) {
+      continue;
+    }
+
+    const contacts = await listReachableContacts(env, { userId: ev.userId, userHash: ev.userHash });
+    if (contacts.length === 0) {
+      await audit(env, ev.id, 'link_reissue_skipped', ev.userHash, { reason: 'no_contact' });
+      continue;
+    }
+    const token = await mintMagicToken(env.MAGIC_LINK_SECRET, ev.id, now);
+    const dashboardUrl = `${workerOrigin}/c/${ev.id}?t=${token}`;
+    const triggerer = await triggererIdentity(env, ev.userId);
+    const closer = await closerIdentity(env, ev.userId);
+    const provenance = {
+      triggeredByName: triggerer.name,
+      triggeredByEmail: triggerer.email,
+      triggeredAt: formatLocal(ev.createdAt, ev.tzOffsetMinutes),
+      // The previous link expired one TTL after it was last minted.
+      linkExpiredAt: formatLocal((ev.lastLinkIssuedAt ?? now) + MAGIC_LINK_TTL_MS, ev.tzOffsetMinutes),
+      notifiedAt: formatLocal(now, ev.tzOffsetMinutes),
+      closerName: closer.name,
+      closerEmail: closer.email,
+    };
+    await audit(env, ev.id, 'link_reissued', ev.userHash, { recipients: contacts.length });
+    for (const contact of contacts) {
+      await dispatch(
+        env,
+        contact.id,
+        {
+          kind: 'escalation',
+          eventId: ev.id,
+          payload: {
+            userDisplayName: contact.displayName,
+            dashboardUrl,
+            reason: 'link_reissued',
+            location: await latestLocation(env, ev.id),
+            provenance,
+          },
+        },
+        ev.userHash,
+      );
+    }
+  }
 }

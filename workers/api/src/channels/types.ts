@@ -68,11 +68,37 @@ export interface StandDownConfirmationPayload {
 export interface EscalationAlertPayload {
   userDisplayName: string;
   dashboardUrl: string;
-  /** Why we escalated: 'device_dark' (missed heartbeat) | 'client_lost' (pagehide). */
-  reason: 'device_dark' | 'client_lost';
+  /**
+   * Why we escalated:
+   *  - 'device_dark'   — missed heartbeat (phone off/taken/dead)
+   *  - 'client_lost'   — pagehide beacon (app closed/lost connection)
+   *  - 'link_reissued' — the prior coordinator link EXPIRED on an unresolved
+   *                      event, so a FRESH live link was minted and re-sent. The
+   *                      path to closure regenerates; it never dead-ends.
+   */
+  reason: 'device_dark' | 'client_lost' | 'link_reissued';
   /** Local time of the last contact with the device, e.g. "18:42". */
   lastSeen?: string | null;
   location?: { lat: number; lon: number } | null;
+  /**
+   * Provenance carried by a 'link_reissued' re-notification so the recipient sees
+   * exactly what they are being asked to resolve (every field render-only, local
+   * time). Absent for device_dark / client_lost.
+   */
+  provenance?: {
+    /** Who triggered: account owner name + email. */
+    triggeredByName: string | null;
+    triggeredByEmail: string | null;
+    /** When the alert was triggered (date + local time). */
+    triggeredAt: string | null;
+    /** When the previous link expired (date + local time). */
+    linkExpiredAt: string | null;
+    /** When THIS re-notification was sent (date + local time). */
+    notifiedAt: string | null;
+    /** Contact required to confirm closure (coordinator of last resort): name + email. */
+    closerName: string | null;
+    closerEmail: string | null;
+  };
 }
 
 /**

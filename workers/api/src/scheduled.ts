@@ -14,7 +14,7 @@
  */
 
 import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types';
-import { advanceCascades, notifyEscalation } from './lib/notify';
+import { advanceCascades, notifyEscalation, reissueExpiredLinks } from './lib/notify';
 import { runIntegrityScan } from './lib/integrity';
 import type { Env } from './types';
 
@@ -55,6 +55,13 @@ export const scheduled = async (
         await advanceCascades(env, workerOrigin(env));
       } catch (error) {
         console.log(JSON.stringify({ level: 'error', job: 'cascade', detail: String(error) }));
+      }
+      try {
+        // Regenerate expired coordinator links on unresolved events so the path
+        // to closure never dead-ends (orphaned-event failsafe).
+        await reissueExpiredLinks(env, workerOrigin(env));
+      } catch (error) {
+        console.log(JSON.stringify({ level: 'error', job: 'reissue', detail: String(error) }));
       }
       try {
         await runIntegrityScan(env, workerOrigin(env));

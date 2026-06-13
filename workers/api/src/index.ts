@@ -18,6 +18,7 @@ import { bumpTrust, listTrust } from './lib/trust';
 import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
 import { getContactForEvent, listContacts, listFollows, upsertContact } from './lib/contacts';
+import { hasDeliverableRecipient } from './lib/roles';
 import { notifyActivation, notifyClosureRequest, notifyEscalation } from './lib/notify';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
@@ -137,6 +138,34 @@ interface OpenEventBody {
   location?: { lat?: number; lon?: number; accuracy?: number } | null;
 }
 
+/**
+ * Resume the account's existing active event, if any — the "one active event per
+ * user" guarantee. Returns the SAME 201 shape as a fresh create (eventId +
+ * hmacSecret + createdAt) plus `resumed: true`, so the client transparently
+ * rejoins the live session instead of stacking a second event. Returns null when
+ * the account has no active event (the caller then creates one).
+ */
+async function resumeActiveEvent(
+  c: AppContext,
+  userId: string,
+  userHash: string,
+  source: string | undefined,
+): Promise<Response | null> {
+  const existing = await c.env.DB.prepare(
+    "SELECT id, hmacSecret, createdAt FROM events WHERE userId = ? AND status = 'active' ORDER BY createdAt DESC LIMIT 1",
+  )
+    .bind(userId)
+    .first<{ id: string; hmacSecret: string; createdAt: number }>();
+  if (!existing) {
+    return null;
+  }
+  await audit(c.env, existing.id, 'event.resume', userHash || userId, { source });
+  return c.json(
+    { eventId: existing.id, hmacSecret: existing.hmacSecret, createdAt: existing.createdAt, resumed: true },
+    201,
+  );
+}
+
 app.post('/v1/events', async (c) => {
   const body = await c.req.json<OpenEventBody>().catch(() => ({}) as OpenEventBody);
   const eventId = crypto.randomUUID();
@@ -151,24 +180,66 @@ app.post('/v1/events', async (c) => {
   const session = secret && token ? await verifySession(secret, token) : null;
   const userId = session?.userId ?? null;
 
+  // ONE ACTIVE EVENT PER USER (data-layer guarantee + the partial unique index).
+  // Triggering while one is active RESUMES the existing event — it never stacks a
+  // second. The client keeps the eventId/hmacSecret it gets back, so a re-trigger
+  // simply rejoins the live session.
+  if (userId) {
+    const resumed = await resumeActiveEvent(c, userId, userHash, body.source);
+    if (resumed) {
+      return resumed;
+    }
+    // No active event to resume: refuse to ARM with no deliverable recipient. An
+    // alert that would notify no one is the exact deadlock (orphaned, unclosable)
+    // — so it is prevented at the source. The client also gates this; this is the
+    // authoritative server guarantee. (Anonymous userHash-only triggers have no
+    // account to gate on and are allowed.)
+    if (!(await hasDeliverableRecipient(c.env, userId))) {
+      await audit(c.env, null, 'event.create_blocked', userHash || userId, {
+        reason: 'no_deliverable_recipient',
+      });
+      return c.json(
+        {
+          error: 'no_deliverable_recipient',
+          message:
+            'Add a contact or guardian that can actually be reached before arming — an alert must reach someone.',
+        },
+        409,
+      );
+    }
+  }
+
   // lastHeartbeatAt seeds to createdAt so a brand-new event is never instantly
   // flagged "dark" before the first heartbeat lands.
-  await c.env.DB.prepare(
-    'INSERT INTO events (id, createdAt, status, userHash, userId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  )
-    .bind(
-      eventId,
-      createdAt,
-      'active',
-      userHash,
-      userId,
-      hmacSecret,
-      body.source ?? null,
-      body.locale ?? null,
-      tzOffsetMinutes,
-      createdAt,
+  try {
+    await c.env.DB.prepare(
+      'INSERT INTO events (id, createdAt, status, userHash, userId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run();
+      .bind(
+        eventId,
+        createdAt,
+        'active',
+        userHash,
+        userId,
+        hmacSecret,
+        body.source ?? null,
+        body.locale ?? null,
+        tzOffsetMinutes,
+        createdAt,
+      )
+      .run();
+  } catch (error) {
+    // The partial unique index (one active event per user) is the hard backstop
+    // against a race that slipped past the resume check above: if a concurrent
+    // request already opened the active event, resume that one instead of failing.
+    if (userId) {
+      const resumed = await resumeActiveEvent(c, userId, userHash, body.source);
+      if (resumed) {
+        return resumed;
+      }
+    }
+    throw error;
+  }
   // Seed the first location (sent in the open body) so the very first alert can
   // already carry a position.
   if (body.location && typeof body.location.lat === 'number' && typeof body.location.lon === 'number') {
@@ -303,6 +374,46 @@ app.post('/v1/admin/investigations/:id/resolve', async (c) => {
     );
   }
   return c.json({ ok: true }, 200);
+});
+
+// --- Operator failsafe (Bearer ADMIN_TOKEN): list + force-close orphaned active
+// events. A defined, audited admin action so a truly orphaned event (no reachable
+// coordinator, all links expired) can always be closed without trapping the user.
+// This is an OPERATOR action, not a user self-close — the user still cannot close
+// their own event (that protects a coerced user). See docs/OPERATOR_RUNBOOK.md.
+app.get('/v1/admin/events/active', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT e.id, e.userId, e.userHash, e.createdAt, e.notifiedAt, e.escalatedAt,
+            e.coordinatorClaimedAt, e.lastLinkIssuedAt, e.linkReissueCount, u.email, u.name
+       FROM events e LEFT JOIN users u ON u.id = e.userId
+      WHERE e.status = 'active' ORDER BY e.createdAt DESC`,
+  ).all();
+  return c.json({ active: results ?? [] }, 200);
+});
+
+app.post('/v1/admin/events/:id/force-close', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const reason =
+    body.reason?.trim() ||
+    'operator force-close — orphaned event, no reachable coordinator';
+  const event = await c.env.DB.prepare('SELECT status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ status: string }>();
+  if (!event) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  if (event.status === 'closed') {
+    return c.json({ ok: true, alreadyClosed: true }, 200);
+  }
+  const now = Date.now();
+  await c.env.DB.prepare(
+    'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ?, reasonSecured = ? WHERE id = ? AND status = ?',
+  )
+    .bind('closed', now, 'operator_force_close', now, 'operator', reason, eventId, 'active')
+    .run();
+  await audit(c.env, eventId, 'operator_force_close', null, { reason });
+  return c.json({ ok: true, closed: true, reason }, 200);
 });
 
 // --- LINE webhook (no HMAC auth; verifies its own x-line-signature) ---

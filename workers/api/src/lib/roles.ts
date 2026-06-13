@@ -9,6 +9,9 @@
  * access (enforced in the dashboard layer). This module is just the slot CRUD.
  */
 
+import { hasReachableRecipient } from '@blackbox/shared';
+
+import { isChannelDeliverable } from '../channels/router';
 import type { Env } from '../types';
 
 export type SlotRole = 'contact' | 'guardian' | 'emergency';
@@ -175,6 +178,36 @@ export async function removeSlot(env: Env, userId: string, slot: SlotKey): Promi
   if (statements.length > 0) {
     await env.DB.batch(statements);
   }
+}
+
+/**
+ * Whether the account has at least one recipient that would ACTUALLY be reached
+ * on activation — any deliverable Contact, or the Guardian when enabled and on a
+ * deliverable channel. Deliverability is judged by `isChannelDeliverable` (the
+ * single source of truth for "is this channel real in this deployment"). This is
+ * the authoritative armability check: an alert that would notify no one is the
+ * exact deadlock, so arming/activation is gated on this being true. The
+ * 'emergency' fallback slot is intentionally excluded — it fires only after the
+ * chain completes unclaimed and can never be the sole path to a coordinator.
+ */
+export async function hasDeliverableRecipient(env: Env, userId: string): Promise<boolean> {
+  if (!userId) {
+    return false;
+  }
+  const user = await env.DB.prepare('SELECT guardianEnabled FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ guardianEnabled: number }>();
+  const guardianEnabled = (user?.guardianEnabled ?? 1) === 1;
+  const { results } = await env.DB.prepare(
+    "SELECT c.role AS role, ep.channel AS channel FROM contacts c JOIN contact_endpoints ep ON ep.contactId = c.id WHERE c.userId = ? AND c.role IN ('contact','guardian')",
+  )
+    .bind(userId)
+    .all<{ role: string; channel: string }>();
+  const recipients = (results ?? []).map((r) => ({
+    role: r.role,
+    deliverable: isChannelDeliverable(env, r.channel),
+  }));
+  return hasReachableRecipient(recipients, guardianEnabled);
 }
 
 /** How many OTHER users this guardian (by destination) is also a failsafe for. */

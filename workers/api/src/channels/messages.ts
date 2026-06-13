@@ -126,21 +126,47 @@ export function activationAlert(_eventId: string, p: ActivationAlertPayload): Bu
   };
 }
 
-/** "Device went dark" escalation — red, explicit, NO resolution affordance. */
+/**
+ * Escalation — red, explicit, NO resolution affordance. Two shapes:
+ *  - device_dark / client_lost: the phone went dark while still active.
+ *  - link_reissued: the prior link expired on an unresolved event, so a FRESH
+ *    live link + provenance is re-sent (the path regenerates, never dead-ends).
+ */
 export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
-  const why =
-    p.reason === 'client_lost'
-      ? 'Her phone closed the app or lost connection while the alert was still active.'
-      : 'Her phone stopped checking in while the alert was still active.';
+  const reissued = p.reason === 'link_reissued';
+  const headerText = reissued ? '🚨 STILL ACTIVE — NEW LINK' : '🚨 DEVICE WENT DARK';
+  const lead = reissued
+    ? `${p.userDisplayName}'s alert is STILL ACTIVE and unsecured.`
+    : `${p.userDisplayName}'s phone went dark. THE ALERT IS STILL ACTIVE.`;
+  const sub = reissued
+    ? 'The earlier link expired and no one has secured it. This link is live now.'
+    : `${
+        p.reason === 'client_lost'
+          ? 'Her phone closed the app or lost connection while the alert was still active.'
+          : 'Her phone stopped checking in while the alert was still active.'
+      } This is more urgent, not resolved.`;
   const body: LineMessage[] = [
-    {
-      type: 'text',
-      text: `${p.userDisplayName}'s phone went dark. THE ALERT IS STILL ACTIVE.`,
-      weight: 'bold',
-      wrap: true,
-    },
-    { type: 'text', text: `${why} This is more urgent, not resolved.`, wrap: true, color: RED, size: 'sm' },
+    { type: 'text', text: lead, weight: 'bold', wrap: true },
+    { type: 'text', text: sub, wrap: true, color: RED, size: 'sm' },
   ];
+  if (reissued && p.provenance) {
+    const pv = p.provenance;
+    if (pv.triggeredByName || pv.triggeredByEmail) {
+      body.push(infoRow('TRIGGERED BY', [pv.triggeredByName, pv.triggeredByEmail].filter(Boolean).join(' · ')));
+    }
+    if (pv.triggeredAt) {
+      body.push(infoRow('TRIGGERED AT', pv.triggeredAt));
+    }
+    if (pv.linkExpiredAt) {
+      body.push(infoRow('LINK EXPIRED', pv.linkExpiredAt));
+    }
+    if (pv.notifiedAt) {
+      body.push(infoRow('NOTICE SENT', pv.notifiedAt));
+    }
+    if (pv.closerName || pv.closerEmail) {
+      body.push(infoRow('MUST CONFIRM', [pv.closerName, pv.closerEmail].filter(Boolean).join(' · ')));
+    }
+  }
   if (p.lastSeen) {
     body.push(infoRow('LAST SEEN', p.lastSeen));
   }
@@ -152,7 +178,9 @@ export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
     messages: [
       {
         type: 'flex',
-        altText: `🚨 ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE`,
+        altText: reissued
+          ? `🚨 ${p.userDisplayName} STILL NEEDS HELP — fresh link`
+          : `🚨 ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE`,
         contents: {
           type: 'bubble',
           header: {
@@ -160,9 +188,7 @@ export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
             layout: 'vertical',
             backgroundColor: RED,
             paddingAll: '14px',
-            contents: [
-              { type: 'text', text: '🚨 DEVICE WENT DARK', color: '#FFFFFF', weight: 'bold', size: 'lg' },
-            ],
+            contents: [{ type: 'text', text: headerText, color: '#FFFFFF', weight: 'bold', size: 'lg' }],
           },
           body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: body },
           footer: {
@@ -174,7 +200,11 @@ export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
                 style: 'primary',
                 color: RED,
                 height: 'sm',
-                action: { type: 'uri', label: 'OPEN LIVE DASHBOARD', uri: p.dashboardUrl },
+                action: {
+                  type: 'uri',
+                  label: reissued ? 'OPEN LIVE DASHBOARD (NEW LINK)' : 'OPEN LIVE DASHBOARD',
+                  uri: p.dashboardUrl,
+                },
               },
             ],
           },
@@ -182,8 +212,7 @@ export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
       },
     ],
     fallback:
-      `🚨 ${p.userDisplayName}'s phone went dark — THE ALERT IS STILL ACTIVE. ${why} ` +
-      `This is more urgent, not resolved. Dashboard: ${p.dashboardUrl}`,
+      `🚨 ${lead} ${sub} ` + `Dashboard${reissued ? ' (new link)' : ''}: ${p.dashboardUrl}`,
   };
 }
 
