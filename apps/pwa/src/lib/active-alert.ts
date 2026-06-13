@@ -42,3 +42,32 @@ export function useActiveAlert(): boolean {
   }, []);
   return active;
 }
+
+/**
+ * The active alert's start time (epoch ms), or null when dormant. Same polling
+ * lifecycle as useActiveAlert, sourced from the same active session — so the
+ * elapsed-alert timer survives a refresh (it counts from the real activation
+ * time, not from page load) and reverts to null the moment the alert is secured.
+ */
+export function useActiveAlertStart(): number | null {
+  const [start, setStart] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async (): Promise<void> => {
+      const session = await getActiveSession();
+      if (!cancelled) {
+        setStart(isAlertActive(session) ? (session?.startTime ?? null) : null);
+      }
+    };
+    void check();
+    const id = window.setInterval(() => void check(), 3000);
+    const onVisible = (): void => void check();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+  return start;
+}

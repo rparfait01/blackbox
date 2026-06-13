@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Gear } from '@phosphor-icons/react';
 
 import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
 import { triggerActivation } from '@/lib/activation';
-import { useActiveAlert } from '@/lib/active-alert';
+import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { BreathingCircles } from './BreathingCircles';
 import { HoldProgressRing } from './HoldProgressRing';
 import { useActivationHold } from './use-activation-hold';
@@ -28,19 +28,22 @@ import { PinEntryOverlay } from './PinEntryOverlay';
  * closure. The hold does not reset the timer; only the tap does.
  */
 export function MeditationHome(): JSX.Element {
-  const sessionStart = useRef<number>(performance.now());
-  const [sessionMs, setSessionMs] = useState(0);
   const [pinOpen, setPinOpen] = useState(false);
   // Settings is locked during an active alert (Fix Brief 8 P0). Covert: the gear
   // simply does nothing (no message that would reveal the lockdown to an aggressor).
   const alertActive = useActiveAlert();
+  // The big readout is an ordinary clock when dormant and an elapsed timer
+  // (counting from activation) when an alert is live — the covert facade never
+  // changes shape, only what the number means. Reverts to the clock on close.
+  const alertStart = useActiveAlertStart();
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setSessionMs(performance.now() - sessionStart.current);
-    }, 1000);
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  const clockText = new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
   const { progress, handlers } = useActivationHold(ACTIVATION_HOLD_MS, () => {
     // Covert trigger fired. Start the recording session. No visible output by
@@ -84,10 +87,10 @@ export function MeditationHome(): JSX.Element {
 
       <div className="mt-12 text-center">
         <div className="font-serif text-[32px] font-light tracking-[0.05em] text-med-text/70">
-          {formatElapsed(sessionMs)}
+          {alertStart != null ? formatElapsed(now - alertStart) : clockText}
         </div>
-        <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.15em] text-med-text/40">
-          Session in progress
+        <div className="mt-2 h-4 font-mono text-[11px] uppercase tracking-[0.15em] text-med-text/40">
+          {alertStart != null ? 'Session in progress' : ''}
         </div>
       </div>
 

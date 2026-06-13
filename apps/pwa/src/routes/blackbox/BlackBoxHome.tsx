@@ -5,7 +5,8 @@ import { Gear } from '@phosphor-icons/react';
 import { api } from '@/lib/api';
 import { isSetupComplete } from '@/lib/auth';
 import { triggerActivation } from '@/lib/activation';
-import { useActiveAlert } from '@/lib/active-alert';
+import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
+import { formatElapsed } from '@/lib/time';
 import { PinEntryOverlay } from '@/routes/meditation/PinEntryOverlay';
 
 /**
@@ -32,8 +33,16 @@ export function BlackBoxHome(): JSX.Element {
   const [support, setSupport] = useState<{ name: string; channel: string | null; role: string } | null>(null);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
+  // Elapsed alert time (overt: the instrument shows the live recording clock).
+  const alertStart = useActiveAlertStart();
+  const [now, setNow] = useState(() => Date.now());
   const [checkin, setCheckin] = useState<'idle' | 'sending' | 'done'>('idle');
   const [checkinLoc, setCheckinLoc] = useState(false);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     void api<ContactsResponse>('/v1/me/contacts').then((res) => {
@@ -91,7 +100,11 @@ export function BlackBoxHome(): JSX.Element {
   }
 
   return (
-    <main className="flex h-full w-full flex-col bg-bb-bg p-6 text-bb-text">
+    <main
+      className={`flex h-full w-full flex-col p-6 text-bb-text transition-colors duration-500 ${
+        alertActive ? 'bg-[#1a0606]' : 'bg-bb-bg'
+      }`}
+    >
       <div className="flex items-center justify-between">
         <span className="font-display text-lg font-bold tracking-[0.12em]">BLACK BOX</span>
         {alertActive ? (
@@ -110,8 +123,19 @@ export function BlackBoxHome(): JSX.Element {
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center">
-        <div className="mb-8 font-mono text-xs font-medium uppercase tracking-[0.2em] text-status-armed">
-          ARMED · LISTENING
+        <div
+          className={`mb-8 flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.2em] ${
+            alertActive ? 'text-status-active' : 'text-status-armed'
+          }`}
+        >
+          {alertActive ? (
+            <>
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-status-active" />
+              Alert active · Recording
+            </>
+          ) : (
+            'Armed · Listening'
+          )}
         </div>
 
         <button
@@ -120,14 +144,35 @@ export function BlackBoxHome(): JSX.Element {
           aria-label="Activate"
           className="relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
-          <span className="absolute inset-0 rounded-full border border-status-armed/40" />
+          <span
+            className={`absolute inset-0 rounded-full border ${
+              alertActive ? 'animate-pulse border-status-active/70' : 'border-status-armed/40'
+            }`}
+          />
           <span className="absolute inset-6 rounded-full border border-bb-border-defined" />
-          <span className="h-16 w-16 rounded-full bg-bb-elevated shadow-[0_0_40px_rgba(232,154,0,0.15)]" />
+          <span
+            className={`h-16 w-16 rounded-full ${
+              alertActive
+                ? 'bg-status-active shadow-[0_0_50px_rgba(255,59,48,0.45)]'
+                : 'bg-bb-elevated shadow-[0_0_40px_rgba(232,154,0,0.15)]'
+            }`}
+          />
         </button>
 
-        <div className="mt-10 font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
-          Tap to activate
-        </div>
+        {alertActive ? (
+          <div className="mt-10 text-center">
+            <div className="font-mono text-3xl font-semibold tracking-[0.1em] text-status-active">
+              {formatElapsed(alertStart != null ? now - alertStart : 0)}
+            </div>
+            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-bb-text-secondary">
+              Contacts are being notified
+            </div>
+          </div>
+        ) : (
+          <div className="mt-10 font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
+            Tap to activate
+          </div>
+        )}
 
         {/* Stand down: enter the lock code to end an active alert. Duress code
             escalates instead of cancelling (server-authoritative). */}
