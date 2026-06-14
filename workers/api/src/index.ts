@@ -19,7 +19,7 @@ import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
 import { getContactForEvent, listContacts, listFollows, upsertContact } from './lib/contacts';
 import { hasDeliverableRecipient } from './lib/roles';
-import { notifyActivation, notifyClosureRequest, notifyEscalation } from './lib/notify';
+import { advanceEventCascade, notifyActivation, notifyClosureRequest, notifyEscalation } from './lib/notify';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -991,6 +991,28 @@ app.post('/v1/events/:id/heartbeat', async (c) => {
   await c.env.DB.prepare('UPDATE events SET lastHeartbeatAt = ? WHERE id = ? AND status = ?')
     .bind(Date.now(), eventId, 'active')
     .run();
+  // Drive the contact cascade on the device's own ~10s heartbeat cadence (Brief
+  // 11 timing). The in-request activation stagger can be cut short when waitUntil
+  // is reclaimed (~40s) and the 1-min cron is too coarse for the 10s windows, so
+  // each heartbeat advances any due steps — precise timing without new infra. The
+  // atomic per-step claim makes this safe alongside the stagger + cron. Best
+  // effort, off the response path; never blocks or fails the heartbeat.
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const ev = await c.env.DB.prepare(
+          "SELECT id, userId, userHash, createdAt, cascadeStep FROM events WHERE id = ? AND status = 'active' AND coordinatorClaimedAt IS NULL",
+        )
+          .bind(eventId)
+          .first<{ id: string; userId: string | null; userHash: string | null; createdAt: number; cascadeStep: number }>();
+        if (ev) {
+          await advanceEventCascade(c.env, ev, new URL(c.req.url).origin);
+        }
+      } catch {
+        // swallow — the 1-min cron backstops any tick that errors here
+      }
+    })(),
+  );
   return c.json({ ok: true }, 200);
 });
 
@@ -1281,6 +1303,10 @@ app.post('/v1/events/:id/close', async (c) => {
   await audit(c.env, c.req.param('id'), 'event.close_blocked', null, null);
   return c.json({ ok: false, reason: 'requires_user_lock_code' }, 403);
 });
+
+// The Durable Object that fires each contact-cascade step at its exact window
+// (Brief 17) — exported so the runtime can construct it for the CASCADE_DO binding.
+export { CascadeScheduler } from './cascade-do';
 
 // fetch + scheduled (Cron Trigger). The scheduled handler runs the
 // device-went-dark escalation and the vault integrity scan.

@@ -40,6 +40,25 @@ export function normalizeDestination(channel: PreferredChannel, destination: str
   return destination.trim();
 }
 
+/** A LINE Messaging-API userId is `U` + 32 lowercase hex (the bot's own id has the
+ *  same shape). A user's public LINE ID / display handle (e.g. "roycep80") is NOT a
+ *  userId and the push API rejects it with 400 — so it must never be stored. */
+const LINE_USER_ID = /^U[0-9a-f]{32}$/;
+
+/**
+ * Validate a destination is actually deliverable on its channel BEFORE it is
+ * stored, so a malformed value can never be saved and then fail silently at alert
+ * time. Returns null when valid, or a surfaced reason when not. Currently guards
+ * the LINE userId shape (the common "typed my LINE handle" mistake); email/sms are
+ * normalized elsewhere and accepted as-is for the pilot.
+ */
+export function destinationProblem(channel: PreferredChannel, destination: string): string | null {
+  if (channel === 'line' && !LINE_USER_ID.test(destination.trim())) {
+    return 'That is not a LINE user ID. A LINE user ID looks like "U" followed by 32 characters — it is NOT your public LINE ID / handle. Message the BLACK BOX LINE account to capture yours.';
+  }
+  return null;
+}
+
 /**
  * Save (add or edit) the user's guardian with a chosen primary channel +
  * destination, stored as the priority-1 endpoint (Fix Brief 3 contact setup).

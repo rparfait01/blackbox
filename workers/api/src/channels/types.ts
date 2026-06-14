@@ -124,6 +124,12 @@ export interface NotificationChannel {
    * channels that have no such id leave it undefined.
    */
   readonly lastProviderMessageId?: string | null;
+  /**
+   * Provider failure reason of the most recent send (status + truncated body),
+   * when the send failed. Recorded into delivery_records.detail + audit so a
+   * rejection is observable, never silent. Undefined/null on success.
+   */
+  readonly lastError?: string | null;
   pushActivationAlert(eventId: string, payload: ActivationAlertPayload): Promise<boolean>;
   /** "Device went dark" escalation — interruption escalates, never cancels. */
   pushEscalation(eventId: string, payload: EscalationAlertPayload): Promise<boolean>;

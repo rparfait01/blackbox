@@ -98,11 +98,13 @@ export async function handleLineWebhook(c: Ctx): Promise<Response> {
   }
 
   for (const event of events) {
-    if (event.type === 'follow' && event.source?.userId) {
-      // Record the follower's id so the admin can pair it to a userHash. Stored
-      // in D1 only — never written to console logs.
+    if ((event.type === 'follow' || event.type === 'message') && event.source?.userId) {
+      // Record the sender's userId so it can be paired to a contact slot. Follow
+      // fires once (and not again for an existing follower), so ANY message also
+      // captures it — that is how an already-following user surfaces their real
+      // userId on demand. Stored in D1 only — never written to console logs.
       await recordFollow(c.env, event.source.userId);
-      await audit(c.env, null, 'line.follow', null, null);
+      await audit(c.env, null, event.type === 'follow' ? 'line.follow' : 'line.message', null, null);
     } else if (event.type === 'postback' && event.postback?.data) {
       const { action, eventId } = parsePostback(event.postback.data);
       if (action && eventId) {

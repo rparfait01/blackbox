@@ -54,3 +54,14 @@ bucket_name = "blackbox-media"
 [[r2_buckets]]
 binding = "VAULT"
 bucket_name = "blackbox-vault"
+
+# Durable Object that fires each contact-cascade step at its EXACT window
+# (Brief 17) — precise timing that does not depend on the activation request's
+# waitUntil surviving. SQLite-backed (free-plan compatible).
+[[durable_objects.bindings]]
+name = "CASCADE_DO"
+class_name = "CascadeScheduler"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CascadeScheduler"]

@@ -163,19 +163,24 @@ export async function dispatch(
     }
     const ok = await sendMessage(channel, message);
     // Per-channel delivery record (Fix Brief 1 #5) — delivery is observable in
-    // D1, not guessed. providerMessageId links back to the provider's own logs.
+    // D1, not guessed. providerMessageId links back to the provider's own logs;
+    // on failure, detail carries the provider's actual rejection reason so the
+    // failure is never silent.
     await recordDelivery(env, {
       eventId: message.eventId,
       messageKind: message.kind,
       channel: channelName,
       status: ok ? 'delivered' : 'failed',
       providerMessageId: channel.lastProviderMessageId ?? null,
+      detail: ok ? null : channel.lastError ?? 'send_failed',
     });
     if (ok) {
       await audit(env, message.eventId, `notification_delivered_${channelName}`, actorHash, null);
       return { delivered: true, channel: channelName };
     }
-    await audit(env, message.eventId, `notification_failed_${channelName}`, actorHash, null);
+    await audit(env, message.eventId, `notification_failed_${channelName}`, actorHash, {
+      reason: channel.lastError ?? 'send_failed',
+    });
   }
 
   await audit(env, message.eventId, 'all_channels_failed', actorHash, null);

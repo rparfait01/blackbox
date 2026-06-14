@@ -48,6 +48,9 @@ async function retryKey(seed: string): Promise<string> {
 export class LineChannel implements NotificationChannel {
   readonly channel = 'line' as const;
   lastProviderMessageId: string | null = null;
+  /** The provider's own failure reason (status + body), surfaced into the delivery
+   *  record + audit so a LINE rejection is never silent. */
+  lastError: string | null = null;
 
   constructor(
     private readonly accessToken: string,
@@ -135,9 +138,19 @@ export class LineChannel implements NotificationChannel {
           ms: Date.now() - start,
         }),
       );
-      return response.status === 200;
-    } catch {
+      if (response.status === 200) {
+        this.lastError = null;
+        return true;
+      }
+      // Capture LINE's actual rejection reason (e.g. invalid 'to', expired token)
+      // WITHOUT logging the recipient id — the body holds the diagnostic message,
+      // not PII. Truncated so a verbose body can't bloat the audit row.
+      const body = await response.text().catch(() => '');
+      this.lastError = `line ${response.status}: ${body.slice(0, 200)}`;
+      return false;
+    } catch (e) {
       console.log(JSON.stringify({ channel: 'line', messageType, status: 'fetch_error' }));
+      this.lastError = `line fetch_error: ${String(e).slice(0, 120)}`;
       return false;
     }
   }

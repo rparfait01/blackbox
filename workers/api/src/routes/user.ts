@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { hashSecret, verifySecret } from '../lib/crypto';
-import { getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
+import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
 import {
   guardianLoad,
@@ -167,6 +167,12 @@ userRoutes.post('/contacts/:slot', async (c) => {
       },
       400,
     );
+  }
+  // Reject a malformed destination (e.g. a LINE handle that is not a userId) up
+  // front — it would 400 at the provider and never deliver. Never store it.
+  const destProblem = destinationProblem(channel, body.destination.trim());
+  if (destProblem) {
+    return c.json({ error: 'invalid_destination', channel, message: destProblem }, 400);
   }
   const user = await getUserById(c.env, c.get('userId'));
   await upsertSlot(c.env, c.get('userId'), slot, {

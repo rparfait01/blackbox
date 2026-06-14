@@ -11,6 +11,7 @@ import { sendEmail } from '../channels/sendgrid-email';
 import {
   acceptInvite,
   createInvite,
+  destinationProblem,
   getInvite,
   getInviteForUser,
   removeInvite,
@@ -130,6 +131,10 @@ guardianRoutes.post('/contact', requireSession, async (c) => {
       },
       400,
     );
+  }
+  const destProblem = destinationProblem(channel, body.destination.trim());
+  if (destProblem) {
+    return c.json({ error: 'invalid_destination', channel, message: destProblem }, 400);
   }
   await saveContact(c.env, c.get('userId'), {
     name: body.name.trim(),

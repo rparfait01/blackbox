@@ -71,8 +71,6 @@ export async function listReachableContacts(
     )
       .bind(event.userId)
       .all<{ id: string; displayName: string; role: string | null }>();
-    // The 'emergency' slot is NOT in the cascade — it is the fallback fired only
-    // after the chain completes unclaimed (Brief 11).
     const rows = (results ?? []).filter((r) => r.role !== 'guardian' || guardianEnabled);
     if (rows.length > 0) {
       return rows.map((r) => ({ id: r.id, displayName: r.displayName }));
@@ -80,6 +78,29 @@ export async function listReachableContacts(
   }
   const legacy = await getContactForEvent(env, event);
   return legacy ? [{ id: legacy.id, displayName: legacy.displayName }] : [];
+}
+
+/**
+ * The full ACTIVATION cascade list, in fire order: priority contacts → guardian →
+ * emergency (last). Same as listReachableContacts but with the 'emergency' slot
+ * appended as the final step, so when populated it fires at its cascade window
+ * (T + interval*lastIndex) if no coordinator has claimed by then. Emergency is the
+ * cascade tail ONLY — closure/escalation pings still use listReachableContacts.
+ */
+export async function listCascadeContacts(
+  env: Env,
+  event: { userId: string | null; userHash: string | null },
+): Promise<Array<{ id: string; displayName: string }>> {
+  const base = await listReachableContacts(env, event);
+  if (!event.userId) {
+    return base;
+  }
+  const emergency = await env.DB.prepare(
+    "SELECT id, displayName FROM contacts WHERE userId = ? AND role = 'emergency' LIMIT 1",
+  )
+    .bind(event.userId)
+    .first<{ id: string; displayName: string }>();
+  return emergency ? [...base, { id: emergency.id, displayName: emergency.displayName }] : base;
 }
 
 /** Get-or-create the contact row for a user (used when a guardian accepts). */

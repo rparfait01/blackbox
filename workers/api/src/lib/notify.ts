@@ -17,7 +17,7 @@ import { formatLocal, formatLocalClock, isLinkReissueDue } from '@blackbox/share
 import { dispatch } from '../channels/router';
 import type { Env } from '../types';
 import { audit } from './audit';
-import { getContactForEvent, listReachableContacts } from './contacts';
+import { getContactForEvent, listCascadeContacts, listReachableContacts } from './contacts';
 import { regionToEmergency } from './contact-state';
 import { mintMagicToken, MAGIC_LINK_TTL_MS } from './magic-link';
 
@@ -52,25 +52,18 @@ async function latestLocation(
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Per-account cascade window (ms between steps). Defaults to 15s. */
+/** Per-account cascade window (ms between steps). Defaults to 10s so the full
+ *  primary→secondary→tertiary→guardian→emergency chain lands inside 60s
+ *  (T+0/+10/+20/+30/+40). */
+const DEFAULT_CASCADE_INTERVAL_SECONDS = 10;
 async function cascadeIntervalMs(env: Env, userId: string | null): Promise<number> {
   if (!userId) {
-    return 15_000;
+    return DEFAULT_CASCADE_INTERVAL_SECONDS * 1000;
   }
   const row = await env.DB.prepare('SELECT cascadeIntervalSeconds FROM users WHERE id = ?')
     .bind(userId)
-    .first<{ cascadeIntervalSeconds: number }>();
-  return Math.max(1, row?.cascadeIntervalSeconds ?? 15) * 1000;
-}
-
-async function emergencyAfterSeconds(env: Env, userId: string | null): Promise<number> {
-  if (!userId) {
-    return 120;
-  }
-  const row = await env.DB.prepare('SELECT emergencyAfterSeconds FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ emergencyAfterSeconds: number }>();
-  return Math.max(30, row?.emergencyAfterSeconds ?? 120);
+    .first<{ cascadeIntervalSeconds: number | null }>();
+  return Math.max(1, row?.cascadeIntervalSeconds ?? DEFAULT_CASCADE_INTERVAL_SECONDS) * 1000;
 }
 
 /**
@@ -130,7 +123,11 @@ async function dispatchStep(
   ctx: ActivationCtx,
   contact: { id: string; displayName: string },
   actorHash: string | null,
+  step: number,
 ): Promise<void> {
+  // Audit the moment the step FIRES (before the provider round-trip), so the
+  // cascade schedule is observable independent of per-channel send latency.
+  await audit(env, eventId, 'cascade_fired', actorHash, { step });
   const result = await dispatch(
     env,
     contact.id,
@@ -172,9 +169,9 @@ export async function notifyActivation(
   eventId: string,
   workerOrigin: string,
 ): Promise<void> {
-  const event = await env.DB.prepare('SELECT userId, userHash FROM events WHERE id = ?')
+  const event = await env.DB.prepare('SELECT userId, userHash, createdAt FROM events WHERE id = ?')
     .bind(eventId)
-    .first<{ userId: string | null; userHash: string | null }>();
+    .first<{ userId: string | null; userHash: string | null; createdAt: number }>();
   if (!event) {
     return;
   }
@@ -182,7 +179,7 @@ export async function notifyActivation(
     await audit(env, eventId, 'notification_skipped', event.userHash, { reason: 'unconfigured' });
     return;
   }
-  const contacts = await listReachableContacts(env, event);
+  const contacts = await listCascadeContacts(env, event);
   if (contacts.length === 0) {
     await audit(env, eventId, 'notification_skipped', event.userHash, { reason: 'no_contact' });
     return;
@@ -190,84 +187,166 @@ export async function notifyActivation(
   const interval = await cascadeIntervalMs(env, event.userId);
   const ctx = await activationCtx(env, eventId, workerOrigin, event.userId);
 
+  // Arm the Durable Object scheduler so every step (incl. emergency at +interval*N)
+  // fires at its exact window even if this in-request stagger's waitUntil is
+  // reclaimed. Idempotent with the loop below via the atomic per-step claim.
+  await armCascadeSchedule(env, eventId, workerOrigin);
+
   for (let step = 0; step < contacts.length; step += 1) {
-    if (!(await advanceStep(env, eventId, step))) {
-      return; // coordinator claimed / event closed / cron advanced — halt
+    // Sleep to the step's ABSOLUTE target (createdAt + step*interval) rather than
+    // a per-step relative delay — so per-send latency does not compound and
+    // guardian/emergency land in their windows (T+0/+10/+20/+30/+40), never drift
+    // a few seconds later each step.
+    const waitMs = event.createdAt + step * interval - Date.now();
+    if (waitMs > 0) {
+      await sleep(waitMs);
     }
-    await dispatchStep(env, eventId, ctx, contacts[step]!, event.userHash);
-    if (step < contacts.length - 1) {
-      await sleep(interval);
+    if (!(await advanceStep(env, eventId, step))) {
+      return; // coordinator claimed / event closed / a tick already advanced — halt
+    }
+    // A failed or throwing send on ANY step must NEVER stop the later steps — the
+    // schedule keeps advancing no matter what (dispatch already records the
+    // per-channel failure; this guards an unexpected throw too).
+    try {
+      await dispatchStep(env, eventId, ctx, contacts[step]!, event.userHash, step);
+    } catch (e) {
+      await audit(env, eventId, 'cascade_step_error', event.userHash, { step, detail: String(e).slice(0, 160) });
     }
   }
 }
 
 /**
- * Cron backstop + emergency fallback (Brief 11). For each active, UNCLAIMED
- * event: fire any cascade step whose window has elapsed but wasn't notified (e.g.
- * the worker died mid-stagger), then — if the chain is exhausted and no one
- * claimed after emergencyAfterSeconds — fire the emergency-services fallback once.
+ * Advance ONE active event's cascade to whatever step its elapsed time is due —
+ * firing every step from the current `cascadeStep` up to `floor(elapsed/interval)`
+ * (emergency is the final step, so it fires at its window like any other). Returns
+ * silently if the event was claimed / closed / already caught up. Idempotent: the
+ * atomic `advanceStep` guarantees each step fires exactly once across the
+ * in-request stagger, the heartbeat tick, and the cron — so they never
+ * double-notify and a failed step never blocks the next.
+ */
+export async function advanceEventCascade(
+  env: Env,
+  ev: { id: string; userId: string | null; userHash: string | null; createdAt: number; cascadeStep: number },
+  workerOrigin: string,
+  now: number = Date.now(),
+): Promise<void> {
+  if (!env.MAGIC_LINK_SECRET) {
+    return;
+  }
+  const contacts = await listCascadeContacts(env, { userId: ev.userId, userHash: ev.userHash });
+  if (contacts.length === 0) {
+    return;
+  }
+  const intervalSec = (await cascadeIntervalMs(env, ev.userId)) / 1000;
+  const elapsed = (now - ev.createdAt) / 1000;
+  const dueSteps = Math.min(contacts.length, Math.floor(elapsed / intervalSec) + 1);
+  let step = ev.cascadeStep;
+  if (step >= dueSteps) {
+    return;
+  }
+  const ctx = await activationCtx(env, ev.id, workerOrigin, ev.userId);
+  while (step < dueSteps) {
+    if (!(await advanceStep(env, ev.id, step))) {
+      break; // claimed / closed / raced with another driver — halt
+    }
+    try {
+      await dispatchStep(env, ev.id, ctx, contacts[step]!, ev.userHash, step);
+    } catch (e) {
+      await audit(env, ev.id, 'cascade_step_error', ev.userHash, { step, detail: String(e).slice(0, 160) });
+    }
+    step += 1;
+  }
+}
+
+/**
+ * One Durable-Object-driven cascade tick (Brief 17). Fires whatever steps are due
+ * for the event right now, then returns the absolute wall-clock time of the NEXT
+ * unfired step so the DO can set its next alarm — or null when the chain is
+ * exhausted / the event was claimed or closed (the DO then stops). This is the
+ * precise timing driver that does NOT depend on the activation waitUntil surviving
+ * or a device heartbeat; the in-request stagger + cron remain as backstops.
+ */
+export async function cascadeTick(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+): Promise<number | null> {
+  const ev = await env.DB.prepare(
+    "SELECT id, userId, userHash, createdAt, cascadeStep, status, coordinatorClaimedAt FROM events WHERE id = ?",
+  )
+    .bind(eventId)
+    .first<{
+      id: string;
+      userId: string | null;
+      userHash: string | null;
+      createdAt: number;
+      cascadeStep: number;
+      status: string;
+      coordinatorClaimedAt: number | null;
+    }>();
+  if (!ev || ev.status !== 'active' || ev.coordinatorClaimedAt != null) {
+    return null; // claimed / closed / gone — stop the schedule
+  }
+  await advanceEventCascade(env, ev, workerOrigin);
+  const contacts = await listCascadeContacts(env, { userId: ev.userId, userHash: ev.userHash });
+  const fresh = await env.DB.prepare('SELECT cascadeStep FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ cascadeStep: number }>();
+  const step = fresh?.cascadeStep ?? ev.cascadeStep;
+  if (step >= contacts.length) {
+    return null; // every step fired — done
+  }
+  const interval = await cascadeIntervalMs(env, ev.userId);
+  return ev.createdAt + step * interval; // exact time of the next unfired step
+}
+
+/**
+ * Arm the Durable Object that fires each cascade step at its exact wall-clock
+ * window (Brief 17). No-op when the binding is absent (e.g. local dev / a
+ * deployment without the DO) — the in-request stagger + heartbeat + cron still
+ * drive the cascade, just with coarser tail timing.
+ */
+export async function armCascadeSchedule(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+): Promise<void> {
+  if (!env.CASCADE_DO) {
+    return;
+  }
+  const stub = env.CASCADE_DO.get(env.CASCADE_DO.idFromName(eventId));
+  await stub.fetch('https://cascade-do/arm', {
+    method: 'POST',
+    body: JSON.stringify({ eventId, workerOrigin }),
+  });
+}
+
+/**
+ * Cron backstop (Brief 11). For every active, UNCLAIMED event, fire any cascade
+ * step whose window has elapsed but wasn't notified (e.g. the worker died
+ * mid-stagger). The cron is 60s-granular, so it is the coarse safety net; the
+ * Durable Object alarm (exact), the in-request stagger, and the per-heartbeat tick
+ * provide the tight timing.
  */
 export async function advanceCascades(env: Env, workerOrigin: string): Promise<void> {
   if (!env.MAGIC_LINK_SECRET) {
     return;
   }
   const { results } = await env.DB.prepare(
-    "SELECT id, userId, userHash, createdAt, cascadeStep, emergencyNotifiedAt FROM events WHERE status = 'active' AND coordinatorClaimedAt IS NULL",
+    "SELECT id, userId, userHash, createdAt, cascadeStep FROM events WHERE status = 'active' AND coordinatorClaimedAt IS NULL",
   ).all<{
     id: string;
     userId: string | null;
     userHash: string | null;
     createdAt: number;
     cascadeStep: number;
-    emergencyNotifiedAt: number | null;
   }>();
   const now = Date.now();
   for (const ev of results ?? []) {
-    const contacts = await listReachableContacts(env, { userId: ev.userId, userHash: ev.userHash });
-    if (contacts.length === 0) {
-      continue;
-    }
-    const intervalSec = (await cascadeIntervalMs(env, ev.userId)) / 1000;
-    const elapsed = (now - ev.createdAt) / 1000;
-    const dueSteps = Math.min(contacts.length, Math.floor(elapsed / intervalSec) + 1);
-    let step = ev.cascadeStep;
-    if (step < dueSteps) {
-      const ctx = await activationCtx(env, ev.id, workerOrigin, ev.userId);
-      while (step < dueSteps) {
-        if (!(await advanceStep(env, ev.id, step))) {
-          break; // claimed / closed / raced with the in-request cascade
-        }
-        await dispatchStep(env, ev.id, ctx, contacts[step]!, ev.userHash);
-        step += 1;
-      }
-    }
-    const emergencyAfter = await emergencyAfterSeconds(env, ev.userId);
-    if (step >= contacts.length && elapsed >= emergencyAfter && ev.emergencyNotifiedAt == null) {
-      const claim = await env.DB.prepare(
-        "UPDATE events SET emergencyNotifiedAt = ? WHERE id = ? AND emergencyNotifiedAt IS NULL AND coordinatorClaimedAt IS NULL AND status = 'active'",
-      )
-        .bind(now, ev.id)
-        .run();
-      if (claim.meta.changes === 1) {
-        // Dispatch to the account's configured emergency target if set (Brief 11
-        // emergency-services fallback). The 'emergency' slot is a per-account
-        // endpoint (channel + destination) the operator configures — for the
-        // pilot/testing it can be a monitored number, NOT live 911.
-        const emergency = ev.userId
-          ? await env.DB.prepare(
-              "SELECT id, displayName FROM contacts WHERE userId = ? AND role = 'emergency' LIMIT 1",
-            )
-              .bind(ev.userId)
-              .first<{ id: string; displayName: string }>()
-          : null;
-        if (emergency) {
-          const ctx = await activationCtx(env, ev.id, workerOrigin, ev.userId);
-          await dispatchStep(env, ev.id, ctx, emergency, ev.userHash);
-          await audit(env, ev.id, 'emergency_fallback_dispatched', ev.userHash, { reason: 'no_coordinator' });
-        } else {
-          await audit(env, ev.id, 'emergency_fallback', ev.userHash, { reason: 'no_target' });
-        }
-      }
+    try {
+      await advanceEventCascade(env, ev, workerOrigin, now);
+    } catch (e) {
+      await audit(env, ev.id, 'cascade_step_error', ev.userHash, { detail: String(e).slice(0, 160) });
     }
   }
 }

@@ -87,8 +87,11 @@ export async function createDraftUser(
     statements.push(env.DB.prepare('DELETE FROM users WHERE id = ?').bind(existing.id));
   }
   statements.push(
+    // cascadeIntervalSeconds is set to 10 explicitly (the table default predates
+    // the 10s cascade spec — Brief 11/17) so new accounts get the correct
+    // T+0/+10/+20/+30/+40 windows without depending on the column default.
     env.DB.prepare(
-      'INSERT INTO users (id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, nationality, createdAt, updatedAt) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?)',
+      'INSERT INTO users (id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, nationality, cascadeIntervalSeconds, createdAt, updatedAt) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, 10, ?, ?)',
     ).bind(
       id,
       input.name,
