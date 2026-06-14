@@ -74,7 +74,7 @@ export class TwilioSmsChannel implements NotificationChannel {
     return this.send('closure', `${p.userDisplayName} requested closure. Review before standing down: ${p.dashboardUrl ?? ''}`);
   }
   pushDuressAlert(_e: string, p: DuressAlertPayload): Promise<boolean> {
-    return this.send('duress', `⚠ DURESS — ${p.userDisplayName} entered her duress code. Recording continues. Call emergency services now. ${p.dashboardUrl ?? ''}`);
+    return this.send('duress', `⚠ DURESS — ${p.userDisplayName} entered their duress code. Recording continues. Call emergency services now. ${p.dashboardUrl ?? ''}`);
   }
   pushClosureConfirmation(_e: string, p: ClosureConfirmationPayload): Promise<boolean> {
     return this.send('closure_confirm', `✓ ${p.userDisplayName}'s alert is closed — recording has stopped.`);

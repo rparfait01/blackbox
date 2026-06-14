@@ -137,7 +137,7 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
         rows,
         ctaUrl: p.dashboardUrl,
         ctaText: 'OPEN LIVE DASHBOARD (NEW LINK)',
-        note: 'The earlier link expired and no one has secured this alert. This link is live now. The alert has NOT been cancelled — open it and confirm she is safe.',
+        note: 'The earlier link expired and no one has secured this alert. This link is live now. The alert has NOT been cancelled — open it and confirm they are safe.',
       }),
       text:
         `STILL ACTIVE — ${p.userDisplayName}'s alert has not been secured. The earlier link expired; here is a fresh, working one.\n` +
@@ -155,8 +155,8 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
   }
   const why =
     p.reason === 'client_lost'
-      ? 'Her phone closed the app or lost connection while the alert was still active.'
-      : 'Her phone stopped checking in while the alert was still active (it may be off, out of battery, or taken).';
+      ? `${p.userDisplayName}'s phone closed the app or lost connection while the alert was still active.`
+      : `${p.userDisplayName}'s phone stopped checking in while the alert was still active (it may be off, out of battery, or taken).`;
   const rows: Array<[string, string]> = [
     ['Who', p.userDisplayName],
     ['Status', 'ALERT STILL ACTIVE — device went dark'],
@@ -196,7 +196,7 @@ export function emailClosureRequest(p: ClosureRequestPayload): BuiltEmail {
       ],
       ctaUrl: p.dashboardUrl,
       ctaText: 'REVIEW ON THE DASHBOARD',
-      note: 'Review the live dashboard before standing the alert down. Confirm she is safe.',
+      note: 'Review the live dashboard before standing the alert down. Confirm they are safe.',
     }),
     text:
       `${p.userDisplayName} has requested closure of the active session.\n` +
@@ -212,14 +212,14 @@ export function emailDuress(p: DuressAlertPayload): BuiltEmail {
       headerText: '⚠ DURESS — DO NOT APPROVE',
       rows: [
         ['Who', p.userDisplayName],
-        ['Signal', 'Entered her duress code — she is being forced to close the alert'],
+        ['Signal', 'Entered their duress code — they are being forced to close the alert'],
       ],
       ctaUrl: p.dashboardUrl,
       ctaText: 'OPEN LIVE DASHBOARD',
       note: 'Recording continues regardless of any response. Call emergency services now. Do NOT stand the alert down.',
     }),
     text:
-      `DURESS — ${p.userDisplayName} entered her duress code. She is being forced to close the alert.\n` +
+      `DURESS — ${p.userDisplayName} entered their duress code. They are being forced to close the alert.\n` +
       `Recording continues regardless. Call emergency services now. Do NOT stand it down.\n` +
       `Dashboard: ${p.dashboardUrl}`,
   };

@@ -696,10 +696,21 @@ const CLIENT_JS = `
     tryAutoplay();
     note.textContent='Live audio · streaming';
   } else if(knownLatest!=null){
-    audio.controls=true; audio.src=api('/audio/full');
-    note.textContent='Live audio · press play (progressive streaming unavailable in this browser)';
-    tryAutoplay();
-    window.__pumpAudio=function(){};
+    // No MSE (iOS Safari): /audio/full is a byte-concatenation of independent
+    // recorder segments, so a native <audio controls> reads a bogus 00:00
+    // duration and a maxed scrubber. Show an honest download-to-play button
+    // with NO timeline instead of a false time readout. Each play re-fetches
+    // /audio/full so it includes everything captured so far.
+    audio.controls=false;
+    startBtn.hidden=false;
+    startBtn.textContent='▶ Play recording so far';
+    startBtn.onclick=function(){
+      if(audio.paused){ audio.src=api('/audio/full'); audio.play(); startBtn.textContent='⏸ Pause'; }
+      else { audio.pause(); startBtn.textContent='▶ Play recording so far'; }
+    };
+    audio.onended=function(){ startBtn.textContent='▶ Play recording so far'; };
+    note.textContent='Recording · download-to-play (this browser cannot stream live; press play to hear everything captured so far)';
+    window.__pumpAudio=function(latest){ if(latest!=null){ knownLatest=latest; } };
   } else {
     note.textContent='No audio captured yet…';
     window.__pumpAudio=function(latest){

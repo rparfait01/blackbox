@@ -5,8 +5,9 @@
  * stored — so ordering and integrity hold across regions.
  *
  * One formatter, two modes:
- *   - DTG (Date-Time Group), e.g. "121830Z JUN 26" — for the initial event
- *     report header. Always Zulu (UTC).
+ *   - DTG (Date-Time Group), e.g. "121830Z JUN 2026" — for the initial event
+ *     report header. Always Zulu (UTC). The year is rendered in full (4 digits)
+ *     so the trailing field can never be misread as a day-of-month.
  *   - Local, e.g. "2026-06-12 18:30 (UTC+09:00)" — for every subsequent log
  *     entry, in the event's own local time derived from the stored offset.
  */
@@ -18,8 +19,10 @@ function pad2(n: number): string {
 }
 
 /**
- * DTG: DDHHMM Z MMM YY in UTC (Zulu). The literal `Z` is the zone designator.
- * Example: 2026-06-12T18:30Z → "121830Z JUN 26".
+ * DTG: DDHHMM Z MMM YYYY in UTC (Zulu). The literal `Z` is the zone designator.
+ * The year is the full 4 digits (not the NATO 2-digit `YY`) because on a
+ * civilian alert a trailing "26" reads as June 26th, not 2026 — the year must
+ * be unmistakable. Example: 2026-06-12T18:30Z → "121830Z JUN 2026".
  */
 export function formatDtg(utcMs: number): string {
   const d = new Date(utcMs);
@@ -27,8 +30,8 @@ export function formatDtg(utcMs: number): string {
   const hh = pad2(d.getUTCHours());
   const mm = pad2(d.getUTCMinutes());
   const mon = MONTHS[d.getUTCMonth()];
-  const yy = pad2(d.getUTCFullYear() % 100);
-  return `${dd}${hh}${mm}Z ${mon} ${yy}`;
+  const yyyy = d.getUTCFullYear();
+  return `${dd}${hh}${mm}Z ${mon} ${yyyy}`;
 }
 
 /** Render the offset label, e.g. -540 → "UTC+09:00", 300 → "UTC-05:00". */

@@ -142,8 +142,8 @@ export function escalationAlert(p: EscalationAlertPayload): BuiltMessage {
     ? 'The earlier link expired and no one has secured it. This link is live now.'
     : `${
         p.reason === 'client_lost'
-          ? 'Her phone closed the app or lost connection while the alert was still active.'
-          : 'Her phone stopped checking in while the alert was still active.'
+          ? `${p.userDisplayName}'s phone closed the app or lost connection while the alert was still active.`
+          : `${p.userDisplayName}'s phone stopped checking in while the alert was still active.`
       } This is more urgent, not resolved.`;
   const body: LineMessage[] = [
     { type: 'text', text: lead, weight: 'bold', wrap: true },
@@ -247,7 +247,7 @@ export function closureRequest(eventId: string, p: ClosureRequestPayload): Built
               },
               {
                 type: 'text',
-                text: 'The recording will stop if you approve. Do you confirm she is safe?',
+                text: 'The recording will stop if you approve. Do you confirm they are safe?',
                 wrap: true,
                 color: MUTE,
                 size: 'sm',
@@ -301,7 +301,7 @@ export function duressAlert(eventId: string, p: DuressAlertPayload): BuiltMessag
     messages: [
       {
         type: 'flex',
-        altText: `⚠ DURESS — ${p.userDisplayName} entered her duress pin. Call emergency services now.`,
+        altText: `⚠ DURESS — ${p.userDisplayName} entered their duress pin. Call emergency services now.`,
         contents: {
           type: 'bubble',
           header: {
@@ -327,7 +327,7 @@ export function duressAlert(eventId: string, p: DuressAlertPayload): BuiltMessag
             contents: [
               {
                 type: 'text',
-                text: `${p.userDisplayName} entered her duress pin. She is being forced to close the alert.`,
+                text: `${p.userDisplayName} entered their duress pin. They are being forced to close the alert.`,
                 weight: 'bold',
                 wrap: true,
               },
@@ -362,7 +362,7 @@ export function duressAlert(eventId: string, p: DuressAlertPayload): BuiltMessag
       },
     ],
     fallback:
-      `⚠ DURESS — ${p.userDisplayName} entered her duress pin. She is being forced to close the alert. ` +
+      `⚠ DURESS — ${p.userDisplayName} entered their duress pin. They are being forced to close the alert. ` +
       `Recording continues. Call emergency services now.`,
   };
 }
