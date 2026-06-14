@@ -313,7 +313,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     <a id="call" class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
     ${
       role === 'coordinator' && state.active
-        ? '<button id="secureAlert" class="btn btn-secure">SECURE — END ALERT</button>'
+        ? '<button id="secureAlert" class="btn btn-secure" disabled title="Available only once the user requests closure">SECURE — AWAITING USER REQUEST</button>'
         : ''
     }
   </div>
@@ -646,6 +646,16 @@ const CLIENT_JS = `
   // action with an explicit "are you sure" confirmation.
   function applyClosure(cl){
     var w=el('closureWindow'); if(!w) return;
+    // The SECURE control is INERT until the user requests closure (canonical rule):
+    // no pending request = nothing to approve. The server enforces this too; this
+    // keeps the UI honest so a coordinator is never offered a live END with no
+    // request behind it. A closed event leaves the (now hidden) button alone.
+    var sec=el('secureAlert');
+    var pending = !!(cl && cl.requested);
+    if(sec && sec.textContent!=='SECURED ✓' && sec.textContent!=='SECURING…'){
+      sec.disabled = !pending;
+      sec.textContent = pending ? 'SECURE — END ALERT' : 'SECURE — AWAITING USER REQUEST';
+    }
     if(!cl || !cl.requested){ w.style.display='none'; w.innerHTML=''; return; }
     var duress = cl.pin==='unsat';
     w.style.display='block';
@@ -760,10 +770,13 @@ const CLIENT_JS = `
   // so there is no second "I am responding" affordance here. ----
   var secureAlert=el('secureAlert');
   if(secureAlert){ secureAlert.onclick=function(){
+    if(secureAlert.disabled){ return; } // inert until the user requests closure
     if(!window.confirm('Are you sure this person is safe? This ends the alert and stops recording.')){ return; }
     secureAlert.disabled=true; secureAlert.textContent='SECURING…';
-    fetch(api('/secure'),{method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
+    fetch(api('/secure'),{method:'POST'}).then(function(r){ return r.json().then(function(d){ return {status:r.status,d:d}; }); }).then(function(res){
+      var d=res.d;
       if(d&&d.secured){ secureAlert.textContent='SECURED ✓'; }
+      else if(res.status===409){ secureAlert.disabled=true; secureAlert.textContent='SECURE — AWAITING USER REQUEST'; alert('The user has not requested closure yet. You can only secure once they do.'); }
       else { secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; alert('Could not secure. Try again.'); }
     }).catch(function(){ secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; });
   };}

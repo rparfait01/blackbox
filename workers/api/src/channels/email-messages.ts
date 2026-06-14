@@ -34,10 +34,20 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** A clickable map link for a coordinate (Brief 19). Universal Google Maps search
+ *  URL — opens the native maps app on phones, the web map elsewhere. */
+export function mapLink(lat: number, lon: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(5)},${lon.toFixed(5)}`;
+}
+
+// A row is [label, value] or [label, value, href] — with an href the value renders
+// as a tappable link (used for shared/last locations → a real map link).
+type Row = [string, string] | [string, string, string];
+
 interface ShellOpts {
   headerColor: string;
   headerText: string;
-  rows: Array<[string, string]>;
+  rows: Row[];
   ctaUrl?: string;
   ctaText?: string;
   note?: string;
@@ -46,10 +56,14 @@ interface ShellOpts {
 function shell(o: ShellOpts): string {
   const rows = o.rows
     .map(
-      ([k, v]) =>
+      ([k, v, href]) =>
         `<tr><td style="padding:6px 0;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:.06em;width:90px">${escapeHtml(
           k,
-        )}</td><td style="padding:6px 0;color:#111;font-size:14px">${escapeHtml(v)}</td></tr>`,
+        )}</td><td style="padding:6px 0;color:#111;font-size:14px">${
+          href
+            ? `<a href="${escapeHtml(href)}" style="color:#1558d6;text-decoration:underline">${escapeHtml(v)}</a>`
+            : escapeHtml(v)
+        }</td></tr>`,
     )
     .join('');
   const cta = o.ctaUrl
@@ -80,10 +94,12 @@ function coords(location: ActivationAlertPayload['location']): string {
 }
 
 export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
-  const rows: Array<[string, string]> = [
+  const rows: Row[] = [
     ['Who', p.userDisplayName],
     ['Status', 'Live audio + location active'],
-    ['Where', coords(p.location)],
+    p.location
+      ? ['Where', `${coords(p.location)} — open map`, mapLink(p.location.lat, p.location.lon)]
+      : ['Where', coords(p.location)],
   ];
   if (p.threatSummary) {
     rows.push(['Heard', p.threatSummary]);
@@ -110,7 +126,7 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
   // recipient knows exactly what they must resolve. The path never dead-ends.
   if (p.reason === 'link_reissued') {
     const pv = p.provenance;
-    const rows: Array<[string, string]> = [
+    const rows: Row[] = [
       ['Who', p.userDisplayName],
       ['Status', 'ALERT STILL ACTIVE — NOBODY HAS SECURED IT YET'],
     ];
@@ -157,7 +173,7 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
     p.reason === 'client_lost'
       ? `${p.userDisplayName}'s phone closed the app or lost connection while the alert was still active.`
       : `${p.userDisplayName}'s phone stopped checking in while the alert was still active (it may be off, out of battery, or taken).`;
-  const rows: Array<[string, string]> = [
+  const rows: Row[] = [
     ['Who', p.userDisplayName],
     ['Status', 'ALERT STILL ACTIVE — device went dark'],
   ];
@@ -165,7 +181,11 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
     rows.push(['Last seen', p.lastSeen]);
   }
   if (p.location) {
-    rows.push(['Last where', `${p.location.lat.toFixed(4)}°, ${p.location.lon.toFixed(4)}°`]);
+    rows.push([
+      'Last where',
+      `${p.location.lat.toFixed(4)}°, ${p.location.lon.toFixed(4)}° — open map`,
+      mapLink(p.location.lat, p.location.lon),
+    ]);
   }
   return {
     subject: `🚨 BLACK BOX — ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE 🚨`,
@@ -258,13 +278,18 @@ export function emailStandDownConfirmation(p: StandDownConfirmationPayload): Bui
 
 const CALM = '#34788a';
 export function emailCheckin(p: CheckinPayload): BuiltEmail {
-  const rows: Array<[string, string]> = [
+  const rows: Row[] = [
     ['Who', p.userDisplayName],
     ['Status', "I'm OK"],
     ['Time', p.time],
   ];
   if (p.location) {
-    rows.push(['Shared location', `${p.location.lat.toFixed(4)}°, ${p.location.lon.toFixed(4)}°`]);
+    // A real, tappable map link — not bare coordinates (Brief 19).
+    rows.push([
+      'Shared location',
+      `${p.location.lat.toFixed(4)}°, ${p.location.lon.toFixed(4)}° — open map`,
+      mapLink(p.location.lat, p.location.lon),
+    ]);
   }
   return {
     subject: `${p.userDisplayName} checked in — I'm OK`,
@@ -274,7 +299,7 @@ export function emailCheckin(p: CheckinPayload): BuiltEmail {
       rows,
       note: 'A reassurance check-in. This is NOT an alert — no recording, no tracking.',
     }),
-    text: `${p.userDisplayName} checked in — I'm OK at ${p.time}.${p.location ? ` Location: ${p.location.lat.toFixed(4)}, ${p.location.lon.toFixed(4)}.` : ''} (Reassurance only — not an alert.)`,
+    text: `${p.userDisplayName} checked in — I'm OK at ${p.time}.${p.location ? ` Location: ${mapLink(p.location.lat, p.location.lon)}` : ''} (Reassurance only — not an alert.)`,
   };
 }
 

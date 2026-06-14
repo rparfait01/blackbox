@@ -67,3 +67,10 @@ workers/*.txt
 
 # Marketing/portfolio HTML kept out of the code repo
 docs/Portfolio/
+
+# Acceptance suite privileged test creds (never commit)
+workers/api/test/.acceptance.env
+
+# Operator-local wrangler secret-list exports (may contain sensitive info)
+workers/*.html
+workers/*_files/

@@ -383,9 +383,13 @@ export function standDownConfirmation(time: string): BuiltMessage {
   return { messages: [{ type: 'text', text }], fallback: text };
 }
 
-/** Calm "I'm OK" check-in (Brief 10) — plain, reassuring, never emergency-styled. */
+/** Calm "I'm OK" check-in (Brief 10) — plain, reassuring, never emergency-styled.
+ *  The shared location is a real, tappable map link, not bare coordinates (Brief
+ *  19) — LINE auto-links the URL in a plain-text message. */
 export function checkinMessage(p: CheckinPayload): BuiltMessage {
-  const loc = p.location ? ` (shared location: ${p.location.lat.toFixed(4)}, ${p.location.lon.toFixed(4)})` : '';
+  const loc = p.location
+    ? `\nShared location: https://www.google.com/maps/search/?api=1&query=${p.location.lat.toFixed(5)},${p.location.lon.toFixed(5)}`
+    : '';
   const text = `✓ ${p.userDisplayName} checked in — I'm OK at ${p.time}.${loc}`;
   return { messages: [{ type: 'text', text }], fallback: text };
 }

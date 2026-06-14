@@ -55,5 +55,19 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // Node test harnesses (the standing acceptance suite + any .mjs scripts) run
+    // under Node, not the browser/worker — give them the Node globals and allow the
+    // console output a CLI test runner is built around.
+    files: ['**/*.mjs', 'workers/api/test/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
   prettier,
 );

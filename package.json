@@ -15,7 +15,12 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "acceptance": "pnpm -F @blackbox/api acceptance",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build:all",
+    "gate": "pnpm verify && pnpm acceptance",
+    "setup-hooks": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

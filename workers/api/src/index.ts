@@ -416,6 +416,53 @@ app.post('/v1/admin/events/:id/force-close', async (c) => {
   return c.json({ ok: true, closed: true, reason }, 200);
 });
 
+// Read-only event observability for the standing acceptance suite (Bearer
+// ADMIN_TOKEN) — lets the suite verify cascade timing + per-channel delivery on the
+// DEPLOYED app without direct D1 access. Admin already sees active-event PII, so
+// this adds no new trust boundary.
+app.get('/v1/admin/events/:id/audit', async (c) => {
+  const eventId = c.req.param('id');
+  const action = c.req.query('action');
+  const stmt = action
+    ? c.env.DB.prepare(
+        'SELECT timestamp, action, metadataJson FROM audit_log WHERE eventId = ? AND action = ? ORDER BY timestamp ASC',
+      ).bind(eventId, action)
+    : c.env.DB.prepare(
+        'SELECT timestamp, action, metadataJson FROM audit_log WHERE eventId = ? ORDER BY timestamp ASC',
+      ).bind(eventId);
+  const { results } = await stmt.all<{ timestamp: number; action: string; metadataJson: string | null }>();
+  const rows = (results ?? []).map((r) => {
+    let step: number | undefined;
+    try {
+      step = r.metadataJson ? (JSON.parse(r.metadataJson).step as number | undefined) : undefined;
+    } catch {
+      step = undefined;
+    }
+    return { timestamp: r.timestamp, action: r.action, step };
+  });
+  return c.json({ rows }, 200);
+});
+
+app.get('/v1/admin/events/:id/deliveries', async (c) => {
+  const eventId = c.req.param('id');
+  const channel = c.req.query('channel');
+  const status = c.req.query('status');
+  let sql = 'SELECT COUNT(*) AS count FROM delivery_records WHERE eventId = ?';
+  const binds: string[] = [eventId];
+  if (channel) {
+    sql += ' AND channel = ?';
+    binds.push(channel);
+  }
+  if (status) {
+    sql += ' AND status = ?';
+    binds.push(status);
+  }
+  const row = await c.env.DB.prepare(sql)
+    .bind(...binds)
+    .first<{ count: number }>();
+  return c.json({ count: row?.count ?? 0 }, 200);
+});
+
 // --- LINE webhook (no HMAC auth; verifies its own x-line-signature) ---
 app.post('/v1/webhooks/line', handleLineWebhook);
 
@@ -563,33 +610,14 @@ app.get('/v1/c/:id/dispatch-link', async (c) => {
 
 // Coordinator stand-down — requires the user's lock code, server-verified
 // (Fix Brief 1 #4 semantics on the coordinator path, Fix Brief 3 R2).
+// The coordinator code-entry stand-down is DISABLED (canonical closure rule). A
+// contact / coordinator NEVER enters the user's code — that would be a second,
+// ungated close path. The only coordinator close is POST /v1/c/:id/secure, which
+// merely APPROVES a pending user closure request. Kept as a hard 403 so any stale
+// caller fails closed.
 app.post('/v1/c/:id/standdown', async (c) => {
-  const eventId = c.req.param('id');
-  if (!(await requireCoordinator(c, eventId))) {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
-  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
-  const origin = new URL(c.req.url).origin;
-  const outcome = await attemptStandDown(
-    c.env,
-    eventId,
-    body.code ?? '',
-    origin,
-    'coordinator_lock_code',
-  );
-  switch (outcome) {
-    case 'not_found':
-      return c.json({ error: 'not found' }, 404);
-    case 'already_closed':
-    case 'closed':
-      return c.json({ ok: true, closed: true }, 200);
-    case 'duress':
-      return c.json({ ok: true, closed: false, duress: true }, 200);
-    case 'no_lock_code':
-      return c.json({ error: 'no_verifiable_lock_code' }, 409);
-    default:
-      return c.json({ error: 'invalid_code' }, 403);
-  }
+  await audit(c.env, c.req.param('id'), 'coordinator_standdown_blocked', null, null);
+  return c.json({ ok: false, closed: false, reason: 'coordinator_cannot_enter_code' }, 403);
 });
 
 // COORDINATOR SECURES the alert (Brief 9 Phase D). The deliberate close — only
@@ -602,11 +630,28 @@ app.post('/v1/c/:id/secure', async (c) => {
   if (!(await requireCoordinator(c, eventId))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
-  const event = await c.env.DB.prepare('SELECT userId, userHash, status FROM events WHERE id = ?')
+  const event = await c.env.DB
+    .prepare('SELECT userId, userHash, status, closeRequestStatus FROM events WHERE id = ?')
     .bind(eventId)
-    .first<{ userId: string | null; userHash: string | null; status: string }>();
+    .first<{ userId: string | null; userHash: string | null; status: string; closeRequestStatus: string | null }>();
   if (!event) {
     return c.json({ error: 'not found' }, 404);
+  }
+  // GATE (canonical closure rule): a coordinator can SECURE only to APPROVE a
+  // pending, on-device-code-validated user closure request. No request pending =
+  // nothing to approve = cannot close. The coordinator never enters the code; the
+  // request itself is the authorization. This is the authoritative server gate
+  // behind the dashboard's inert SECURE control — closure can never happen without
+  // a user-initiated request.
+  if (event.status !== 'closed' && event.closeRequestStatus == null) {
+    await audit(c.env, eventId, 'secure_rejected_no_request', null, null);
+    return c.json(
+      {
+        error: 'no_pending_closure_request',
+        message: 'The user has not requested closure. Nothing to secure until they do.',
+      },
+      409,
+    );
   }
   if (event.status !== 'closed') {
     await c.env.DB.prepare(
