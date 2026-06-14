@@ -1,10 +1,17 @@
 import { useState } from 'react';
 
+import { LineConnect } from '@/components/LineConnect';
+
 /**
  * Support-contact setup (Fix Brief 3 contact screen). The user names their
  * guardian, picks the preferred channel — Text (SMS) / LINE / Email — and enters
  * the destination (a phone number for Text). The chosen channel + destination is
  * stored as the priority-1 endpoint server-side. Used by onboarding and Settings.
+ *
+ * LINE is special (Brief 18): a LINE id is NEVER typed or looked up. Picking LINE
+ * swaps the destination field for the QR-connect flow (LineConnect), which binds
+ * the contact's captured userId to the slot. So LINE needs the slot + a
+ * connected callback from the parent; without them, LINE can't be saved here.
  */
 
 export type ContactChannel = 'sms' | 'line' | 'email';
@@ -24,9 +31,10 @@ interface ChannelMeta {
 }
 
 // Metadata for every channel (used to render whichever channel a contact is on).
+// LINE has no destination field — it is connected by QR, never typed.
 const CHANNEL_META: Record<ContactChannel, ChannelMeta> = {
   email: { label: 'Email', hint: 'Email address', inputMode: 'email', placeholder: 'their@email.com' },
-  line: { label: 'LINE', hint: 'LINE user ID', inputMode: 'text', placeholder: 'their LINE user ID' },
+  line: { label: 'LINE', hint: '', inputMode: 'text', placeholder: '' },
   sms: { label: 'Text', hint: 'Phone number', inputMode: 'tel', placeholder: '+1 555 123 4567' },
 };
 
@@ -43,12 +51,19 @@ export function ContactForm({
   error,
   submitLabel,
   onSubmit,
+  slot,
+  onLineConnected,
 }: {
   initial?: Partial<ContactValues>;
   busy?: boolean;
   error?: string | null;
   submitLabel: string;
   onSubmit: (values: ContactValues) => void;
+  /** The slot this form edits — required to offer LINE QR-connect (Brief 18). */
+  slot?: string;
+  /** Called when a LINE contact finishes the QR-connect (the slot is already
+   *  saved server-side by the webhook bind). */
+  onLineConnected?: () => void;
 }): JSX.Element {
   const [name, setName] = useState(initial?.name ?? '');
   const [relationship, setRelationship] = useState(initial?.relationship ?? '');
@@ -56,6 +71,8 @@ export function ContactForm({
   const [destination, setDestination] = useState(initial?.destination ?? '');
 
   const active = CHANNEL_META[channel];
+  const isLine = channel === 'line';
+  const lineConnectable = isLine && !!slot && !!onLineConnected;
   const canSubmit = name.trim().length > 0 && destination.trim().length > 0 && !busy;
 
   return (
@@ -90,46 +107,58 @@ export function ContactForm({
             </button>
           ))}
         </div>
-        {channel === 'line' ? (
+        {isLine ? (
           <p className="mt-2 text-[11px] leading-relaxed text-med-text/45">
-            LINE needs their LINE <span className="text-med-text/70">user ID</span> (from following
-            the bot), not their display name. If unsure, use Email.
+            LINE connects by <span className="text-med-text/70">scanning a code</span> — no IDs to
+            type or look up. If you&apos;d rather not, use Email.
           </p>
         ) : null}
       </div>
 
-      <label className="block">
-        <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">{active.hint}</span>
-        <input
-          value={destination}
-          onChange={(e) => setDestination(e.target.value)}
-          inputMode={active.inputMode}
-          type={channel === 'email' ? 'email' : 'text'}
-          placeholder={active.placeholder}
-          className="w-full border-b border-med-text/25 bg-transparent py-2 font-sans text-lg text-med-text outline-none placeholder:text-med-text/30 focus:border-med-text/60"
-        />
-      </label>
+      {isLine ? (
+        lineConnectable ? (
+          <LineConnect slot={slot!} contactName={name} onConnected={onLineConnected!} />
+        ) : (
+          <p className="text-[12px] leading-relaxed text-med-text/50">
+            LINE is connected from the contact&apos;s slot in Settings. Use Email here for now.
+          </p>
+        )
+      ) : (
+        <>
+          <label className="block">
+            <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">{active.hint}</span>
+            <input
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              inputMode={active.inputMode}
+              type={channel === 'email' ? 'email' : 'text'}
+              placeholder={active.placeholder}
+              className="w-full border-b border-med-text/25 bg-transparent py-2 font-sans text-lg text-med-text outline-none placeholder:text-med-text/30 focus:border-med-text/60"
+            />
+          </label>
 
-      <label className="block">
-        <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">Relationship</span>
-        <input
-          value={relationship}
-          onChange={(e) => setRelationship(e.target.value)}
-          placeholder="e.g. spouse, friend"
-          className="w-full border-b border-med-text/25 bg-transparent py-2 font-sans text-lg text-med-text outline-none placeholder:text-med-text/30 focus:border-med-text/60"
-        />
-      </label>
+          <label className="block">
+            <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">Relationship</span>
+            <input
+              value={relationship}
+              onChange={(e) => setRelationship(e.target.value)}
+              placeholder="e.g. spouse, friend"
+              className="w-full border-b border-med-text/25 bg-transparent py-2 font-sans text-lg text-med-text outline-none placeholder:text-med-text/30 focus:border-med-text/60"
+            />
+          </label>
 
-      {error ? <p className="text-sm text-status-active">{error}</p> : null}
+          {error ? <p className="text-sm text-status-active">{error}</p> : null}
 
-      <button
-        type="button"
-        disabled={!canSubmit}
-        onClick={() => onSubmit({ name: name.trim(), relationship: relationship.trim(), channel, destination: destination.trim() })}
-        className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
-      >
-        {busy ? 'Saving…' : submitLabel}
-      </button>
+          <button
+            type="button"
+            disabled={!canSubmit}
+            onClick={() => onSubmit({ name: name.trim(), relationship: relationship.trim(), channel, destination: destination.trim() })}
+            className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            {busy ? 'Saving…' : submitLabel}
+          </button>
+        </>
+      )}
     </div>
   );
 }

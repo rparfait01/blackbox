@@ -9,6 +9,7 @@
 import type { Context } from 'hono';
 import { audit } from '../lib/audit';
 import { recordFollow } from '../lib/contacts';
+import { bindLinePairingFromMessage } from '../lib/line-pairing';
 import type { Env, Vars } from '../types';
 
 type Ctx = Context<{ Bindings: Env; Variables: Vars }>;
@@ -17,6 +18,7 @@ interface LineEvent {
   type: string;
   source?: { userId?: string };
   postback?: { data?: string };
+  message?: { type?: string; text?: string };
 }
 
 /** base64(HMAC-SHA256(secret, body)) — LINE's x-line-signature scheme. */
@@ -104,7 +106,20 @@ export async function handleLineWebhook(c: Ctx): Promise<Response> {
       // captures it — that is how an already-following user surfaces their real
       // userId on demand. Stored in D1 only — never written to console logs.
       await recordFollow(c.env, event.source.userId);
-      await audit(c.env, null, event.type === 'follow' ? 'line.follow' : 'line.message', null, null);
+      // QR-connect (Brief 18): if this message carries a live pairing token, bind
+      // the sender's userId to the slot that started the pairing — the contact's
+      // LINE is attached with no id ever typed.
+      let bound = false;
+      if (event.type === 'message' && event.message?.text) {
+        bound = await bindLinePairingFromMessage(c.env, event.source.userId, event.message.text);
+      }
+      await audit(
+        c.env,
+        null,
+        bound ? 'line.pairing_connected' : event.type === 'follow' ? 'line.follow' : 'line.message',
+        null,
+        null,
+      );
     } else if (event.type === 'postback' && event.postback?.data) {
       const { action, eventId } = parsePostback(event.postback.data);
       if (action && eventId) {

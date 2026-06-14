@@ -21,6 +21,9 @@ export interface Env {
   LINE_CHANNEL_ACCESS_TOKEN?: string;
   /** LINE Channel Secret — verifies inbound webhook signatures (HMAC-SHA256). */
   LINE_CHANNEL_SECRET?: string;
+  /** StillPoint Official Account public basic id (e.g. "@346hrzaa") for the
+   *  QR-connect pairing deep link (Brief 18). Public, not a secret. */
+  LINE_OA_BASIC_ID?: string;
   /** Bearer token protecting the pilot-only admin endpoints. */
   ADMIN_TOKEN?: string;
   /** HMAC key signing stateless, read-only magic-link tokens. */

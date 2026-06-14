@@ -114,7 +114,7 @@ export function BlackBoxHome(): JSX.Element {
 
   return (
     <main
-      className={`flex h-full w-full flex-col p-6 text-bb-text transition-colors duration-500 ${
+      className={`flex h-full w-full flex-col px-6 pb-6 pt-safe-6 text-bb-text transition-colors duration-500 ${
         alertActive ? 'bg-[#1a0606]' : 'bg-bb-bg'
       }`}
     >

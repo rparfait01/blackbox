@@ -25,6 +25,9 @@ SECURITY_CONTACT_EMAIL = "royce.ikumi.parfait@gmail.com"
 # matching PRIVATE key is the INTEGRITY_SIGNING_KEY secret. Publish this value
 # out-of-band so recipients/courts can pin it.
 INTEGRITY_PUBLIC_KEY = "MCowBQYDK2VwAyEA0JvR9tHYACGq0mivDWifJ16CJ6mt6t5A06yLlhpwPYE="
+# StillPoint Official Account basic id (public, @-prefixed) for the QR-connect LINE
+# pairing deep link (Brief 18). Not a secret — it is the OA's public handle.
+LINE_OA_BASIC_ID = "@346hrzaa"
 
 # Secrets are NOT defined here — set them with `wrangler secret put` (see
 # README.md): LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,

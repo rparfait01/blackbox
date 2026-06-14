@@ -65,6 +65,24 @@
   }
 }
 
+@layer utilities {
+  /*
+   * Standalone-PWA safe areas (viewport-fit=cover is set in index.html). When
+   * installed to the home screen the app draws under the status bar, so top-row
+   * controls (the settings gear, the Settings back button) would render behind the
+   * battery/signal indicators. env(safe-area-inset-top) is 0 in a browser tab and
+   * ~the status-bar height in standalone, so these keep controls clear there
+   * without changing the in-browser layout. The element's own background still
+   * fills full-bleed behind the inset (the inset is padding/offset, not a margin).
+   */
+  .pt-safe-6 {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+  }
+  .top-safe-6 {
+    top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+  }
+}
+
 @layer components {
   /*
    * The Stillpoint gradient. Layered radial accents over a diagonal navy→purple

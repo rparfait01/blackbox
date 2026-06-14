@@ -140,6 +140,12 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
               error={error}
               submitLabel={slot.filled ? `Save ${SLOT_LABEL[selected]}` : `Add ${SLOT_LABEL[selected]}`}
               onSubmit={(v) => void save(v)}
+              slot={selected}
+              onLineConnected={() => {
+                setEditing(false);
+                flash(`${SLOT_LABEL[selected]} connected on LINE`);
+                load();
+              }}
             />
           ) : (
             <>

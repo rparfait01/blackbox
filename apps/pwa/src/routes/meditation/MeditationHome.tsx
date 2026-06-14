@@ -56,7 +56,7 @@ export function MeditationHome(): JSX.Element {
       {alertActive ? (
         <span
           aria-hidden="true"
-          className="absolute right-6 top-6 p-2 text-med-text/40"
+          className="absolute right-6 top-safe-6 p-2 text-med-text/40"
         >
           <Gear size={22} weight="light" />
         </span>
@@ -64,7 +64,7 @@ export function MeditationHome(): JSX.Element {
         <Link
           to="/settings"
           aria-label="Preferences"
-          className="absolute right-6 top-6 p-2 text-med-text/40 transition-colors hover:text-med-text/70"
+          className="absolute right-6 top-safe-6 p-2 text-med-text/40 transition-colors hover:text-med-text/70"
         >
           <Gear size={22} weight="light" />
         </Link>

@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { hashSecret, verifySecret } from '../lib/crypto';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
+import { pairingStatus, startLinePairing } from '../lib/line-pairing';
 import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
 import {
   guardianLoad,
@@ -156,6 +157,19 @@ userRoutes.post('/contacts/:slot', async (c) => {
   if (channel !== 'sms' && channel !== 'line' && channel !== 'email') {
     return c.json({ error: 'channel must be sms, line or email' }, 400);
   }
+  // LINE can NEVER be entered by hand (Brief 18): a userId is captured only via the
+  // QR-connect pairing, which writes the slot itself. Refuse a manual LINE save so
+  // no one ever types/looks up a LINE id.
+  if (channel === 'line') {
+    return c.json(
+      {
+        error: 'line_requires_pairing',
+        channel,
+        message: 'Connect LINE with the QR code — a LINE contact is captured by scanning, never typed.',
+      },
+      400,
+    );
+  }
   // Never accept a contact on a channel that cannot deliver in this deployment —
   // it would fail silently at alert time. Refuse with a clear, surfaced reason.
   if (!isChannelDeliverable(c.env, channel)) {
@@ -194,6 +208,40 @@ userRoutes.delete('/contacts/:slot', async (c) => {
   }
   await removeSlot(c.env, c.get('userId'), slot);
   return c.json({ ok: true }, 200);
+});
+
+// QR-connect LINE pairing (Brief 18). Start a pairing for a slot → returns a deep
+// link + QR carrying a one-tap prefilled token; the contact scans/sends it in LINE
+// and the webhook binds their userId to the slot. No LINE id is ever typed.
+userRoutes.post('/line-pairing/start', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const body = await c.req
+    .json<{ slot?: string; contactName?: string }>()
+    .catch(() => ({}) as { slot?: string; contactName?: string });
+  const slot = body.slot as SlotKey;
+  if (!VALID_SLOTS.includes(slot)) {
+    return c.json({ error: 'invalid slot' }, 400);
+  }
+  if (!body.contactName?.trim()) {
+    return c.json({ error: 'name required', message: 'Add a name first.' }, 400);
+  }
+  if (!isChannelDeliverable(c.env, 'line')) {
+    return c.json({ error: 'channel_not_available', channel: 'line', message: 'LINE is not available yet.' }, 400);
+  }
+  const started = await startLinePairing(c.env, c.get('userId'), slot, body.contactName.trim());
+  return c.json(started, 200);
+});
+
+// Poll a pairing's status (never returns the captured userId).
+userRoutes.get('/line-pairing/status', async (c) => {
+  const nonce = c.req.query('nonce') ?? '';
+  const status = await pairingStatus(c.env, c.get('userId'), nonce);
+  if (!status) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  return c.json(status, 200);
 });
 
 // Delete account (Brief 13 B17). Behind a client confirmation; blocked during an

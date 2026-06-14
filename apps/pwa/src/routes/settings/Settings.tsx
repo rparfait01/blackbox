@@ -104,7 +104,7 @@ export function Settings(): JSX.Element {
   const goBack = (): void => navigate(mode === 'direct' ? '/blackbox' : '/', { replace: true });
 
   return (
-    <main className="stillpoint-bg min-h-full w-full overflow-y-auto p-6 text-med-text">
+    <main className="stillpoint-bg min-h-full w-full overflow-y-auto px-6 pb-6 pt-safe-6 text-med-text">
       <div className="mx-auto max-w-sm">
         <div className="mb-8 flex items-center gap-3">
           <button

@@ -447,6 +447,8 @@ export function Onboarding(): JSX.Element {
           error={error}
           submitLabel="Save support contact"
           onSubmit={(v) => void saveSupport(v)}
+          slot={supportRole === 'guardian' ? 'guardian' : 'primary'}
+          onLineConnected={() => setStep(7)}
         />
         <button onClick={() => setStep(7)} className="mt-5 block w-full text-center text-sm text-med-text/50 underline">
           Skip — add later in settings
