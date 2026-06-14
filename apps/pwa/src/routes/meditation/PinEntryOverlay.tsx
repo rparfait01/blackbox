@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Backspace } from '@phosphor-icons/react';
 
-import { submitClosure } from '@/lib/closure';
+import { reportClosureLockout, submitClosure } from '@/lib/closure';
 
 /**
  * Closure request entry (Brief 9 Phase D), disguised as a meditation "session
@@ -81,6 +81,9 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
       if (next >= MAX_ATTEMPTS) {
         setLockedUntil(Date.now() + LOCKOUT_MS);
         setError('Too many attempts. Please wait a moment and try again.');
+        // Surface the lockout to the coordinator (Brief 19 §6) — repeated failures
+        // may mean someone other than the user is trying to close. Pin never sent.
+        void reportClosureLockout();
       } else {
         setError('Not recognized, try again.');
       }

@@ -109,22 +109,17 @@ export async function createDraftUser(
 }
 
 /**
- * Verify a login credential (Brief 14). New accounts authenticate by password.
- * Legacy accounts created under the old email-OTP flow have no password, so we
- * fall back to the existing closure-pin hash (lockCodeHash) — letting a
- * previously-good account sign in with no email delivery involved.
+ * Verify a login credential (Brief 19 §6). Login is PASSWORD ONLY. The closure pin
+ * (lockCodeHash) is a closure-only secret and MUST NOT authenticate login — the
+ * legacy pin-as-password fallback is retired so a 3-digit closure pin can never be
+ * used to sign in. A password-less legacy account recovers via Forgot Password
+ * (§1), never via its pin.
  */
 export async function verifyLoginCredential(user: UserRow, credential: string): Promise<boolean> {
-  if (!credential) {
+  if (!credential || !user.passwordHash) {
     return false;
   }
-  if (user.passwordHash) {
-    return verifySecret(credential, user.passwordHash);
-  }
-  if (user.lockCodeHash) {
-    return verifySecret(credential, user.lockCodeHash);
-  }
-  return false;
+  return verifySecret(credential, user.passwordHash);
 }
 
 export async function markEmailVerified(env: Env, userId: string): Promise<void> {

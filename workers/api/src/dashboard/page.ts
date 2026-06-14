@@ -241,6 +241,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
       : ''
   }
 
+  ${role === 'coordinator' ? '<div class="lockout-warn" id="lockoutWarn" style="display:none">⚠ Repeated failed closure attempts on the device — this may not be the user. Do not assume safe.</div>' : ''}
   ${role === 'coordinator' ? '<div class="closure-window" id="closureWindow" style="display:none"></div>' : ''}
 
   <div class="bar">
@@ -487,6 +488,7 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
    UA [hidden] rule that a bare .modal{display:flex} was overriding). */
 .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);align-items:center;justify-content:center;padding:20px;z-index:100}
 .modal.open{display:flex}
+.lockout-warn{border:2px solid #ff3b30;background:#2a0d0d;color:#ff8f88;border-radius:10px;padding:12px;margin:8px 0;font-size:13px;font-weight:600;line-height:1.4}
 .closure-window{border:2px solid #34c759;border-radius:10px;padding:14px;margin:8px 0}
 .closure-window.duress{border-color:#ff3b30}
 .cw-title{font-weight:700;font-size:15px;margin-bottom:8px}
@@ -646,6 +648,11 @@ const CLIENT_JS = `
   // action with an explicit "are you sure" confirmation.
   function applyClosure(cl){
     var w=el('closureWindow'); if(!w) return;
+    // Repeated wrong closure-pin attempts (Brief 19 §6): surface to the coordinator
+    // even with no closure request — it can mean someone other than the user is
+    // trying to close. Shown as a standalone warning above the closure window.
+    var lw=el('lockoutWarn');
+    if(lw){ lw.style.display = (cl && cl.lockout) ? 'block' : 'none'; }
     // The SECURE control is INERT until the user requests closure (canonical rule):
     // no pending request = nothing to approve. The server enforces this too; this
     // keeps the UI honest so a coordinator is never offered a live END with no

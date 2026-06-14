@@ -1118,6 +1118,27 @@ app.post('/v1/events/:id/closure-request', async (c) => {
   return c.json({ ok: true, awaitingCoordinator: true }, 200);
 });
 
+// Closure-pin lockout (Brief 19 §6). The device reports 3 wrong (NOT duress) pin
+// attempts. The pin itself never leaves the device — only this lockout signal. We
+// record it (once) and surface it to the coordinator's live dashboard, because
+// repeated failures can mean someone OTHER than the user is trying to close.
+app.post('/v1/events/:id/closure-lockout', async (c) => {
+  const eventId = c.req.param('id');
+  const event = await c.env.DB.prepare('SELECT status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ status: string }>();
+  if (!event) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  if (event.status === 'active') {
+    await c.env.DB.prepare('UPDATE events SET closureLockoutAt = ? WHERE id = ? AND closureLockoutAt IS NULL')
+      .bind(Date.now(), eventId)
+      .run();
+    await audit(c.env, eventId, 'closure_pin_lockout', null, null);
+  }
+  return c.json({ ok: true }, 200);
+});
+
 // Reason the event TRIGGERED — entered post-event (the user can't type during
 // covert activation). Part of the closure status report.
 app.post('/v1/events/:id/reason-triggered', async (c) => {

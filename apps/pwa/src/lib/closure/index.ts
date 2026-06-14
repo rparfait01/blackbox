@@ -20,6 +20,27 @@ import { evalClosurePin } from '@/lib/crypto/pin';
 
 export type ClosureResult = 'awaiting' | 'wrong' | 'no-session' | 'no-pin';
 
+/**
+ * Report a closure-pin LOCKOUT (3 wrong, not-duress attempts) to the coordinator
+ * (Brief 19 §6). The pin itself is never sent — only this signal, so the
+ * coordinator's live dashboard can flag that someone may be failing to close.
+ */
+export async function reportClosureLockout(): Promise<void> {
+  const session = await getActiveSession();
+  if (!session || session.status !== 'active' || !uploadsEnabled || !session.eventId || !session.hmacSecret) {
+    return;
+  }
+  try {
+    const path = `/v1/events/${session.eventId}/closure-lockout`;
+    const timestamp = Date.now();
+    const body = new TextEncoder().encode(JSON.stringify({}));
+    const signed = await signRequest({ secret: session.hmacSecret, eventId: session.eventId, method: 'POST', path, timestamp, body });
+    await fetch(`${API_BASE_URL}${path}`, { method: 'POST', headers: { ...signed, 'Content-Type': 'application/json' }, body: body as BodyInit });
+  } catch (error) {
+    log.error('closure-lockout report failed', error);
+  }
+}
+
 async function postClosureRequest(
   eventId: string,
   secret: string,

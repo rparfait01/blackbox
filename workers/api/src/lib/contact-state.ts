@@ -60,6 +60,7 @@ export interface ContactState {
     pin: 'sat' | 'unsat' | null;
     reasonSecured: string | null;
     reasonTriggered: string | null;
+    lockout: boolean;
   };
   emergency: EmergencyNumbers;
 }
@@ -232,7 +233,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered FROM events WHERE id = ?',
+    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -248,6 +249,7 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       closeRequestStatus: string | null;
       reasonSecured: string | null;
       reasonTriggered: string | null;
+      closureLockoutAt: number | null;
     }>();
   if (!event) {
     return null;
@@ -383,6 +385,9 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       pin: event.closeRequestStatus === 'sat' ? 'sat' : event.closeRequestStatus === 'unsat' ? 'unsat' : null,
       reasonSecured: event.reasonSecured,
       reasonTriggered: event.reasonTriggered,
+      // Repeated wrong closure-pin attempts (Brief 19 §6) — surfaced so the
+      // coordinator sees someone may be failing to close (possibly not the user).
+      lockout: event.closureLockoutAt != null,
     },
     emergency: await resolveEmergency(env, event.userId, event.locale),
   };
