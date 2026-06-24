@@ -126,8 +126,14 @@ export function SignIn(): JSX.Element {
         {busy ? 'Signing in…' : 'Sign in'}
       </PrimaryButton>
       <button
+        onClick={() => navigate('/forgot')}
+        className="mt-4 block w-full text-center text-sm text-med-text/50 underline"
+      >
+        Forgot password?
+      </button>
+      <button
         onClick={() => navigate('/onboarding')}
-        className="mt-5 block w-full text-center text-sm text-med-text/50 underline"
+        className="mt-3 block w-full text-center text-sm text-med-text/50 underline"
       >
         New here? Create an account
       </button>

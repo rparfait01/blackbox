@@ -19,6 +19,14 @@ export const requireSession: MiddlewareHandler<{ Bindings: Env; Variables: Vars 
   if (!session) {
     return c.json({ error: 'unauthorized' }, 401);
   }
+  // §D: a password reset bumps users.sessionsValidFrom; any session minted before
+  // that instant is rejected, so old sessions are invalidated on reset.
+  const u = await c.env.DB.prepare('SELECT sessionsValidFrom FROM users WHERE id = ?')
+    .bind(session.userId)
+    .first<{ sessionsValidFrom: number | null }>();
+  if (u?.sessionsValidFrom != null && session.issuedAt < u.sessionsValidFrom) {
+    return c.json({ error: 'session_expired' }, 401);
+  }
   c.set('userId', session.userId);
   await next();
   return undefined;

@@ -15,6 +15,7 @@ import { Hono } from 'hono';
 import { sessionSecret } from '../auth';
 import { hashSecret } from '../lib/crypto';
 import { mintSession } from '../lib/session';
+import { createResetToken, consumeResetToken } from '../lib/password-reset';
 import {
   claimByUserHash,
   createDraftUser,
@@ -141,4 +142,50 @@ authRoutes.post('/signin', async (c) => {
   }
   const sessionToken = await mintSession(secret, user.id);
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
+});
+
+// --- Forgot password (Brief 15 §D) ---
+// Issue a single-use, expiring reset link to the account email. Always returns
+// 200 with no hint about whether the account exists (no enumeration here, unlike
+// the deliberate signin UX choice), and the email send is fire-and-forget so the
+// response timing carries no signal either.
+authRoutes.post('/forgot', async (c) => {
+  const body = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
+  const email = (body.email ?? '').trim();
+  if (email) {
+    const token = await createResetToken(c.env, normalizeEmail(email));
+    if (token && c.env.PWA_ORIGIN) {
+      const link = `${c.env.PWA_ORIGIN}/reset?token=${token}`;
+      const { sendEmail } = await import('../channels/sendgrid-email');
+      c.executionCtx.waitUntil(
+        sendEmail(
+          c.env,
+          {
+            to: email,
+            subject: 'Reset your BLACK BOX password',
+            html: `<p>We received a request to reset your password. This link is valid for one hour and can be used once:</p><p><a href="${link}">${link}</a></p><p>If you didn’t request this, you can ignore this email — nothing has changed.</p>`,
+            text: `Reset your BLACK BOX password (valid 1 hour, single use): ${link}\n\nIf you didn’t request this, ignore this email.`,
+          },
+          'password_reset',
+        ),
+      );
+    }
+  }
+  return c.json({ ok: true }, 200);
+});
+
+// Redeem a reset token: set the new password and invalidate all prior sessions.
+authRoutes.post('/reset', async (c) => {
+  const body = await c.req
+    .json<{ token?: string; password?: string }>()
+    .catch(() => ({}) as { token?: string; password?: string });
+  const token = (body.token ?? '').trim();
+  if (!token || !isPassword(body.password)) {
+    return c.json({ error: 'token and a password of at least 6 characters are required' }, 400);
+  }
+  const ok = await consumeResetToken(c.env, token, body.password);
+  if (!ok) {
+    return c.json({ error: 'invalid_or_expired_token' }, 400);
+  }
+  return c.json({ ok: true }, 200);
 });
