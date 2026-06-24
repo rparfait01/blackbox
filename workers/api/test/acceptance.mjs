@@ -86,7 +86,7 @@ async function signup(mode = 'direct', name = 'Acc') {
   const email = `smoke+acc-${uniq()}@example.com`;
   const s1 = await api('POST', '/v1/auth/signup/start', { body: { name, email, password: PW, regionId: 'jp' } });
   if (!s1.data?.signupId) throw new Error('signup/start failed: ' + JSON.stringify(s1.data));
-  const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: mode, lockCode: '246', duressCode: '247' } });
+  const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: mode } });
   if (!s2.data?.sessionToken) throw new Error('finalize failed: ' + JSON.stringify(s2.data));
   created.emails.push(email);
   return { email, session: s2.data.sessionToken, userId: s2.data.userId, displayMode: s2.data.displayMode };
@@ -316,25 +316,27 @@ async function run() {
     assert(ev2.status === 'closed', 'not closed after force-close');
   });
 
-  await check('16. closure pin is NOT a login credential (pin rejected; password required)', async () => {
-    const u = await signup(); // sets password PW + closure lockCode 246
-    const byPin = await api('POST', '/v1/auth/signin', { body: { email: u.email, password: '246' } });
-    assert(byPin.status !== 200 || !byPin.data?.sessionToken, 'closure pin authenticated login — pin is wired to login');
+  await check('16. Brief 16 §1: signup finalizes with NO lock code; no pin authenticates login', async () => {
+    // signup() itself sends no lockCode — finalize must accept that and mint a session.
+    const u = await signup();
+    assert(u.session, 'finalize without a lockCode failed to create a session');
+    // There is no pin; an arbitrary code must never authenticate.
+    const byCode = await api('POST', '/v1/auth/signin', { body: { email: u.email, password: '246' } });
+    assert(byCode.status !== 200 || !byCode.data?.sessionToken, 'a code authenticated login — a pin is wired to login');
     const byPw = await api('POST', '/v1/auth/signin', { body: { email: u.email, password: PW } });
     assert(byPw.status === 200 && byPw.data?.sessionToken, 'password login failed');
   });
 
-  await check('17. closure-pin LOCKOUT surfaces to the coordinator (no pin transmitted)', async () => {
-    assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set');
+  await check('17. Brief 16 §1: the lock-code standdown path is retired (gesture-only)', async () => {
     const u = await signup();
     await addEmail(u.session, 'primary', 'P');
-    const ev = await trigger(u.session, 'acc-lockout');
-    const { token } = await claimCoordinator(ev.eventId);
-    // Device reports the lockout (3 wrong) — body carries NO pin, only the signal.
-    const lo = await signed('POST', `/v1/events/${ev.eventId}/closure-lockout`, ev.hmacSecret, ev.eventId, {});
-    assert(lo.status === 200, `lockout report failed ${lo.status}`);
-    const state = await api('GET', `/v1/c/${ev.eventId}/state?t=${token}`);
-    assert(state.data?.closure?.lockout === true, `lockout not surfaced to coordinator: ${JSON.stringify(state.data?.closure)}`);
+    const ev = await trigger(u.session, 'acc-no-standdown');
+    // The legacy user lock-code close must be gone — closure is gesture + consent only.
+    const sd = await signed('POST', `/v1/events/${ev.eventId}/standdown`, ev.hmacSecret, ev.eventId, { code: '246' });
+    assert(sd.status === 410, `standdown not retired (expected 410, got ${sd.status})`);
+    // And the event is still active — nothing closed it.
+    const ev2 = await adminEvent(ev.eventId);
+    assert(ev2.status === 'active', `standdown closed the event: ${ev2.status}`);
   });
 
   await check('18. one close door: a client refresh during an active event does NOT close it', async () => {

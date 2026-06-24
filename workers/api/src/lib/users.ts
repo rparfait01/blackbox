@@ -49,9 +49,11 @@ export function getUserByEmail(env: Env, email: string): Promise<UserRow | null>
     .first<UserRow>();
 }
 
-/** True once the user has finalized (chosen display mode + set a lock code). */
+/** True once the user has finalized (chosen a display mode). The closure pin is
+ *  retired (Brief 16 §1) — closure is gesture-only — so finalization no longer
+ *  involves a lock code. */
 export function isActive(user: UserRow): boolean {
-  return user.lockCodeHash != null && user.displayMode != null;
+  return user.displayMode != null;
 }
 
 export interface CreateDraftResult {
@@ -132,13 +134,12 @@ export async function markEmailVerified(env: Env, userId: string): Promise<void>
 export async function finalizeUser(
   env: Env,
   userId: string,
-  input: { displayMode: 'direct' | 'covert'; lockCodeHash: string; duressCodeHash: string | null },
+  input: { displayMode: 'direct' | 'covert' },
 ): Promise<void> {
   const now = Date.now();
-  await env.DB.prepare(
-    'UPDATE users SET displayMode = ?, lockCodeHash = ?, duressCodeHash = ?, updatedAt = ? WHERE id = ?',
-  )
-    .bind(input.displayMode, input.lockCodeHash, input.duressCodeHash, now, userId)
+  // Brief 16 §1: no lock code is set at finalize — closure is gesture-only.
+  await env.DB.prepare('UPDATE users SET displayMode = ?, updatedAt = ? WHERE id = ?')
+    .bind(input.displayMode, now, userId)
     .run();
 }
 

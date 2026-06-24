@@ -30,10 +30,6 @@ import type { Env, Vars } from '../types';
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
-function isPin(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9]{3,6}$/.test(value);
-}
-
 function isPassword(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 6;
 }
@@ -78,22 +74,16 @@ authRoutes.post('/signup/finalize', async (c) => {
     .json<{
       signupId?: string;
       displayMode?: string;
-      lockCode?: string;
-      duressCode?: string;
       claimUserHash?: string;
     }>()
     .catch(() => ({}) as Record<string, string>);
   if (body.displayMode !== 'direct' && body.displayMode !== 'covert') {
     return c.json({ error: 'displayMode must be direct or covert' }, 400);
   }
-  // Brief 9: the closure pin is now 3-digit and on-device only. The server pin
-  // hash is vestigial (closure is coordinator-secured), so accept a 3–6 digit
-  // lockCode and store it harmlessly. Duress is no longer a separate code.
-  if (!body.signupId || !isPin(body.lockCode)) {
-    return c.json({ error: 'signupId and a 3-6 digit lockCode are required' }, 400);
-  }
-  if (body.duressCode !== undefined && !isPin(body.duressCode)) {
-    return c.json({ error: 'duressCode must be 3-6 digits' }, 400);
+  // Brief 16 §1: NO lock code. Closure is gesture-only end to end — the finalize
+  // contract no longer accepts or requires a pin/lockCode of any kind.
+  if (!body.signupId) {
+    return c.json({ error: 'signupId is required' }, 400);
   }
   const user = await getUserById(c.env, body.signupId);
   if (!user) {
@@ -104,11 +94,7 @@ authRoutes.post('/signup/finalize', async (c) => {
   if (!secret) {
     return c.json({ error: 'server_misconfigured' }, 500);
   }
-  await finalizeUser(c.env, user.id, {
-    displayMode: body.displayMode,
-    lockCodeHash: await hashSecret(body.lockCode),
-    duressCodeHash: body.duressCode ? await hashSecret(body.duressCode) : null,
-  });
+  await finalizeUser(c.env, user.id, { displayMode: body.displayMode });
   if (body.claimUserHash) {
     await claimByUserHash(c.env, user.id, body.claimUserHash);
   }

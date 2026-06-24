@@ -4,7 +4,6 @@ import { cors } from 'hono/cors';
 import { hmacSha256Hex, randomHex } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
-import { attemptStandDown } from './lib/standdown';
 import { appendToChain, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import { qrSvg } from './lib/qr';
@@ -1107,32 +1106,14 @@ app.post('/v1/events/:id/heartbeat', async (c) => {
   return c.json({ ok: true }, 200);
 });
 
-// Stand down (Fix Brief 1 #3/#4). The ONLY path that closes an event from the
-// user's side, and only with a server-VERIFIED lock code. The raw code is
-// checked against the account's lockCodeHash / duressCodeHash:
-//   - lock code  → close the event (closedBy = 'user_lock_code')
-//   - duress code → ESCALATE (duress alert), do NOT close; recording continues
-//                   and the event closes later only on confirmed voice contact
-//                   (a contact-side stand-down)
-//   - anything else → rejected; nothing changes
+// Stand down — RETIRED (Brief 16 §1). The lock-code close path is gone: closure
+// is gesture-only and runs entirely through dual consent (POST
+// /v1/events/:id/closure-request — sat/unsat from the hold gesture — then the
+// matching confirm). There is no code-based self-close from any side. Kept as a
+// hard 410 so any stale caller fails closed instead of silently doing nothing.
 app.post('/v1/events/:id/standdown', async (c) => {
-  const eventId = c.req.param('id');
-  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
-  const workerOrigin = new URL(c.req.url).origin;
-  const outcome = await attemptStandDown(c.env, eventId, body.code ?? '', workerOrigin, 'user_lock_code');
-  switch (outcome) {
-    case 'not_found':
-      return c.json({ error: 'not found' }, 404);
-    case 'already_closed':
-    case 'closed':
-      return c.json({ ok: true, closed: true }, 200);
-    case 'duress':
-      return c.json({ ok: true, closed: false, duress: true }, 200);
-    case 'no_lock_code':
-      return c.json({ error: 'no_verifiable_lock_code' }, 409);
-    default:
-      return c.json({ error: 'invalid_code' }, 403);
-  }
+  await audit(c.env, c.req.param('id'), 'standdown_retired_gesture_only', null, null);
+  return c.json({ error: 'standdown_retired', message: 'Closure is gesture-only via dual consent.' }, 410);
 });
 
 // Closure REQUEST (Brief 9 Phase D). The user's PWA evaluates the 3-digit pin

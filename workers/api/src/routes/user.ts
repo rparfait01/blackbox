@@ -6,7 +6,6 @@
 
 import { Hono } from 'hono';
 import { requireSession } from '../auth';
-import { hashSecret, verifySecret } from '../lib/crypto';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { pairingStatus, startLinePairing } from '../lib/line-pairing';
 import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
@@ -29,10 +28,6 @@ userRoutes.use('*', requireSession);
 /** 423 Locked if the user has an active alert (Fix Brief 4 S1). */
 async function lockedDuringAlert(c: { env: Env; get: (k: 'userId') => string }): Promise<boolean> {
   return hasActiveEvent(c.env, c.get('userId'));
-}
-
-function isFourDigits(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9]{4}$/.test(value);
 }
 
 userRoutes.get('/', async (c) => {
@@ -93,23 +88,6 @@ userRoutes.post('/region', async (c) => {
   return c.json({ ok: true }, 200);
 });
 
-userRoutes.post('/lock-code', async (c) => {
-  if (await lockedDuringAlert(c)) {
-    return c.json({ error: 'locked_during_active_alert' }, 423);
-  }
-  const body = await c.req
-    .json<{ oldCode?: string; newCode?: string }>()
-    .catch(() => ({}) as Record<string, string>);
-  if (!isFourDigits(body.newCode)) {
-    return c.json({ error: 'newCode must be 4 digits' }, 400);
-  }
-  const user = await getUserById(c.env, c.get('userId'));
-  if (!user?.lockCodeHash || !body.oldCode || !(await verifySecret(body.oldCode, user.lockCodeHash))) {
-    return c.json({ error: 'old code incorrect' }, 403);
-  }
-  await updateUserFields(c.env, user.id, { lockCodeHash: await hashSecret(body.newCode) });
-  return c.json({ ok: true }, 200);
-});
 
 // --- Roles: 3 contacts + 1 guardian (Brief 9 / Brief 8 contact tabs) ---
 const VALID_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary', 'guardian', 'emergency'];
@@ -281,20 +259,3 @@ userRoutes.post('/guardian-enabled', async (c) => {
   return c.json({ ok: true, enabled: body.enabled === true }, 200);
 });
 
-userRoutes.post('/duress-code', async (c) => {
-  if (await lockedDuringAlert(c)) {
-    return c.json({ error: 'locked_during_active_alert' }, 423);
-  }
-  const body = await c.req
-    .json<{ lockCode?: string; newDuressCode?: string }>()
-    .catch(() => ({}) as Record<string, string>);
-  if (!isFourDigits(body.newDuressCode)) {
-    return c.json({ error: 'newDuressCode must be 4 digits' }, 400);
-  }
-  const user = await getUserById(c.env, c.get('userId'));
-  if (!user?.lockCodeHash || !body.lockCode || !(await verifySecret(body.lockCode, user.lockCodeHash))) {
-    return c.json({ error: 'lock code incorrect' }, 403);
-  }
-  await updateUserFields(c.env, user.id, { duressCodeHash: await hashSecret(body.newDuressCode) });
-  return c.json({ ok: true }, 200);
-});

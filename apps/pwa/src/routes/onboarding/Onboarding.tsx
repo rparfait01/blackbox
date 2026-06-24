@@ -162,16 +162,14 @@ export function Onboarding(): JSX.Element {
   async function finalize(): Promise<void> {
     setBusy(true);
     setError(null);
-    // The closure pin is RETIRED (§E2 gesture closure). The server's finalize
-    // still requires a lockCode for legacy/standdown compatibility, so we send a
-    // random one the user never sets, sees, or uses. It is vestigial.
-    const lockCode = String(Math.floor(100000 + Math.random() * 900000));
+    // Brief 16 §1: NO lock code. Closure is gesture-only; finalize no longer
+    // takes or needs a pin of any kind.
     const userHash = await getUserHash();
     const res = await api<{ sessionToken: string; displayMode: DisplayMode }>(
       '/v1/auth/signup/finalize',
       {
         auth: false,
-        body: { signupId, displayMode, lockCode, claimUserHash: userHash },
+        body: { signupId, displayMode, claimUserHash: userHash },
       },
     );
     setBusy(false);
