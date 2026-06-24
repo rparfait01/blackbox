@@ -16,6 +16,7 @@
 import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types';
 import { advanceCascades, notifyEscalation, reissueExpiredLinks } from './lib/notify';
 import { runIntegrityScan } from './lib/integrity';
+import { advanceUnconfirmedClosures } from './lib/closure-timeout';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -62,6 +63,14 @@ export const scheduled = async (
         await reissueExpiredLinks(env, workerOrigin(env));
       } catch (error) {
         console.log(JSON.stringify({ level: 'error', job: 'reissue', detail: String(error) }));
+      }
+      try {
+        // §E5: a pending CLEAN close request that support hasn't confirmed is
+        // re-prompted at 60s and advanced down the support chain at 180s, so a
+        // user is never trapped by unreachable support.
+        await advanceUnconfirmedClosures(env, workerOrigin(env));
+      } catch (error) {
+        console.log(JSON.stringify({ level: 'error', job: 'closure_timeout', detail: String(error) }));
       }
       try {
         await runIntegrityScan(env, workerOrigin(env));
