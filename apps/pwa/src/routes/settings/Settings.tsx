@@ -190,7 +190,7 @@ export function Settings(): JSX.Element {
             account server-side and returns to signup. */}
         <button
           onClick={() => void deleteAccount()}
-          className="mt-3 w-full rounded-full border border-status-active/40 py-3 text-sm text-status-active/80"
+          className="mt-3 w-full rounded-full border border-med-warn/40 py-3 text-sm text-med-warn/80"
         >
           Delete account
         </button>
@@ -294,7 +294,7 @@ function ClosurePinOverlay({
       <div className="stillpoint-bg w-full max-w-sm rounded-2xl p-8 text-med-text" onClick={(e) => e.stopPropagation()}>
         <p className="mb-8 text-center font-serif text-lg font-light text-med-text/80">{prompts[phase]}</p>
         <PinPad onComplete={(code) => void onCode(code)} resetKey={phase} length={3} />
-        {error ? <p className="mt-4 text-center text-sm text-status-active">{error}</p> : null}
+        {error ? <p className="mt-4 text-center text-sm text-med-warn">{error}</p> : null}
         <button onClick={onClose} className="mt-6 block w-full text-center text-sm text-med-text/40 underline">
           Cancel
         </button>

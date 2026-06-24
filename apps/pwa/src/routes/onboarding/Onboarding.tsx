@@ -46,7 +46,7 @@ function PrimaryButton({
   return (
     <button
       {...props}
-      className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+      className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
     >
       {children}
     </button>
@@ -328,13 +328,13 @@ export function Onboarding(): JSX.Element {
             <p className="mb-3 text-sm text-med-text/80">Account already exists. Tap Sign In instead.</p>
             <button
               onClick={() => navigate('/signin', { state: { email: email.trim() } })}
-              className="w-full rounded-full bg-med-text/90 py-3 text-sm font-medium text-[#1a1f3a]"
+              className="w-full rounded-full bg-med-text/90 py-3 text-sm font-medium text-[#071416]"
             >
               Sign In
             </button>
           </div>
         ) : null}
-        {error ? <p className="mt-4 text-sm text-status-active">{error}</p> : null}
+        {error ? <p className="mt-4 text-sm text-med-warn">{error}</p> : null}
         <div className="mt-8">
           <PrimaryButton onClick={startSignup} disabled={busy}>
             {busy ? 'Creating account…' : 'Continue'}
@@ -389,7 +389,7 @@ export function Onboarding(): JSX.Element {
           {codePhase === 'pin' ? 'Choose a 3-digit pin' : 'Re-enter your 3-digit pin'}
         </p>
         <PinPad onComplete={onCode} resetKey={codePhase} length={3} />
-        {error ? <p className="mt-4 text-center text-sm text-status-active">{error}</p> : null}
+        {error ? <p className="mt-4 text-center text-sm text-med-warn">{error}</p> : null}
         <div className="mt-8 space-y-3 text-center text-xs leading-relaxed text-med-text/55">
           <p>
             When you want to end an alert, you enter this pin to request closure. Your support

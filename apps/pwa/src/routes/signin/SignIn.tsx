@@ -29,7 +29,7 @@ function PrimaryButton({ children, ...props }: React.ButtonHTMLAttributes<HTMLBu
   return (
     <button
       {...props}
-      className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+      className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
     >
       {children}
     </button>
@@ -121,7 +121,7 @@ export function SignIn(): JSX.Element {
         placeholder="Password"
         className="mb-4 w-full border-b border-med-text/25 bg-transparent py-2 text-lg text-med-text outline-none placeholder:text-med-text/30"
       />
-      {error ? <p className="mb-3 text-sm text-status-active">{error}</p> : null}
+      {error ? <p className="mb-3 text-sm text-med-warn">{error}</p> : null}
       <PrimaryButton onClick={signIn} disabled={busy || !email.includes('@') || password.length < 1}>
         {busy ? 'Signing in…' : 'Sign in'}
       </PrimaryButton>

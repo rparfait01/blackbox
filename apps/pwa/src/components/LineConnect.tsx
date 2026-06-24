@@ -85,12 +85,12 @@ export function LineConnect({
           LINE connects by scanning — no IDs to type or look up. Add a name above, then generate a
           connect code for them to scan in LINE.
         </p>
-        {error ? <p className="mt-2 text-sm text-status-active">{error}</p> : null}
+        {error ? <p className="mt-2 text-sm text-med-warn">{error}</p> : null}
         <button
           type="button"
           disabled={!contactName.trim() || phase === 'starting'}
           onClick={() => void start()}
-          className="mt-3 w-full rounded-full bg-med-text/90 py-3 font-sans text-sm font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="mt-3 w-full rounded-full bg-med-text/90 py-3 font-sans text-sm font-medium tracking-[0.04em] text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {phase === 'starting' ? 'Generating…' : !contactName.trim() ? 'Add a name first' : 'Generate LINE connect code'}
         </button>
@@ -126,11 +126,11 @@ export function LineConnect({
       ) : null}
       {phase === 'expired' ? (
         <>
-          <p className="mt-3 text-center text-sm text-status-active">This code expired.</p>
+          <p className="mt-3 text-center text-sm text-med-warn">This code expired.</p>
           <button
             type="button"
             onClick={() => void start()}
-            className="mt-2 w-full rounded-full bg-med-text/90 py-3 font-sans text-sm font-medium text-[#1a1f3a]"
+            className="mt-2 w-full rounded-full bg-med-text/90 py-3 font-sans text-sm font-medium text-[#071416]"
           >
             New connect code
           </button>

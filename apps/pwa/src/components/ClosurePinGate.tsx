@@ -81,7 +81,7 @@ function SetClosurePinScreen({ onDone }: { onDone: () => void }): JSX.Element {
           {phase === 'choose' ? 'Choose a 3-digit code' : 'Re-enter your 3-digit code'}
         </p>
         <PinPad onComplete={(code) => void onCode(code)} resetKey={phase} length={3} />
-        {error ? <p className="mt-4 text-center text-sm text-status-active">{error}</p> : null}
+        {error ? <p className="mt-4 text-center text-sm text-med-warn">{error}</p> : null}
         <div className="mt-8 space-y-3 text-center text-xs leading-relaxed text-med-text/55">
           <p>
             This is the only way to end a session. You enter it to request closure; your support

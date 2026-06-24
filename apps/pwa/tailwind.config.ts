@@ -61,13 +61,21 @@ export default {
           active: '#FF3B30',
           ack: '#34C759',
         },
-        // Stillpoint meditation facade palette
+        // Stillpoint meditation facade palette (Fix Brief 15 §A). A calm deep
+        // blue-green wellness palette — soft teal/aqua text, gentle teal rings.
+        // NO amber, NO alarm red here: the facade must read as wellness, full
+        // stop. The instrument's red/amber live only in the `bb`/`status` tokens
+        // and must never leak onto a `med`-themed (covert/login) surface.
         med: {
-          bg1: '#1a1f3a',
-          bg2: '#2d1f4a',
-          bg3: '#1f2d4a',
-          text: '#F4EDE0',
-          accent: '#D4A373',
+          bg1: '#0a1d22',
+          bg2: '#0a2329',
+          bg3: '#071416',
+          text: '#8fd6cc',
+          accent: '#3f7d78',
+          // Facade-scoped soft warning tone for form errors / destructive
+          // affordances. A muted rose — deliberately softer and distinct from the
+          // instrument's alarm red, so no alarm color ever leaks onto the facade.
+          warn: '#d49a9a',
         },
       },
       fontFamily: {

@@ -112,7 +112,7 @@ export function GuardianAccept(): JSX.Element {
               placeholder="you@example.com"
               className="mb-4 w-full border-b border-med-text/25 bg-transparent py-2 text-center text-lg text-med-text outline-none placeholder:text-med-text/30"
             />
-            {error ? <p className="mb-3 text-sm text-status-active">{error}</p> : null}
+            {error ? <p className="mb-3 text-sm text-med-warn">{error}</p> : null}
             <PrimaryButton onClick={sendOtp} disabled={busy || !email.includes('@')}>
               {busy ? 'Sending…' : 'Send code'}
             </PrimaryButton>
@@ -129,7 +129,7 @@ export function GuardianAccept(): JSX.Element {
               placeholder="------"
               className="mb-4 w-full border-b border-med-text/25 bg-transparent py-3 text-center font-mono text-3xl tracking-[0.4em] text-med-text outline-none placeholder:text-med-text/20"
             />
-            {error ? <p className="mb-3 text-sm text-status-active">{error}</p> : null}
+            {error ? <p className="mb-3 text-sm text-med-warn">{error}</p> : null}
             <PrimaryButton onClick={verify} disabled={busy || code.length !== 6}>
               {busy ? 'Verifying…' : 'Confirm'}
             </PrimaryButton>
@@ -156,7 +156,7 @@ function PrimaryButton({
   return (
     <button
       {...props}
-      className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+      className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
     >
       {children}
     </button>

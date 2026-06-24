@@ -159,7 +159,7 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
                 <button onClick={() => setEditing(true)} className="text-sm text-med-text/70 underline">
                   Edit
                 </button>
-                <button onClick={() => void remove()} className="text-sm text-status-active/80 underline">
+                <button onClick={() => void remove()} className="text-sm text-med-warn/80 underline">
                   Remove
                 </button>
               </div>

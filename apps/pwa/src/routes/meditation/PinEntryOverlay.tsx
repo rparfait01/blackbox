@@ -168,13 +168,13 @@ export function PinEntryOverlay({ open, onClose }: { open: boolean; onClose: () 
               </button>
             </div>
 
-            {error ? <p className="mt-6 text-center text-sm text-status-active">{error}</p> : null}
+            {error ? <p className="mt-6 text-center text-sm text-med-warn">{error}</p> : null}
 
             <button
               type="button"
               onClick={() => void submit()}
               disabled={busy || locked || digits.length !== MAX}
-              className="mt-6 w-full rounded-full bg-med-text/90 py-3.5 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="mt-6 w-full rounded-full bg-med-text/90 py-3.5 font-sans text-base font-medium tracking-[0.04em] text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               {busy ? 'Submitting…' : 'Submit'}
             </button>

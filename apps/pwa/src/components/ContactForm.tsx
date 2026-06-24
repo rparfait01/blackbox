@@ -147,13 +147,13 @@ export function ContactForm({
             />
           </label>
 
-          {error ? <p className="text-sm text-status-active">{error}</p> : null}
+          {error ? <p className="text-sm text-med-warn">{error}</p> : null}
 
           <button
             type="button"
             disabled={!canSubmit}
             onClick={() => onSubmit({ name: name.trim(), relationship: relationship.trim(), channel, destination: destination.trim() })}
-            className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#1a1f3a] transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             {busy ? 'Saving…' : submitLabel}
           </button>
