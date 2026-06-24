@@ -9,7 +9,7 @@
 import { formatDtg } from '@blackbox/shared';
 import { getChainHead, hashString } from './integrity';
 import { getContactState } from './contact-state';
-import { disposition, type Disposition } from './tampering';
+import { disposition, FEED_LOST_NOTE, type Disposition } from './tampering';
 import type { Env } from '../types';
 
 export interface ClosureReport {
@@ -21,6 +21,8 @@ export interface ClosureReport {
   duress: boolean;
   /** §E4 — the authoritative disposition recorded in the report. */
   disposition: Disposition;
+  /** §3 — a mandatory verbatim note for a feed-loss close; null otherwise. */
+  note: string | null;
   reasonTriggered: string | null;
   reasonSecured: string | null;
   origin: unknown;
@@ -40,7 +42,7 @@ export async function buildClosureReport(
   eventId: string,
 ): Promise<{ report: ClosureReport; packageHash: string } | null> {
   const event = await env.DB.prepare(
-    'SELECT createdAt, closeRequestStatus, reasonSecured, reasonTriggered, securedAt, tamperingAt, tzOffsetMinutes FROM events WHERE id = ?',
+    'SELECT createdAt, closeRequestStatus, reasonSecured, reasonTriggered, securedAt, tamperingAt, feedLostAt, tzOffsetMinutes FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -50,6 +52,7 @@ export async function buildClosureReport(
       reasonTriggered: string | null;
       securedAt: number | null;
       tamperingAt: number | null;
+      feedLostAt: number | null;
       tzOffsetMinutes: number | null;
     }>();
   if (!event) {
@@ -67,6 +70,7 @@ export async function buildClosureReport(
 
   const pin: ClosureReport['pin'] =
     event.closeRequestStatus === 'sat' ? 'sat' : event.closeRequestStatus === 'unsat' ? 'unsat' : 'unknown';
+  const disp = disposition(event.closeRequestStatus, event.tamperingAt, event.feedLostAt);
   const report: ClosureReport = {
     version: 'blackbox-closure-1',
     eventId,
@@ -74,7 +78,8 @@ export async function buildClosureReport(
     generatedDtg: formatDtg(now),
     pin,
     duress: pin === 'unsat',
-    disposition: disposition(event.closeRequestStatus, event.tamperingAt),
+    disposition: disp,
+    note: disp === 'FEED_LOST' ? FEED_LOST_NOTE : null,
     reasonTriggered: event.reasonTriggered,
     reasonSecured: event.reasonSecured,
     origin: state?.origin ?? null,

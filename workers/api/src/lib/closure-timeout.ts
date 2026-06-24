@@ -21,7 +21,12 @@
 
 import { audit } from './audit';
 import { broadcastEventChange } from '../event-channel';
+import { buildClosureReport } from './closure-report';
+import { FEED_LOST_NOTE } from './tampering';
 import type { Env } from '../types';
+
+/** A feed is "lost" after this long dark, once emergency has been notified. */
+export const FEED_LOST_MS = 90_000;
 
 export const CLOSURE_REPROMPT_MS = 60_000;
 export const CLOSURE_FAIL_MS = 180_000;
@@ -94,5 +99,31 @@ export async function runEscalation(env: Env): Promise<void> {
       await audit(env, row.id, 'escalated_to_guardian', null, null);
       await broadcastEventChange(env, row.id, 'coordinator_path_failed');
     }
+  }
+}
+
+/**
+ * §3 feed-loss closure. Emergency services are notification-only — they have no
+ * closure authority. Once they've been notified the live feed is the remaining
+ * value; when the device goes dark for a sustained window the feed has physically
+ * stopped, so the session closes with disposition FEED_LOST and the mandatory
+ * verbatim note that closure is NOT an indication of safety. This is the ONLY
+ * heartbeat-driven close, and it is explicitly distinct from a consented SAT.
+ */
+export async function closeFeedLostEvents(env: Env): Promise<void> {
+  const cutoff = Date.now() - FEED_LOST_MS;
+  const { results } = await env.DB.prepare(
+    "SELECT id FROM events WHERE status = 'active' AND emergencyNotifiedAt IS NOT NULL AND feedLostAt IS NULL AND COALESCE(lastHeartbeatAt, createdAt) < ?",
+  )
+    .bind(cutoff)
+    .all<{ id: string }>();
+  const now = Date.now();
+  for (const row of results ?? []) {
+    await env.DB.prepare('UPDATE events SET status = ?, closedAt = ?, closedBy = ?, feedLostAt = ? WHERE id = ?')
+      .bind('closed', now, 'feed_lost', now, row.id)
+      .run();
+    await audit(env, row.id, 'closed_feed_lost', null, JSON.stringify({ note: FEED_LOST_NOTE }));
+    await buildClosureReport(env, row.id);
+    await broadcastEventChange(env, row.id, 'closed');
   }
 }

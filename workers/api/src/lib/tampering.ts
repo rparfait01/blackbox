@@ -16,13 +16,23 @@ export const TAMPERING_THRESHOLD = 2;
 /** …within this rolling window (ms) escalates DURESS → TAMPERING. */
 export const TAMPERING_WINDOW_MS = 120_000;
 
-export type Disposition = 'SAT' | 'DURESS' | 'TAMPERING';
+export type Disposition = 'SAT' | 'DURESS' | 'TAMPERING' | 'FEED_LOST';
+
+/** The mandatory, verbatim note on a feed-loss closure (Brief 16 §3). */
+export const FEED_LOST_NOTE = 'Safety is at risk. Session closure is NOT an indication of safety.';
 
 /**
- * Disposition from server truth only. Tampering outranks duress outranks clean;
- * a TAMPERING (or DURESS) event must never be reported as a clean "safe" close.
+ * Disposition from server truth only. A feed-loss close (the device went dark
+ * after emergency was notified) is recorded DISTINCTLY and outranks everything —
+ * it is explicitly NOT a safe close. Otherwise tampering > duress > clean; a
+ * TAMPERING/DURESS event must never be reported as a clean "safe" close.
  */
-export function disposition(closeRequestStatus: string | null, tamperingAt: number | null): Disposition {
+export function disposition(
+  closeRequestStatus: string | null,
+  tamperingAt: number | null,
+  feedLostAt: number | null = null,
+): Disposition {
+  if (feedLostAt != null) return 'FEED_LOST';
   if (tamperingAt != null) return 'TAMPERING';
   if (closeRequestStatus === 'unsat') return 'DURESS';
   return 'SAT';

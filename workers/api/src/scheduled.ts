@@ -16,7 +16,7 @@
 import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types';
 import { advanceCascades, notifyEscalation, reissueExpiredLinks } from './lib/notify';
 import { runIntegrityScan } from './lib/integrity';
-import { runEscalation } from './lib/closure-timeout';
+import { closeFeedLostEvents, runEscalation } from './lib/closure-timeout';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -70,6 +70,13 @@ export const scheduled = async (
         await runEscalation(env);
       } catch (error) {
         console.log(JSON.stringify({ level: 'error', job: 'escalation', detail: String(error) }));
+      }
+      try {
+        // §3: once emergency is notified, a sustained feed loss closes the session
+        // with the mandatory "closure is NOT safety" note.
+        await closeFeedLostEvents(env);
+      } catch (error) {
+        console.log(JSON.stringify({ level: 'error', job: 'feed_loss', detail: String(error) }));
       }
       try {
         await runIntegrityScan(env, workerOrigin(env));

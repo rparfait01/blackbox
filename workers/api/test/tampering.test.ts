@@ -25,7 +25,11 @@ describe('crossesTamperingThreshold', () => {
   });
 });
 
-describe('disposition — tampering outranks duress outranks clean', () => {
+describe('disposition — feed-loss outranks tampering outranks duress outranks clean', () => {
+  it('FEED_LOST outranks everything (a feed-loss close is never "safe")', () => {
+    expect(disposition('sat', null, 999)).toBe('FEED_LOST');
+    expect(disposition('unsat', 123, 999)).toBe('FEED_LOST');
+  });
   it('TAMPERING when escalated, regardless of the latest status', () => {
     expect(disposition('sat', 123)).toBe('TAMPERING');
     expect(disposition('unsat', 123)).toBe('TAMPERING');
