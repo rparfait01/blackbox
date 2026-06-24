@@ -7,6 +7,8 @@ import { isSetupComplete } from '@/lib/auth';
 import { triggerActivation } from '@/lib/activation';
 import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { formatElapsed } from '@/lib/time';
+import { checkReadiness, osFixHint, type Readiness } from '@/lib/readiness';
+import { primePermissions } from '@/lib/permissions';
 import { PinEntryOverlay } from '@/routes/meditation/PinEntryOverlay';
 
 /**
@@ -44,11 +46,37 @@ export function BlackBoxHome(): JSX.Element {
   const [now, setNow] = useState(() => Date.now());
   const [checkin, setCheckin] = useState<'idle' | 'sending' | 'done'>('idle');
   const [checkinLoc, setCheckinLoc] = useState(false);
+  // Readiness (Brief 15 §C): re-verified (not re-prompted) on every mount/refresh.
+  // A permission revoked in OS settings surfaces here as NOT READY within one launch.
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [retesting, setRetesting] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    void checkReadiness().then(setReadiness);
+  }, []);
+
+  // One-tap fix / self-test: re-request (re-verifies; only prompts where the OS
+  // allows) then re-check end to end. For an OS-revoked grant the browser won't
+  // re-show a dialog, so the osFixHint below points the user to OS settings.
+  async function retestReadiness(): Promise<void> {
+    setRetesting(true);
+    try {
+      await primePermissions();
+    } catch {
+      /* priming is best-effort; the re-check below is the source of truth */
+    }
+    setReadiness(await checkReadiness());
+    setRetesting(false);
+  }
+
+  // NOT READY only matters while dormant — during an active alert the instrument
+  // shows the live recording state, never a readiness nag.
+  const notReady = !alertActive && armable && readiness != null && !readiness.ready;
 
   useEffect(() => {
     void api<ContactsResponse>('/v1/me/contacts').then((res) => {
@@ -146,12 +174,36 @@ export function BlackBoxHome(): JSX.Element {
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-status-active" />
               Alert active · Recording
             </>
-          ) : armable ? (
-            'Armed · Listening'
-          ) : (
+          ) : !armable ? (
             'Not armed · No contact to reach'
+          ) : notReady ? (
+            <>
+              <span aria-hidden className="font-bold">!</span>
+              Not ready · {readiness!.missing.join(' + ')} off
+            </>
+          ) : (
+            'Armed · Listening'
           )}
         </div>
+
+        {/* NOT READY fix path (Brief 15 §C): name the missing grant, give the OS
+            path, and a one-tap re-test. Never silent. */}
+        {notReady ? (
+          <div className="mb-6 w-full max-w-xs rounded-lg border border-status-armed/40 bg-status-armed/5 p-4 text-center">
+            <p className="text-[12px] leading-relaxed text-bb-text-secondary">
+              {readiness!.missing.join(' and ')} permission is off, so an alert can’t fully record.
+            </p>
+            <p className="mt-2 text-[11px] leading-relaxed text-bb-text-tertiary">{osFixHint()}</p>
+            <button
+              type="button"
+              onClick={() => void retestReadiness()}
+              disabled={retesting}
+              className="mt-3 w-full rounded-full border border-status-armed/50 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-status-armed disabled:opacity-50"
+            >
+              {retesting ? 'Re-testing…' : 'Re-test readiness'}
+            </button>
+          </div>
+        ) : null}
 
         <button
           type="button"

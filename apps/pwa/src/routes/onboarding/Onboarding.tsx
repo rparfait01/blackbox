@@ -5,6 +5,7 @@ import { CaretLeft } from '@phosphor-icons/react';
 import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
+import { osFixHint } from '@/lib/readiness';
 import { InstallHint } from '@/components/InstallHint';
 import { ContactForm, type ContactValues } from '@/components/ContactForm';
 import { hashClosurePin } from '@/lib/crypto/pin';
@@ -116,7 +117,10 @@ export function Onboarding(): JSX.Element {
 
   // permissions priming (mic + location), requested from a user gesture here so
   // activation never triggers a permission dialog.
-  const [perms, setPerms] = useState<'idle' | 'asking' | { mic: boolean; location: boolean }>('idle');
+  const [perms, setPerms] = useState<'idle' | 'asking' | { mic: boolean; camera: boolean; location: boolean }>('idle');
+  // Explicit acknowledgement that the user is proceeding with a degraded (mic-denied)
+  // setup — the only non-granted way past the permission gate (Brief 15 §B).
+  const [degradedAck, setDegradedAck] = useState(false);
 
   const phoneE164 = (): string => `${country.code}${phoneLocal.replace(/[^0-9]/g, '')}`;
 
@@ -462,6 +466,11 @@ export function Onboarding(): JSX.Element {
     setPerms(await primePermissions());
   };
   const permsGranted = typeof perms === 'object';
+  // Mic is the core capability: a denied mic means the system cannot do its job.
+  // Onboarding may not complete to "armed" until mic is granted OR the user
+  // explicitly acknowledges the degraded state (Brief 15 §B).
+  const micOk = permsGranted && perms.mic;
+  const resolved = micOk || degradedAck;
 
   return (
     <Shell title="You're set up" onBack={() => setStep(6)}>
@@ -470,17 +479,20 @@ export function Onboarding(): JSX.Element {
         activation. Most phones show this on the lock screen and on a connected watch.
       </div>
 
-      {/* Prime mic + location now, from this tap, so activation never triggers a
-          permission prompt mid-alert. */}
+      {/* Prime mic + camera + location now, from this tap, so activation never
+          triggers a permission prompt mid-alert. Each ask has one plain line of
+          why; a denial is never a dead end (Brief 15 §B). */}
       <div className="mb-8 rounded-lg border border-med-text/20 bg-black/20 p-5 text-sm leading-relaxed text-med-text/80">
-        <p className="mb-4">
-          BLACK BOX needs your microphone and location to capture an alert. Grant them now so a
-          prompt never appears when you activate.
-        </p>
+        <ul className="mb-4 space-y-1.5 text-[13px] text-med-text/70">
+          <li><span className="text-med-text">Microphone</span> — captures what's happening so your contact has evidence.</li>
+          <li><span className="text-med-text">Location</span> — tells your contact where you are.</li>
+          <li><span className="text-med-text">Camera</span> (optional) — adds a visual record when possible.</li>
+        </ul>
         {permsGranted ? (
           <p className="font-mono text-[12px] text-med-text/70">
             Microphone {perms.mic ? '✓ enabled' : '✕ not granted'} · Location{' '}
-            {perms.location ? '✓ enabled' : '✕ not granted'}
+            {perms.location ? '✓ enabled' : '✕ not granted'} · Camera{' '}
+            {perms.camera ? '✓' : '—'}
           </p>
         ) : (
           <button
@@ -489,12 +501,45 @@ export function Onboarding(): JSX.Element {
             disabled={perms === 'asking'}
             className="w-full rounded-full border border-med-text/40 py-3 text-sm font-medium text-med-text disabled:opacity-50"
           >
-            {perms === 'asking' ? 'Requesting…' : 'Enable microphone & location'}
+            {perms === 'asking' ? 'Requesting…' : 'Enable microphone, camera & location'}
           </button>
         )}
+
+        {/* Denial path: say plainly what's degraded + the OS path to fix it, and
+            offer both a retry and an explicit degraded-acknowledge. Never silent,
+            never a dead end. */}
+        {permsGranted && !micOk ? (
+          <div className="mt-4 rounded-md border border-med-warn/40 bg-med-warn/5 p-3 text-[12px] leading-relaxed text-med-text/80">
+            <p className="mb-2 text-med-warn">
+              Without the microphone, BLACK BOX cannot record an alert — its core job. You can fix
+              this and try again, or continue with limited protection.
+            </p>
+            <p className="mb-3 text-med-text/55">{osFixHint()}</p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => void grantPerms()}
+                className="w-full rounded-full border border-med-text/40 py-2.5 text-sm font-medium text-med-text"
+              >
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={() => setDegradedAck(true)}
+                className={`w-full rounded-full py-2.5 text-xs ${
+                  degradedAck ? 'text-med-text/40' : 'text-med-text/55 underline'
+                }`}
+              >
+                {degradedAck ? '✓ Continuing with limited protection' : 'Continue with limited protection'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <p className="mt-3 text-[11px] leading-relaxed text-med-text/45">
           On iPhone, Safari may still ask again at the first activation — installing to your home
-          screen (below) reduces this. Full persistence comes with the native app.
+          screen (below) reduces this. Note: while your phone is locked or the app is in the
+          background, the web app cannot keep recording — open and unlocked is required.
         </p>
       </div>
 
@@ -502,7 +547,9 @@ export function Onboarding(): JSX.Element {
         <InstallHint />
       </div>
 
-      <PrimaryButton onClick={finish}>Continue</PrimaryButton>
+      <PrimaryButton onClick={finish} disabled={!resolved}>
+        {resolved ? 'Continue' : 'Enable the microphone to continue'}
+      </PrimaryButton>
     </Shell>
   );
 }
