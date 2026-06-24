@@ -146,6 +146,63 @@ export function publicKeyB64(env: Env): string | null {
   return env.INTEGRITY_PUBLIC_KEY ?? null;
 }
 
+async function importVerifyKey(publicKeyB64Value: string): Promise<CryptoKey | null> {
+  try {
+    return await crypto.subtle.importKey(
+      'spki',
+      b64ToBytes(publicKeyB64Value) as BufferSource,
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    );
+  } catch (error) {
+    console.log(JSON.stringify({ level: 'error', message: 'integrity verify-key import failed', detail: String(error) }));
+    return null;
+  }
+}
+
+/**
+ * Verify an Ed25519 signature (base64) over `data` against a published SPKI
+ * public key (base64). Defaults to this deployment's INTEGRITY_PUBLIC_KEY so a
+ * verifier can check a package with no extra config. Returns false on any
+ * failure (bad key, bad signature, tampered data) — never throws (Brief 15 §F).
+ */
+export async function verify(
+  data: string,
+  signatureB64: string,
+  publicKeyB64Value: string,
+): Promise<boolean> {
+  try {
+    const key = await importVerifyKey(publicKeyB64Value);
+    if (!key) return false;
+    return await crypto.subtle.verify(
+      'Ed25519',
+      key,
+      b64ToBytes(signatureB64) as BufferSource,
+      new TextEncoder().encode(data) as BufferSource,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a signed export manifest: strip its `signature`, re-canonicalize the
+ * remaining fields exactly as `exportPackage` did (JSON.stringify of the
+ * unsigned object), and check the Ed25519 signature against the manifest's own
+ * published `publicKey`. Tampering with any signed byte flips this to false.
+ */
+export async function verifyManifest(
+  manifest: Record<string, unknown> & { signature?: string; publicKey?: string },
+): Promise<boolean> {
+  const { signature, ...unsigned } = manifest;
+  const pub = (manifest.publicKey as string | undefined) ?? '';
+  if (!signature || !pub) return false;
+  // The signed payload is the manifest WITHOUT the signature field, in the same
+  // key order exportPackage produced (publicKey is part of the signed body).
+  return verify(JSON.stringify(unsigned), signature, pub);
+}
+
 /**
  * Scheduled integrity scan (#C4). Re-hash every sealed vault object and compare
  * to its recorded packageHash. On mismatch: open an investigation + alert the

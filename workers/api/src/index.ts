@@ -5,7 +5,7 @@ import { hmacSha256Hex, randomHex } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { attemptStandDown } from './lib/standdown';
-import { appendToChain, hashBytes } from './lib/integrity';
+import { appendToChain, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { qrSvg } from './lib/qr';
 import {
   getVerifiedRecipient,
@@ -125,6 +125,31 @@ app.get('/v1/health', async (c) => {
     r2 = false;
   }
   return c.json({ status: d1 && r2 ? 'ok' : 'degraded', d1, r2 }, 200);
+});
+
+// --- Custody integrity: published verification key + manifest verify (Brief 15 §F).
+// The Ed25519 public key (SPKI base64) is published so any recipient/court can
+// verify an exported package out-of-band, independent of this server.
+app.get('/.well-known/blackbox-integrity-public-key.json', async (c) => {
+  const publicKey = publicKeyB64(c.env);
+  if (!publicKey) {
+    return c.json({ error: 'no_signing_key' }, 503);
+  }
+  return c.json({ algorithm: 'Ed25519', format: 'spki-base64', publicKey }, 200);
+});
+
+// Convenience verifier: POST a signed export manifest, get back whether its
+// Ed25519 signature checks out against the manifest's published key. Stateless,
+// no auth, never throws — verification is a public, reproducible operation.
+app.post('/v1/integrity/verify', async (c) => {
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json({ valid: false, error: 'invalid_json' }, 400);
+  }
+  const valid = await verifyManifest(manifest);
+  return c.json({ valid }, 200);
 });
 
 // --- Create event (mints the per-event secret). Optional Bearer session ties
