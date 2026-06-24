@@ -246,17 +246,18 @@ async function run() {
   });
 
   // ---- CLOSURE GATE — the tripwire (#2). Requires MAGIC_LINK_SECRET. ----
-  await check('10. CLOSURE GATE: contact CANNOT secure with NO pending user request', async () => {
+  await check('10. CLOSURE GATE: support assent ALONE does not close (queued, awaiting user)', async () => {
     assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set — the closure gate cannot be exercised; suite fails closed');
     const u = await signup();
     await addEmail(u.session, 'primary', 'P');
     const ev = await trigger(u.session, 'acc-gate');
     const { token, cookie } = await claimCoordinator(ev.eventId);
-    // No closure request has been made → securing MUST be rejected.
+    // Symmetric consent: the coordinator may assent first, but it must NOT close
+    // without the user's matching assent — neither side closes unilaterally.
     const sec = await api('POST', `/v1/c/${ev.eventId}/secure?t=${token}`, { cookie });
-    assert(sec.status === 409 && sec.data.error === 'no_pending_closure_request', `GATE BROKEN: secure with no request → ${sec.status} ${JSON.stringify(sec.data)}`);
+    assert(sec.status === 200 && sec.data.queued && sec.data.awaitingUser, `support-first not queued: ${sec.status} ${JSON.stringify(sec.data)}`);
     const ev2 = await adminEvent(ev.eventId);
-    assert(ev2.status === 'active', `GATE BROKEN: event closed with no request (status=${ev2.status})`);
+    assert(ev2.status === 'active', `GATE BROKEN: event closed with no user assent (status=${ev2.status})`);
   });
 
   await check('11. contact NEVER enters the code: coordinator /standdown is 403', async () => {
@@ -348,6 +349,36 @@ async function run() {
     await new Promise((r) => setTimeout(r, 1500));
     const after = await adminEvent(ev.eventId);
     assert(after.status === 'active', `event closed on refresh (status=${after.status}) — implicit close door exists`);
+  });
+
+  await check('19. §2 symmetric consent: support-initiated → user-confirms closes (order-independent)', async () => {
+    assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set');
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const ev = await trigger(u.session, 'acc-sym');
+    const { token, cookie } = await claimCoordinator(ev.eventId);
+    // SUPPORT assents first → queued, not closed.
+    const sec1 = await api('POST', `/v1/c/${ev.eventId}/secure?t=${token}`, { cookie });
+    assert(sec1.data?.queued && sec1.data?.awaitingUser, `support-first not queued: ${JSON.stringify(sec1.data)}`);
+    assert((await adminEvent(ev.eventId)).status === 'active', 'closed before the user assented');
+    // USER assents second (clean gesture) → both present → closes.
+    const req = await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, { status: 'sat' });
+    assert(req.status === 200 && req.data?.closed === true, `user confirm did not close: ${JSON.stringify(req.data)}`);
+    assert((await adminEvent(ev.eventId)).status === 'closed', 'not closed after both assents');
+  });
+
+  await check('20. §2 duress survives initiation order: support-first + user-DURESS closes DURESS, not safe', async () => {
+    assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set');
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const ev = await trigger(u.session, 'acc-symduress');
+    const { token, cookie } = await claimCoordinator(ev.eventId);
+    await api('POST', `/v1/c/${ev.eventId}/secure?t=${token}`, { cookie }); // support assents first
+    const req = await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, { status: 'unsat' });
+    assert(req.status === 200, 'duress assent failed');
+    // The closure report's disposition must be DURESS — never a clean SAT.
+    const rep = await api('GET', `/v1/c/${ev.eventId}/closure-report?t=${token}`, { cookie });
+    assert(rep.data?.disposition === 'DURESS', `disposition laundered to ${rep.data?.disposition} (expected DURESS)`);
   });
 
   // ---- cleanup ----

@@ -314,7 +314,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     <a id="call" class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
     ${
       role === 'coordinator' && state.active
-        ? '<button id="secureAlert" class="btn btn-secure" disabled title="Available only once the user requests closure">SECURE — AWAITING USER REQUEST</button>'
+        ? '<button id="secureAlert" class="btn btn-secure" title="Request or confirm closure — both you and the user must assent">REQUEST CLOSURE</button>'
         : ''
     }
   </div>
@@ -659,9 +659,12 @@ const CLIENT_JS = `
     // request behind it. A closed event leaves the (now hidden) button alone.
     var sec=el('secureAlert');
     var pending = !!(cl && cl.requested);
-    if(sec && sec.textContent!=='SECURED ✓' && sec.textContent!=='SECURING…'){
-      sec.disabled = !pending;
-      sec.textContent = pending ? 'SECURE — END ALERT' : 'SECURE — AWAITING USER REQUEST';
+    // §2 symmetric consent: the coordinator may REQUEST closure (first assent,
+    // queued) or CONFIRM the user's request (second assent → closes). The control
+    // is always live; it never closes unilaterally (the server enforces both).
+    if(sec && sec.textContent!=='SECURED ✓' && sec.textContent!=='SECURING…' && sec.textContent!=='CLOSURE REQUESTED — AWAITING USER'){
+      sec.disabled = false;
+      sec.textContent = pending ? 'CONFIRM CLOSURE — END ALERT' : 'REQUEST CLOSURE';
     }
     if(!cl || !cl.requested){ w.style.display='none'; w.innerHTML=''; return; }
     var duress = cl.pin==='unsat';
@@ -782,25 +785,31 @@ const CLIENT_JS = `
     function postSecure(body){
       return fetch(api('/secure'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){ return r.json().then(function(d){ return {status:r.status,d:d}; }); });
     }
+    function relabel(){ return (S.closure&&S.closure.requested)?'CONFIRM CLOSURE — END ALERT':'REQUEST CLOSURE'; }
     function handleSecure(res){
       var d=res.d;
       if(d&&d.secured){ secureAlert.textContent='SECURED ✓'; return; }
+      // §2: coordinator initiated; the user hasn't assented yet. Queued, not closed.
+      if(d&&d.queued&&d.awaitingUser){ secureAlert.disabled=true; secureAlert.textContent='CLOSURE REQUESTED — AWAITING USER'; return; }
       // §E4: a TAMPERING event never clean-closes. The coordinator must override
       // with an explicit, logged reason that they have confirmed the user is safe.
       if(res.status===409 && d && d.error==='tampering_requires_override'){
         var reason=window.prompt('TAMPERING: repeated duress signals on this event. Do NOT assume safe. To secure anyway, type the reason you have confirmed the user is genuinely safe (this is logged):');
         if(reason && reason.trim()){ secureAlert.textContent='SECURING…'; postSecure({override:true, overrideReason:reason.trim()}).then(handleSecure); }
-        else { secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; }
+        else { secureAlert.disabled=false; secureAlert.textContent=relabel(); }
         return;
       }
-      if(res.status===409){ secureAlert.disabled=true; secureAlert.textContent='SECURE — AWAITING USER REQUEST'; alert('The user has not requested closure yet. You can only secure once they do.'); return; }
-      secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; alert('Could not secure. Try again.');
+      secureAlert.disabled=false; secureAlert.textContent=relabel(); alert('Could not complete that. Try again.');
     }
     secureAlert.onclick=function(){
-      if(secureAlert.disabled){ return; } // inert until the user requests closure
-      if(!window.confirm('Are you sure this person is safe? This ends the alert and stops recording.')){ return; }
+      if(secureAlert.disabled){ return; }
+      var pending = !!(S.closure&&S.closure.requested);
+      var msg = pending
+        ? 'Confirm closure? The user has requested it; confirming ends the alert and stops recording.'
+        : 'Request closure? This is your assent — the alert ends only once the user also confirms with their gesture.';
+      if(!window.confirm(msg)){ return; }
       secureAlert.disabled=true; secureAlert.textContent='SECURING…';
-      postSecure({}).then(handleSecure).catch(function(){ secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; });
+      postSecure({}).then(handleSecure).catch(function(){ secureAlert.disabled=false; secureAlert.textContent=relabel(); });
     };
   }
   // ---- share with authorities: mint a dispatch link + QR (Fix Brief 4 G1) ----

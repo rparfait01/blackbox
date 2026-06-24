@@ -6,6 +6,12 @@ import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { appendToChain, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
+import {
+  evaluateConsent,
+  overrideTamperingClose,
+  recordSupportAssent,
+  recordUserAssent,
+} from './lib/closure-consent';
 import { qrSvg } from './lib/qr';
 import {
   getVerifiedRecipient,
@@ -659,15 +665,29 @@ app.post('/v1/c/:id/secure', async (c) => {
     .json<{ override?: boolean; overrideReason?: string }>()
     .catch(() => ({}) as { override?: boolean; overrideReason?: string });
   const event = await c.env.DB
-    .prepare('SELECT userId, userHash, status, closeRequestStatus, tamperingAt FROM events WHERE id = ?')
+    .prepare('SELECT status FROM events WHERE id = ?')
     .bind(eventId)
-    .first<{ userId: string | null; userHash: string | null; status: string; closeRequestStatus: string | null; tamperingAt: number | null }>();
+    .first<{ status: string }>();
   if (!event) {
     return c.json({ error: 'not found' }, 404);
   }
-  // §E4: a TAMPERING event never clean-closes. Responders stay engaged until a
-  // coordinator explicitly overrides WITH CAUSE, which is logged.
-  if (event.status !== 'closed' && event.tamperingAt != null) {
+  const waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
+  // §2: record the SUPPORT side's assent. Symmetric + order-independent — this is
+  // a Request/Confirm, NOT a unilateral close. It closes only once the user has
+  // ALSO assented (their gesture). Neither side ever closes alone.
+  if (event.status !== 'closed') {
+    await recordSupportAssent(c.env, eventId, 'coordinator');
+  }
+  const result = await evaluateConsent(c.env, eventId, waitUntil);
+  if (result === 'closed' || result === 'already_closed') {
+    return c.json({ ok: true, secured: true }, 200);
+  }
+  if (result === 'awaiting_user') {
+    // The coordinator initiated; the user has not yet assented. Queued, not closed.
+    return c.json({ ok: true, secured: false, queued: true, awaitingUser: true }, 200);
+  }
+  if (result === 'tampering_blocked') {
+    // §E4: a TAMPERING event never clean-closes without an explicit, logged override.
     const reason = (secureBody.overrideReason ?? '').trim();
     if (secureBody.override !== true || reason.length === 0) {
       await audit(c.env, eventId, 'secure_rejected_tampering', null, null);
@@ -681,44 +701,10 @@ app.post('/v1/c/:id/secure', async (c) => {
       );
     }
     await audit(c.env, eventId, 'tampering_override_secured', null, JSON.stringify({ reason }));
+    await overrideTamperingClose(c.env, eventId, waitUntil);
+    return c.json({ ok: true, secured: true }, 200);
   }
-  // GATE (canonical closure rule): a coordinator can SECURE only to APPROVE a
-  // pending, on-device-code-validated user closure request. No request pending =
-  // nothing to approve = cannot close. The coordinator never enters the code; the
-  // request itself is the authorization. This is the authoritative server gate
-  // behind the dashboard's inert SECURE control — closure can never happen without
-  // a user-initiated request.
-  if (event.status !== 'closed' && event.closeRequestStatus == null) {
-    await audit(c.env, eventId, 'secure_rejected_no_request', null, null);
-    return c.json(
-      {
-        error: 'no_pending_closure_request',
-        message: 'The user has not requested closure. Nothing to secure until they do.',
-      },
-      409,
-    );
-  }
-  if (event.status !== 'closed') {
-    await c.env.DB.prepare(
-      'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ? WHERE id = ?',
-    )
-      .bind('closed', Date.now(), 'coordinator', Date.now(), 'coordinator', eventId)
-      .run();
-  }
-  await audit(c.env, eventId, 'secured_by_coordinator', null, null);
-  // Generate the write-once closure report and confirm to the network.
-  const report = await buildClosureReport(c.env, eventId);
-  const contact = await getContactForEvent(c.env, event);
-  if (contact) {
-    c.executionCtx.waitUntil(
-      dispatch(c.env, contact.id, {
-        kind: 'closureConfirmation',
-        eventId,
-        payload: { userDisplayName: contact.displayName },
-      }),
-    );
-  }
-  return c.json({ ok: true, secured: true, packageHash: report?.packageHash ?? null }, 200);
+  return c.json({ error: 'not found' }, 404);
 });
 
 // The closure status report (coordinator-only) — the artifact reviewed at close.
@@ -1134,23 +1120,19 @@ app.post('/v1/events/:id/closure-request', async (c) => {
   if (!event) {
     return c.json({ error: 'not found' }, 404);
   }
-  await c.env.DB.prepare(
-    'UPDATE events SET closeRequestStatus = ?, reasonSecured = ?, closeRequestedAt = ?, closeRequestDuress = ? WHERE id = ?',
-  )
-    .bind(status, body.reasonSecured ?? null, Date.now(), status === 'unsat' ? 1 : 0, eventId)
-    .run();
-  await audit(c.env, eventId, status === 'unsat' ? 'closure_requested_duress' : 'closure_requested', null, null);
+  // §2: record the USER's assent (gesture-derived status).
+  await recordUserAssent(c.env, eventId, status, body.reasonSecured ?? null);
   const workerOrigin = new URL(c.req.url).origin;
-  c.executionCtx.waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, status));
+  const waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
 
-  // §E3: repetition → tampering. Count duress signals in the rolling window (the
+  // §E3: repetition → tampering. Count duress assents in the rolling window (the
   // current one's audit row was just written, so it is included). Past the
   // threshold, escalate disposition to TAMPERING and raise severity — invisibly:
   // nothing the device can observe changes for signal #1…N.
   if (status === 'unsat') {
     const since = Date.now() - TAMPERING_WINDOW_MS;
     const row = await c.env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM audit_log WHERE eventId = ? AND action = 'closure_requested_duress' AND timestamp >= ?",
+      "SELECT COUNT(*) AS n FROM audit_log WHERE eventId = ? AND action = 'user_assent_duress' AND timestamp >= ?",
     )
       .bind(eventId, since)
       .first<{ n: number }>();
@@ -1161,14 +1143,21 @@ app.post('/v1/events/:id/closure-request', async (c) => {
       if (ev?.tamperingAt == null) {
         await c.env.DB.prepare('UPDATE events SET tamperingAt = ? WHERE id = ?').bind(Date.now(), eventId).run();
         await audit(c.env, eventId, 'tampering_escalation', null, JSON.stringify({ count: row?.n ?? 0, windowMs: TAMPERING_WINDOW_MS }));
-        // Raise severity: re-fire the duress dispatch (advance the cascade).
-        c.executionCtx.waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, 'unsat'));
+        waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, 'unsat'));
       } else {
         await audit(c.env, eventId, 'tampering_repetition', null, JSON.stringify({ count: row?.n ?? 0 }));
       }
     }
   }
-  return c.json({ ok: true, awaitingCoordinator: true }, 200);
+
+  // §2 dual consent: close now if SUPPORT already assented; otherwise queue and
+  // notify the coordinator that the user has requested closure.
+  const result = await evaluateConsent(c.env, eventId, waitUntil);
+  if (result === 'closed') {
+    return c.json({ ok: true, closed: true }, 200);
+  }
+  waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, status));
+  return c.json({ ok: true, closed: false, awaitingCoordinator: result === 'awaiting_support' }, 200);
 });
 
 // Closure-pin lockout (Brief 19 §6). The device reports 3 wrong (NOT duress) pin
