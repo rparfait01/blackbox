@@ -104,6 +104,10 @@ export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
   if (p.threatSummary) {
     rows.push(['Heard', p.threatSummary]);
   }
+  // §5: emergency-services dispatchers get a CAD-ready structured summary link.
+  if (p.summaryUrl) {
+    rows.push(['Dispatch summary', 'CAD-ready summary — open', p.summaryUrl]);
+  }
   return {
     subject: `🚨 BLACK BOX ALERT *** ${p.userDisplayName} *** BLACK BOX ALERT 🚨`,
     html: shell({
@@ -116,7 +120,8 @@ export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
     text:
       `EMERGENCY — ${p.userDisplayName} activated BLACK BOX. Live audio + location active.\n` +
       `Where: ${coords(p.location)}\n${p.threatSummary ? `Heard: ${p.threatSummary}\n` : ''}` +
-      `Open the live dashboard: ${p.dashboardUrl}`,
+      `Open the live dashboard: ${p.dashboardUrl}\n` +
+      `${p.summaryUrl ? `Emergency services — CAD dispatch summary: ${p.summaryUrl}\n` : ''}`,
   };
 }
 

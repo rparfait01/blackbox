@@ -421,6 +421,26 @@ async function run() {
     assert(ds.data?.coordinatorPathFailed === false && ds.data?.escalationTier === 'coordinator', `delivery-status escalation fields wrong: ${JSON.stringify(ds.data)}`);
   });
 
+  await check('23. §5 emergency views: CAD dispatch summary renders read-only + logs access; auth-gated', async () => {
+    assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set');
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const ev = await trigger(u.session, 'acc-cad');
+    const { token } = await claimCoordinator(ev.eventId);
+    // The structured, READ-ONLY summary renders for a valid token.
+    const sum = await api('GET', `/v1/c/${ev.eventId}/dispatch-summary?t=${token}`);
+    assert(sum.status === 200 && typeof sum.data === 'string' && /Dispatch Summary/i.test(sum.data), `summary did not render: ${sum.status}`);
+    assert(/NOTIFICATION ONLY/i.test(sum.data) && !/REQUEST CLOSURE|SECURE —/i.test(sum.data), 'summary must be read-only — no closure/consent control');
+    // Auth-gated: no token → 401.
+    const noTok = await api('GET', `/v1/c/${ev.eventId}/dispatch-summary`);
+    assert(noTok.status === 401, `summary not auth-gated (expected 401, got ${noTok.status})`);
+    // Access is logged.
+    if (ADMIN) {
+      const aud = await api('GET', `/v1/admin/events/${ev.eventId}/audit`, { bearer: ADMIN });
+      assert(JSON.stringify(aud.data ?? '').includes('dispatch_summary_viewed'), 'summary access was not audited');
+    }
+  });
+
   // ---- cleanup ----
   await cleanup();
 

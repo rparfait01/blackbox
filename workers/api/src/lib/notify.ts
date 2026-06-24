@@ -83,6 +83,7 @@ async function advanceStep(env: Env, eventId: string, fromStep: number): Promise
 
 interface ActivationCtx {
   dashboardUrl: string;
+  summaryUrl: string;
   audioUrl: string;
   location: { lat: number; lon: number } | null;
   threatSummary: string | null;
@@ -110,6 +111,9 @@ async function activationCtx(
   await markLinkIssued(env, eventId);
   return {
     dashboardUrl: `${workerOrigin}/c/${eventId}?t=${token}`,
+    // §5: the CAD-ready structured summary for the emergency-services escalation
+    // path (direct share gets the live dashboard above).
+    summaryUrl: `${workerOrigin}/v1/c/${eventId}/dispatch-summary?t=${token}`,
     audioUrl: `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`,
     location: await latestLocation(env, eventId),
     threatSummary: await latestSummary(env, eventId),
@@ -137,6 +141,7 @@ async function dispatchStep(
       payload: {
         userDisplayName: contact.displayName,
         dashboardUrl: ctx.dashboardUrl,
+        summaryUrl: ctx.summaryUrl,
         audioUrl: ctx.audioUrl,
         location: ctx.location,
         threatSummary: ctx.threatSummary,

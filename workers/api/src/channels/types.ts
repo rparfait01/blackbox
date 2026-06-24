@@ -20,6 +20,8 @@ export interface ActivationAlertPayload {
   userDisplayName: string;
   /** Magic-link URL to the read-only live view (no login). */
   dashboardUrl: string;
+  /** §5: CAD-ready structured summary URL for the emergency-services tier. */
+  summaryUrl?: string;
   /** Magic-link URL that streams the latest audio chunk. */
   audioUrl: string;
   /** Latest known location, if any fix has arrived yet. */

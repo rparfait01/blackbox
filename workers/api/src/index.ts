@@ -33,6 +33,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { verifySession } from './lib/session';
 import { getContactState } from './lib/contact-state';
 import { renderDashboardPage, renderNotifiedPage, renderTokenPage } from './dashboard/page';
+import { renderCadSummary } from './dashboard/cad-summary';
 import { audioStream, locationStream } from './routes/contact-streams';
 import { dispatch } from './channels/router';
 import { handleLineWebhook } from './routes/line-webhook';
@@ -850,6 +851,26 @@ app.get('/v1/c/:id/subscribe', async (c) => {
   const eventId = c.req.param('id');
   const stub = c.env.EVENT_CHANNEL.get(c.env.EVENT_CHANNEL.idFromName(eventId));
   return stub.fetch(c.req.raw);
+});
+
+// §5: CAD-ready dispatch summary — the structured, READ-ONLY view the emergency
+// services tier receives via the ESCALATION path (the direct-share path renders
+// the live dashboard instead). Any valid event token may view it; access is
+// logged; the token expires after the event. No closure/consent control here.
+app.get('/v1/c/:id/dispatch-summary', async (c) => {
+  if (!(await requireMagicToken(c))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const eventId = c.req.param('id');
+  const state = await getContactState(c.env, eventId);
+  if (!state) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  const subj = await c.env.DB.prepare('SELECT u.name AS name FROM events e LEFT JOIN users u ON u.id = e.userId WHERE e.id = ?')
+    .bind(eventId)
+    .first<{ name: string | null }>();
+  await audit(c.env, eventId, 'dispatch_summary_viewed', null, null);
+  return c.html(renderCadSummary({ eventId, subjectName: subj?.name ?? 'Unknown subject', state }));
 });
 
 /** Parse a single HTTP Range header against a known total size. */
