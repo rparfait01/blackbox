@@ -381,6 +381,30 @@ async function run() {
     assert(rep.data?.disposition === 'DURESS', `disposition laundered to ${rep.data?.disposition} (expected DURESS)`);
   });
 
+  await check('21. §4: lifecycle events send NO email; /subscribe is a push (WebSocket) endpoint', async () => {
+    assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set');
+    assert(ADMIN, 'BBX_ADMIN_TOKEN not set — cannot read delivery records');
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const ev = await trigger(u.session, 'acc-nolifecycle');
+    const { token } = await claimCoordinator(ev.eventId);
+    // Fire lifecycle events: repeated duress closure requests (→ also tampering).
+    await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, { status: 'unsat' });
+    await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, { status: 'unsat' });
+    await sleep(2500);
+    // NONE of these lifecycle message kinds may produce a delivery record — they
+    // are in-app server-push only. (messageKind-precise; no activation-timing race.)
+    const kindCount = async (k) => (await api('GET', `/v1/admin/events/${ev.eventId}/deliveries?kind=${k}`, { bearer: ADMIN })).data?.count ?? 0;
+    for (const k of ['closure', 'duress', 'closureConfirmation', 'tampering']) {
+      const n = await kindCount(k);
+      assert(n === 0, `lifecycle '${k}' email was sent (${n} record(s)) — lifecycle must be in-app push, never email`);
+    }
+    // The subscribe endpoint is a WebSocket push channel, not a JSON poll: a plain
+    // GET (no Upgrade) is refused with 426, proving it isn't a polling endpoint.
+    const noUp = await api('GET', `/v1/c/${ev.eventId}/subscribe?t=${token}`);
+    assert(noUp.status === 426, `subscribe is not a push endpoint (expected 426, got ${noUp.status})`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

@@ -65,6 +65,16 @@ bucket_name = "blackbox-vault"
 name = "CASCADE_DO"
 class_name = "CascadeScheduler"
 
+# EventChannel (Brief 16 §4) — per-event WebSocket fan-out so the open dashboard
+# receives lifecycle changes via server push, not polling.
+[[durable_objects.bindings]]
+name = "EVENT_CHANNEL"
+class_name = "EventChannel"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CascadeScheduler"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["EventChannel"]

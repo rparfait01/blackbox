@@ -6,6 +6,9 @@ export interface Env {
   /** Durable Object namespace firing each contact-cascade step at its exact window
    *  (Brief 17). Optional so the worker still runs where the binding is absent. */
   CASCADE_DO?: DurableObjectNamespace;
+  /** Per-event WebSocket fan-out for live dashboard push (Brief 16 §4). Optional
+   *  so the worker still runs where the binding is absent (polling fallback). */
+  EVENT_CHANNEL?: DurableObjectNamespace;
   CORS_ALLOWED_ORIGINS: string;
   /** PWA origin used to build the contact's magic-link dashboard URL (e.g. https://stillpoint.pages.dev). */
   PWA_ORIGIN?: string;

@@ -16,9 +16,8 @@
  */
 
 import { audit } from './audit';
-import { dispatch } from '../channels/router';
-import { getContactForEvent } from './contacts';
 import { buildClosureReport } from './closure-report';
+import { broadcastEventChange } from '../event-channel';
 import type { Env } from '../types';
 
 export type ConsentResult =
@@ -59,6 +58,8 @@ export async function recordUserAssent(
     .bind(status, reasonSecured, Date.now(), status === 'unsat' ? 1 : 0, eventId)
     .run();
   await audit(env, eventId, status === 'unsat' ? 'user_assent_duress' : 'user_assent', null, null);
+  // §4: lifecycle is in-app — push to the open dashboard, never email.
+  await broadcastEventChange(env, eventId, status === 'unsat' ? 'duress' : 'closure_request');
 }
 
 /** Record the support side's assent (coordinator/guardian). Idempotent — keeps
@@ -70,6 +71,7 @@ export async function recordSupportAssent(env: Env, eventId: string, by: string)
     .bind(Date.now(), by, eventId)
     .run();
   await audit(env, eventId, 'support_assent', null, JSON.stringify({ by }));
+  await broadcastEventChange(env, eventId, 'support_assent');
 }
 
 /** Perform the actual close once both assents are confirmed: write closed state,
@@ -77,8 +79,8 @@ export async function recordSupportAssent(env: Env, eventId: string, by: string)
 async function performClose(
   env: Env,
   eventId: string,
-  event: ConsentRow,
-  waitUntil: (p: Promise<unknown>) => void,
+  _event: ConsentRow,
+  _waitUntil: (p: Promise<unknown>) => void,
 ): Promise<void> {
   await env.DB.prepare(
     'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ? WHERE id = ?',
@@ -87,16 +89,9 @@ async function performClose(
     .run();
   await audit(env, eventId, 'closed_by_dual_consent', null, null);
   await buildClosureReport(env, eventId);
-  const contact = await getContactForEvent(env, event);
-  if (contact) {
-    waitUntil(
-      dispatch(env, contact.id, {
-        kind: 'closureConfirmation',
-        eventId,
-        payload: { userDisplayName: contact.displayName },
-      }),
-    );
-  }
+  // §4: closure confirmation is an in-app lifecycle event — pushed live to the
+  // open dashboard, NOT emailed.
+  await broadcastEventChange(env, eventId, 'closed');
 }
 
 /**

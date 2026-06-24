@@ -750,10 +750,11 @@ const CLIENT_JS = `
     }
   }
 
-  // ---- /state polling backbone (every 3s) ----
+  // ---- /state polling backbone (every 3s) — drives transcript/location/situation.
   function poll(){
     fetch(api('/state')).then(function(r){ return r.ok?r.json():null; }).then(function(st){
       if(!st) return;
+      S.closure=st.closure; S.active=st.active; // keep S fresh for the closure control
       durationMs=st.durationMs; baseNow=Date.now();
       if(st.location){ lastLoc=st.location; lastTrail=st.trail; applyLocation(st.location, st.trail); }
       applyTranscript(st.latestTranscriptFragments);
@@ -764,6 +765,20 @@ const CLIENT_JS = `
     }).catch(function(){});
   }
   var pollTimer=setInterval(poll,3000);
+
+  // §4: live server push. The worker pushes "changed" the instant any LIFECYCLE
+  // event fires (close request, support assent, closure, duress, tampering) and
+  // we re-fetch /state immediately — no waiting for the next poll, no email. The
+  // 3s poll remains the guarantee if the socket drops; reconnect with backoff.
+  (function connectWS(){
+    try{
+      var wsUrl=base.replace(/^http/,'ws')+'/v1/c/'+CFG.eventId+'/subscribe'+q;
+      var ws=new WebSocket(wsUrl);
+      ws.onmessage=function(e){ try{ var d=JSON.parse(e.data); if(d.type==='changed'){ poll(); } }catch(x){} };
+      ws.onclose=function(){ setTimeout(connectWS,3000); };
+      ws.onerror=function(){ try{ws.close();}catch(x){} };
+    }catch(x){ /* the 3s poll covers push being unavailable */ }
+  })();
 
   // ---- SSE enhancement (lower latency); polling remains the guarantee ----
   try{

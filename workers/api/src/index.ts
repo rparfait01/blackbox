@@ -12,6 +12,7 @@ import {
   recordSupportAssent,
   recordUserAssent,
 } from './lib/closure-consent';
+import { broadcastEventChange } from './event-channel';
 import { qrSvg } from './lib/qr';
 import {
   getVerifiedRecipient,
@@ -25,7 +26,7 @@ import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
 import { getContactForEvent, listContacts, listFollows, upsertContact } from './lib/contacts';
 import { hasDeliverableRecipient } from './lib/roles';
-import { advanceEventCascade, notifyActivation, notifyClosureRequest, notifyEscalation } from './lib/notify';
+import { advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -478,6 +479,7 @@ app.get('/v1/admin/events/:id/deliveries', async (c) => {
   const eventId = c.req.param('id');
   const channel = c.req.query('channel');
   const status = c.req.query('status');
+  const kind = c.req.query('kind');
   let sql = 'SELECT COUNT(*) AS count FROM delivery_records WHERE eventId = ?';
   const binds: string[] = [eventId];
   if (channel) {
@@ -487,6 +489,10 @@ app.get('/v1/admin/events/:id/deliveries', async (c) => {
   if (status) {
     sql += ' AND status = ?';
     binds.push(status);
+  }
+  if (kind) {
+    sql += ' AND messageKind = ?';
+    binds.push(kind);
   }
   const row = await c.env.DB.prepare(sql)
     .bind(...binds)
@@ -826,6 +832,26 @@ app.get('/v1/c/:id/state', async (c) => {
   return c.json(state, 200);
 });
 
+// §4: live dashboard subscription over WebSocket. The dashboard connects here and
+// the worker pushes a "changed" signal on every lifecycle event; the dashboard
+// re-fetches /state on the signal. Server push, not polling. Same magic-token
+// auth as /state. Falls back to 503 where the DO binding is absent (the dashboard
+// then keeps polling).
+app.get('/v1/c/:id/subscribe', async (c) => {
+  if (c.req.header('Upgrade') !== 'websocket') {
+    return c.json({ error: 'expected_websocket' }, 426);
+  }
+  if (!(await requireMagicToken(c))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  if (!c.env.EVENT_CHANNEL) {
+    return c.json({ error: 'push_unavailable' }, 503);
+  }
+  const eventId = c.req.param('id');
+  const stub = c.env.EVENT_CHANNEL.get(c.env.EVENT_CHANNEL.idFromName(eventId));
+  return stub.fetch(c.req.raw);
+});
+
 /** Parse a single HTTP Range header against a known total size. */
 function parseRange(header: string, total: number): { start: number; end: number } | null {
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
@@ -1122,7 +1148,6 @@ app.post('/v1/events/:id/closure-request', async (c) => {
   }
   // §2: record the USER's assent (gesture-derived status).
   await recordUserAssent(c.env, eventId, status, body.reasonSecured ?? null);
-  const workerOrigin = new URL(c.req.url).origin;
   const waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
 
   // §E3: repetition → tampering. Count duress assents in the rolling window (the
@@ -1143,20 +1168,22 @@ app.post('/v1/events/:id/closure-request', async (c) => {
       if (ev?.tamperingAt == null) {
         await c.env.DB.prepare('UPDATE events SET tamperingAt = ? WHERE id = ?').bind(Date.now(), eventId).run();
         await audit(c.env, eventId, 'tampering_escalation', null, JSON.stringify({ count: row?.n ?? 0, windowMs: TAMPERING_WINDOW_MS }));
-        waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, 'unsat'));
+        // §4: tampering escalation is an in-app lifecycle signal — pushed live to
+        // the open dashboard, never emailed.
+        waitUntil(broadcastEventChange(c.env, eventId, 'tampering'));
       } else {
         await audit(c.env, eventId, 'tampering_repetition', null, JSON.stringify({ count: row?.n ?? 0 }));
       }
     }
   }
 
-  // §2 dual consent: close now if SUPPORT already assented; otherwise queue and
-  // notify the coordinator that the user has requested closure.
+  // §2 dual consent: close now if SUPPORT already assented; otherwise the user's
+  // assent (already pushed to the open dashboard by recordUserAssent) waits for
+  // the coordinator's matching assent. No lifecycle email is sent (§4).
   const result = await evaluateConsent(c.env, eventId, waitUntil);
   if (result === 'closed') {
     return c.json({ ok: true, closed: true }, 200);
   }
-  waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, status));
   return c.json({ ok: true, closed: false, awaitingCoordinator: result === 'awaiting_support' }, 200);
 });
 
@@ -1415,6 +1442,8 @@ app.post('/v1/events/:id/close', async (c) => {
 // The Durable Object that fires each contact-cascade step at its exact window
 // (Brief 17) — exported so the runtime can construct it for the CASCADE_DO binding.
 export { CascadeScheduler } from './cascade-do';
+// Per-event WebSocket fan-out for live dashboard push (Brief 16 §4).
+export { EventChannel } from './event-channel';
 
 // fetch + scheduled (Cron Trigger). The scheduled handler runs the
 // device-went-dark escalation and the vault integrity scan.
