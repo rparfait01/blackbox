@@ -441,6 +441,23 @@ async function run() {
     }
   });
 
+  await check('24. §17 check-in delivers to the guardian (status+time+location), not a no-op; dormant-only', async () => {
+    const u = await signup();
+    // The guardian is the check-in recipient.
+    const g = await api('POST', '/v1/me/contacts/guardian', { bearer: u.session, body: { contactName: 'G', channel: 'email', destination: `smoke+chkg-${uniq()}@example.com` } });
+    assert(g.status === 200, `add guardian failed: ${JSON.stringify(g.data)}`);
+    // A tap sends status + time + location and ACTUALLY reaches the recipient.
+    const chk = await api('POST', '/v1/me/checkin', { bearer: u.session, body: { includeLocation: true, location: { lat: 35.681, lon: 139.767 }, tzOffsetMinutes: -540 } });
+    assert(chk.status === 200, `check-in failed ${chk.status}`);
+    assert((chk.data?.recipients ?? 0) >= 1, `check-in is a NO-OP — recipient not notified: ${JSON.stringify(chk.data)}`);
+    // Dormant-only: a check-in creates NO event (nothing to arm/coordinate).
+    assert(chk.data?.eventId === undefined, 'check-in created an event — it must stay dormant-only');
+    // With NO guardian, the result honestly reports zero recipients (no silent success).
+    const u2 = await signup();
+    const chk2 = await api('POST', '/v1/me/checkin', { bearer: u2.session, body: { includeLocation: false } });
+    assert(chk2.status === 200 && (chk2.data?.recipients ?? -1) === 0, `no-guardian check-in should report 0 recipients: ${JSON.stringify(chk2.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

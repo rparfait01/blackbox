@@ -46,8 +46,8 @@ export function BlackBoxHome(): JSX.Element {
   // Elapsed alert time (overt: the instrument shows the live recording clock).
   const alertStart = useActiveAlertStart();
   const [now, setNow] = useState(() => Date.now());
-  const [checkin, setCheckin] = useState<'idle' | 'sending' | 'done'>('idle');
-  const [checkinLoc, setCheckinLoc] = useState(false);
+  // §17: check-in confirmation reflects ACTUAL delivery — never a silent success.
+  const [checkin, setCheckin] = useState<'idle' | 'sending' | 'delivered' | 'undelivered' | 'error'>('idle');
   // Readiness (Brief 15 §C): re-verified (not re-prompted) on every mount/refresh.
   // A permission revoked in OS settings surfaces here as NOT READY within one launch.
   const [readiness, setReadiness] = useState<Readiness | null>(null);
@@ -111,18 +111,20 @@ export function BlackBoxHome(): JSX.Element {
     void triggerActivation('direct-tap');
   };
 
-  // Check-in ("I'm OK") — Brief 10. NON-emergency reassurance; no capture, no
-  // event. Location only if the user opted in for THIS tap. Deliberately separate
-  // from the activate disc.
+  // Check-in ("I'm OK") — Brief 10 + Brief 17 §1. NON-emergency reassurance; no
+  // capture, no event. A single button: location is captured and sent
+  // AUTOMATICALLY on tap (no opt-in), and the confirmation reflects whether the
+  // recipient was ACTUALLY reached — never a silent success.
   async function sendCheckin(): Promise<void> {
-    // Gated during an active event (Brief 12 P1): check-in is a non-emergency
-    // reassurance and must be inert while an alert is live.
+    // Dormant-only (Brief 12 P1): inert while an alert is live.
     if (alertActive) {
       return;
     }
     setCheckin('sending');
+    // Capture the current fix automatically. Best-effort: if location is
+    // unavailable/denied the check-in still goes — it just won't carry a fix.
     let location: { lat: number; lon: number } | null = null;
-    if (checkinLoc && 'geolocation' in navigator) {
+    if ('geolocation' in navigator) {
       location = await new Promise((resolve) => {
         navigator.geolocation.getCurrentPosition(
           (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
@@ -131,15 +133,22 @@ export function BlackBoxHome(): JSX.Element {
         );
       });
     }
-    await api('/v1/me/checkin', {
+    const res = await api<{ ok: boolean; recipients: number }>('/v1/me/checkin', {
       body: {
-        includeLocation: checkinLoc && location != null,
+        includeLocation: location != null,
         location,
         tzOffsetMinutes: new Date().getTimezoneOffset(),
       },
     });
-    setCheckin('done');
-    window.setTimeout(() => setCheckin('idle'), 3000);
+    // No silent success: confirm ONLY on real delivery (recipients > 0).
+    if (!res.ok) {
+      setCheckin('error');
+    } else if ((res.data?.recipients ?? 0) > 0) {
+      setCheckin('delivered');
+    } else {
+      setCheckin('undelivered');
+    }
+    window.setTimeout(() => setCheckin('idle'), 6000);
   }
 
   return (
@@ -290,31 +299,38 @@ export function BlackBoxHome(): JSX.Element {
           Not an emergency
         </div>
         <div className="rounded-xl border border-status-armed/20 bg-bb-elevated/40 p-4">
+          {/* §17: a SINGLE button. Location is captured + sent automatically on
+              tap — no checkbox, no opt-in. */}
           <button
             type="button"
             onClick={() => void sendCheckin()}
-            disabled={alertActive || checkin !== 'idle'}
-            className="w-full select-none rounded-full border border-[#34c759]/50 bg-[#13301a] py-3.5 font-mono text-sm font-medium uppercase tracking-[0.12em] text-[#34c759] disabled:opacity-40"
+            disabled={alertActive || checkin === 'sending'}
+            className={`w-full select-none rounded-full border py-3.5 font-mono text-sm font-medium uppercase tracking-[0.12em] disabled:opacity-40 ${
+              checkin === 'undelivered' || checkin === 'error'
+                ? 'border-status-armed/60 bg-status-armed/10 text-status-armed'
+                : 'border-[#34c759]/50 bg-[#13301a] text-[#34c759]'
+            }`}
           >
             {alertActive
               ? 'Unavailable during an alert'
-              : checkin === 'done'
-                ? '✓ Checked in'
-                : checkin === 'sending'
-                  ? 'Sending…'
-                  : "I'm OK · Check in"}
+              : checkin === 'sending'
+                ? 'Checking in…'
+                : checkin === 'delivered'
+                  ? '✓ Guardian notified'
+                  : checkin === 'undelivered'
+                    ? '⚠ Not delivered — tap to retry'
+                    : checkin === 'error'
+                      ? 'Couldn’t check in — tap to retry'
+                      : "I'm OK · Check in"}
           </button>
-          <label className="mt-3 flex items-center justify-center gap-2 text-[11px] text-bb-text-secondary">
-            <input
-              type="checkbox"
-              checked={checkinLoc}
-              disabled={alertActive}
-              onChange={(e) => setCheckinLoc(e.target.checked)}
-            />
-            Include my location this time
-          </label>
-          <p className="mt-1 text-center font-mono text-[10px] text-bb-text-tertiary">
-            Reassurance only — no recording, no tracking.
+          <p className="mt-2 text-center font-mono text-[10px] leading-relaxed text-bb-text-tertiary">
+            {checkin === 'delivered'
+              ? 'Your guardian received your status, time, and location.'
+              : checkin === 'undelivered'
+                ? 'No guardian could be reached — add or verify your guardian in settings.'
+                : checkin === 'error'
+                  ? 'No connection — please try again.'
+                  : 'Sends your status, time & location to your guardian. No recording, no tracking.'}
           </p>
         </div>
       </div>
