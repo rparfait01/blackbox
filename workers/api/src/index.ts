@@ -1361,7 +1361,7 @@ app.post('/v1/events/:id/origin', async (c) => {
 app.get('/v1/events/:id/delivery-status', async (c) => {
   const eventId = c.req.param('id');
   const row = await c.env.DB.prepare(
-    'SELECT notifiedAt, notifyChannel, status, closedBy FROM events WHERE id = ?',
+    'SELECT notifiedAt, notifyChannel, status, closedBy, coordinatorPathFailedAt, escalationTier FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -1369,6 +1369,8 @@ app.get('/v1/events/:id/delivery-status', async (c) => {
       notifyChannel: string | null;
       status: string;
       closedBy: string | null;
+      coordinatorPathFailedAt: number | null;
+      escalationTier: string | null;
     }>();
   if (!row) {
     return c.json({ error: 'not found' }, 404);
@@ -1380,6 +1382,10 @@ app.get('/v1/events/:id/delivery-status', async (c) => {
       deliveredAt: row.notifiedAt,
       status: row.status,
       closedBy: row.closedBy,
+      // §3: the user's app prompts a SECOND closure request (→ guardian) when the
+      // coordinator path has failed to confirm.
+      coordinatorPathFailed: row.coordinatorPathFailedAt != null,
+      escalationTier: row.escalationTier ?? 'coordinator',
     },
     200,
   );

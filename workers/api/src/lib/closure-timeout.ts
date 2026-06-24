@@ -1,81 +1,98 @@
 /**
- * Awaiting-confirmation timeout fallback (Fix Brief 15 §E5).
+ * Corrected escalation — guardian as the foundational backstop (Fix Brief 16 §3,
+ * supersedes the §E5 timeout). Consent stays intact at every tier; escalation
+ * only changes WHO the qualified confirmer is.
  *
- * The dual-consent model can trap a user whose support is asleep/unreachable:
- * their CLEAN (sat) close request would otherwise hang forever. So a scheduled
- * job advances the confirmation request down the support chain on a timer.
+ * A pending CLEAN (sat) closure request routes to the coordinator. If they do not
+ * confirm:
+ *   - 60s  → reprompt the COORDINATOR ONLY (in-app push to their open dashboard;
+ *            never broadcast to other contacts, never email).
+ *   - 180s → the coordinator path is declared FAILED: the prior coordinator claim
+ *            is invalidated, the user's first assent is cleared, and the qualified
+ *            confirmer escalates to the GUARDIAN tier. The user is prompted (via
+ *            the status they poll) to request closure a SECOND time, which routes
+ *            to the guardian; only a fresh guardian claim may confirm there.
  *
- * Royce's locked P1 policy (tunable here):
- *   - re-prompt support at 60s
- *   - advance to the next tier (→ guardian) at 180s
- *   - NO fallback to emergency services without explicit confirmation.
- *
- * Only a pending CLEAN request can trap a user. A DURESS or TAMPERING event must
- * NOT time out toward closure — responders stay engaged by design.
+ * A DURESS or TAMPERING event never times out toward closure — responders stay
+ * engaged. The guardian tier does not auto-escalate further; it is the backstop.
+ * The tampering flag is NOT cleared on escalation — the guardian inherits the
+ * duress/tampering disposition (escalation must not launder a flag away).
  */
 
 import { audit } from './audit';
-import { notifyClosureRequest } from './notify';
+import { broadcastEventChange } from '../event-channel';
 import type { Env } from '../types';
 
 export const CLOSURE_REPROMPT_MS = 60_000;
-export const CLOSURE_ADVANCE_MS = 180_000;
+export const CLOSURE_FAIL_MS = 180_000;
 
-export type ClosureTimeoutAction = 'none' | 'reprompt' | 'advance';
+export type EscalationAction = 'none' | 'reprompt' | 'fail';
 
-/** Pure decision: what (if anything) a pending clean close needs right now. */
-export function closureTimeoutAction(input: {
+/** Pure decision for a pending clean closure on the coordinator tier. */
+export function escalationAction(input: {
   status: string;
+  escalationTier: string | null;
   closeRequestStatus: string | null;
   closeRequestedAt: number | null;
   tamperingAt: number | null;
   closureRepromptAt: number | null;
-  closureAdvancedAt: number | null;
+  coordinatorPathFailedAt: number | null;
   now: number;
-}): ClosureTimeoutAction {
+}): EscalationAction {
   if (input.status !== 'active') return 'none';
+  // Only the COORDINATOR tier escalates; the guardian tier is the backstop.
+  if ((input.escalationTier ?? 'coordinator') !== 'coordinator') return 'none';
   if (input.closeRequestStatus !== 'sat') return 'none'; // duress/none never time out toward close
   if (input.tamperingAt != null) return 'none';
   if (input.closeRequestedAt == null) return 'none';
+  if (input.coordinatorPathFailedAt != null) return 'none';
   const age = input.now - input.closeRequestedAt;
-  if (age >= CLOSURE_ADVANCE_MS && input.closureAdvancedAt == null) return 'advance';
+  if (age >= CLOSURE_FAIL_MS) return 'fail';
   if (age >= CLOSURE_REPROMPT_MS && input.closureRepromptAt == null) return 'reprompt';
   return 'none';
 }
 
-interface TimeoutRow {
+interface EscalationRow {
   id: string;
   status: string;
+  escalationTier: string | null;
   closeRequestStatus: string | null;
   closeRequestedAt: number | null;
   tamperingAt: number | null;
   closureRepromptAt: number | null;
-  closureAdvancedAt: number | null;
+  coordinatorPathFailedAt: number | null;
 }
 
 /**
- * Scheduled sweep: for every active event with a pending CLEAN close request,
- * re-prompt support at 60s and advance the confirmation tier at 180s. Each step
- * fires once (guarded by closureRepromptAt / closureAdvancedAt) and is audited.
+ * Scheduled sweep: reprompt the coordinator at 60s; declare the coordinator path
+ * failed and escalate to the guardian at 180s. Each step fires once and is
+ * audited. Pushes are in-app (§4) — no escalation emails.
  */
-export async function advanceUnconfirmedClosures(env: Env, workerOrigin: string): Promise<void> {
+export async function runEscalation(env: Env): Promise<void> {
   const { results } = await env.DB.prepare(
-    "SELECT id, status, closeRequestStatus, closeRequestedAt, tamperingAt, closureRepromptAt, closureAdvancedAt FROM events WHERE status = 'active' AND closeRequestStatus = 'sat'",
-  ).all<TimeoutRow>();
+    "SELECT id, status, escalationTier, closeRequestStatus, closeRequestedAt, tamperingAt, closureRepromptAt, coordinatorPathFailedAt FROM events WHERE status = 'active' AND closeRequestStatus = 'sat'",
+  ).all<EscalationRow>();
   const now = Date.now();
   for (const row of results ?? []) {
-    const action = closureTimeoutAction({ ...row, now });
-    if (action === 'none') continue;
+    const action = escalationAction({ ...row, now });
     if (action === 'reprompt') {
       await env.DB.prepare('UPDATE events SET closureRepromptAt = ? WHERE id = ?').bind(now, row.id).run();
-      await audit(env, row.id, 'closure_confirmation_reprompted', null, null);
-      await notifyClosureRequest(env, row.id, workerOrigin, 'sat');
-    } else {
-      await env.DB.prepare('UPDATE events SET closureAdvancedAt = ? WHERE id = ?').bind(now, row.id).run();
-      await audit(env, row.id, 'closure_confirmation_advanced_tier', null, null);
-      // Re-dispatch reaches the full support chain incl. the guardian tier. No
-      // emergency-services fallback (Royce's P1) — that requires explicit confirm.
-      await notifyClosureRequest(env, row.id, workerOrigin, 'sat');
+      await audit(env, row.id, 'coordinator_closure_reprompted', null, null);
+      // Coordinator-only: only the coordinator's dashboard is subscribed.
+      await broadcastEventChange(env, row.id, 'closure_reprompt');
+    } else if (action === 'fail') {
+      // Coordinator path failed: invalidate the prior claim (a fresh claim is
+      // required at the guardian tier), clear the user's first assent so they must
+      // request a SECOND time, and clear the coordinator's (non-)assent. Keep
+      // tamperingAt — the guardian inherits the disposition.
+      await env.DB.prepare(
+        'UPDATE events SET coordinatorPathFailedAt = ?, escalationTier = ?, coordinatorClaimedAt = NULL, coordinatorKey = NULL, closeRequestStatus = NULL, closeRequestedAt = NULL, closeRequestDuress = 0, supportAssentAt = NULL, supportAssentBy = NULL WHERE id = ?',
+      )
+        .bind(now, 'guardian', row.id)
+        .run();
+      await audit(env, row.id, 'coordinator_path_failed', null, JSON.stringify({ afterMs: CLOSURE_FAIL_MS }));
+      await audit(env, row.id, 'escalated_to_guardian', null, null);
+      await broadcastEventChange(env, row.id, 'coordinator_path_failed');
     }
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { getActiveSession } from '@/lib/storage';
 import type { SessionRecord } from '@/lib/storage';
+import { API_BASE_URL } from '@/lib/env';
 
 /**
  * Active-alert lockdown (Fix Brief 8 P0). While an alert is active the user must
@@ -70,4 +71,40 @@ export function useActiveAlertStart(): number | null {
     };
   }, []);
   return start;
+}
+
+/**
+ * §3: true once the COORDINATOR closure path has failed and the qualified
+ * confirmer has escalated to the guardian — so the overt app can prompt the user
+ * to request closure a SECOND time (which routes to the guardian). Polls the
+ * unsigned delivery-status the session monitor already uses. The covert facade
+ * never surfaces this (the user simply re-does the gesture); only the overt
+ * instrument shows the prompt.
+ */
+export function useCoordinatorPathFailed(): boolean {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async (): Promise<void> => {
+      const session = await getActiveSession();
+      if (!session || session.status !== 'active' || !session.eventId) {
+        if (!cancelled) setFailed(false);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/v1/events/${session.eventId}/delivery-status`);
+        const data = (await res.json()) as { coordinatorPathFailed?: boolean };
+        if (!cancelled) setFailed(!!data?.coordinatorPathFailed);
+      } catch {
+        /* leave the last value; the next tick retries */
+      }
+    };
+    void check();
+    const id = window.setInterval(() => void check(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+  return failed;
 }

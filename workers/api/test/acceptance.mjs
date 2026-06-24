@@ -405,6 +405,22 @@ async function run() {
     assert(noUp.status === 426, `subscribe is not a push endpoint (expected 426, got ${noUp.status})`);
   });
 
+  await check('22. §3 escalation plumbing: tier + coordinator-path-failed surfaced (coordinator tier by default)', async () => {
+    assert(MAGIC, 'BBX_MAGIC_LINK_SECRET not set');
+    // The 60s/180s transition itself is unit-tested (escalationAction); here we
+    // prove the state it drives is wired through to the dashboard and the user app.
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const ev = await trigger(u.session, 'acc-escalation');
+    const { token } = await claimCoordinator(ev.eventId);
+    await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, { status: 'sat' });
+    const state = await api('GET', `/v1/c/${ev.eventId}/state?t=${token}`);
+    assert(state.data?.closure?.tier === 'coordinator', `closure.tier wrong: ${JSON.stringify(state.data?.closure)}`);
+    assert(state.data?.closure?.coordinatorFailed === false, 'closure.coordinatorFailed should start false');
+    const ds = await api('GET', `/v1/events/${ev.eventId}/delivery-status`);
+    assert(ds.data?.coordinatorPathFailed === false && ds.data?.escalationTier === 'coordinator', `delivery-status escalation fields wrong: ${JSON.stringify(ds.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

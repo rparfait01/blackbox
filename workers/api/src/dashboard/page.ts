@@ -652,7 +652,17 @@ const CLIENT_JS = `
     // even with no closure request — it can mean someone other than the user is
     // trying to close. Shown as a standalone warning above the closure window.
     var lw=el('lockoutWarn');
-    if(lw){ lw.style.display = (cl && cl.lockout) ? 'block' : 'none'; }
+    if(lw){
+      // §3: when the coordinator path has failed, the guardian is the qualified
+      // confirmer — surface it prominently (re-uses the warning banner slot).
+      if(cl && cl.coordinatorFailed){
+        lw.style.display='block';
+        lw.textContent='⚠ Coordinator did not confirm in time — the GUARDIAN is now the qualified confirmer. Guardian: reload this page to take coordination, then confirm the user\\'s next request.';
+      } else {
+        lw.textContent='⚠ Repeated failed closure attempts on the device — this may not be the user. Do not assume safe.';
+        lw.style.display = (cl && cl.lockout) ? 'block' : 'none';
+      }
+    }
     // The SECURE control is INERT until the user requests closure (canonical rule):
     // no pending request = nothing to approve. The server enforces this too; this
     // keeps the UI honest so a coordinator is never offered a live END with no

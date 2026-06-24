@@ -5,7 +5,7 @@ import { Gear } from '@phosphor-icons/react';
 import { api } from '@/lib/api';
 import { isSetupComplete } from '@/lib/auth';
 import { triggerActivation } from '@/lib/activation';
-import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
+import { useActiveAlert, useActiveAlertStart, useCoordinatorPathFailed } from '@/lib/active-alert';
 import { formatElapsed } from '@/lib/time';
 import { checkReadiness, osFixHint, type Readiness } from '@/lib/readiness';
 import { primePermissions } from '@/lib/permissions';
@@ -41,6 +41,8 @@ export function BlackBoxHome(): JSX.Element {
   const [armable, setArmable] = useState(true);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
+  // §3: coordinator closure path failed → prompt a second (guardian-tier) request.
+  const coordinatorFailed = useCoordinatorPathFailed();
   // Elapsed alert time (overt: the instrument shows the live recording clock).
   const alertStart = useActiveAlertStart();
   const [now, setNow] = useState(() => Date.now());
@@ -254,14 +256,28 @@ export function BlackBoxHome(): JSX.Element {
           </Link>
         )}
 
-        {/* Stand down: enter the lock code to end an active alert. Duress code
-            escalates instead of cancelling (server-authoritative). */}
+        {/* §3: the coordinator path failed to confirm — prompt a SECOND request,
+            which routes to the guardian. Overt only; the covert facade stays
+            silent (the user simply re-does the gesture). */}
+        {alertActive && coordinatorFailed ? (
+          <div className="mt-8 max-w-xs rounded-lg border border-status-armed/40 bg-status-armed/5 p-3 text-center">
+            <p className="text-[12px] leading-relaxed text-status-armed">
+              Your support contact didn’t confirm. Your guardian has been alerted.
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-bb-text-secondary">
+              Request closure again below to reach them.
+            </p>
+          </div>
+        ) : null}
+
+        {/* End an alert: the press-and-hold gesture (hold = clean, release early =
+            duress). No code is entered (Brief 16 §1). */}
         <button
           type="button"
           onClick={() => setPinOpen(true)}
           className="mt-8 font-mono text-[11px] uppercase tracking-[0.18em] text-bb-text-secondary hover:text-bb-text"
         >
-          Enter code to stand down
+          {coordinatorFailed ? 'Request closure again' : 'End alert'}
         </button>
       </div>
 

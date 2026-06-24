@@ -63,6 +63,10 @@ export interface ContactState {
     lockout: boolean;
     /** §E3/§E4 — repeated duress escalated this event to TAMPERING. */
     tampering: boolean;
+    /** §3 — current qualified confirmer tier ('coordinator' | 'guardian'). */
+    tier: string;
+    /** §3 — the coordinator path failed to confirm; the guardian is now the backstop. */
+    coordinatorFailed: boolean;
   };
   emergency: EmergencyNumbers;
 }
@@ -235,7 +239,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt FROM events WHERE id = ?',
+    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -250,6 +254,8 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       escalatedAt: number | null;
       closeRequestStatus: string | null;
       tamperingAt: number | null;
+      escalationTier: string | null;
+      coordinatorPathFailedAt: number | null;
       reasonSecured: string | null;
       reasonTriggered: string | null;
       closureLockoutAt: number | null;
@@ -392,6 +398,8 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       // coordinator sees someone may be failing to close (possibly not the user).
       lockout: event.closureLockoutAt != null,
       tampering: event.tamperingAt != null,
+      tier: event.escalationTier ?? 'coordinator',
+      coordinatorFailed: event.coordinatorPathFailedAt != null,
     },
     emergency: await resolveEmergency(env, event.userId, event.locale),
   };

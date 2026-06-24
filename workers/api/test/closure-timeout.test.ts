@@ -1,52 +1,49 @@
 /**
- * Brief 15 §E5 tripwire — awaiting-confirmation timeout. A pending CLEAN close
- * re-prompts at 60s and advances tier at 180s; duress/tampering/non-active never
- * time out toward closure.
+ * Brief 16 §3 tripwire — corrected escalation. A pending CLEAN close re-prompts
+ * the coordinator at 60s and declares the coordinator path FAILED at 180s
+ * (escalating to the guardian tier). Duress/tampering/non-active/guardian-tier
+ * events never time out toward closure.
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  CLOSURE_ADVANCE_MS,
-  CLOSURE_REPROMPT_MS,
-  closureTimeoutAction,
-} from '../src/lib/closure-timeout';
+import { CLOSURE_FAIL_MS, CLOSURE_REPROMPT_MS, escalationAction } from '../src/lib/closure-timeout';
 
 const base = {
   status: 'active',
+  escalationTier: 'coordinator' as string | null,
   closeRequestStatus: 'sat' as string | null,
   closeRequestedAt: 0,
   tamperingAt: null as number | null,
   closureRepromptAt: null as number | null,
-  closureAdvancedAt: null as number | null,
+  coordinatorPathFailedAt: null as number | null,
   now: 0,
 };
 
-describe('§E5 policy: 60s re-prompt, 180s advance', () => {
-  it('locks the Royce P1 timings', () => {
+describe('§3 escalation policy: 60s coordinator reprompt, 180s coordinator-path-fail', () => {
+  it('locks the timings', () => {
     expect(CLOSURE_REPROMPT_MS).toBe(60_000);
-    expect(CLOSURE_ADVANCE_MS).toBe(180_000);
+    expect(CLOSURE_FAIL_MS).toBe(180_000);
   });
 
   it('does nothing before 60s', () => {
-    expect(closureTimeoutAction({ ...base, now: 59_000 })).toBe('none');
+    expect(escalationAction({ ...base, now: 59_000 })).toBe('none');
   });
 
-  it('re-prompts once between 60s and 180s', () => {
-    expect(closureTimeoutAction({ ...base, now: 61_000 })).toBe('reprompt');
-    // already re-prompted → quiet until the advance window
-    expect(closureTimeoutAction({ ...base, now: 70_000, closureRepromptAt: 61_000 })).toBe('none');
+  it('reprompts the coordinator once between 60s and 180s', () => {
+    expect(escalationAction({ ...base, now: 61_000 })).toBe('reprompt');
+    expect(escalationAction({ ...base, now: 90_000, closureRepromptAt: 61_000 })).toBe('none');
   });
 
-  it('advances tier once past 180s', () => {
-    expect(closureTimeoutAction({ ...base, now: 181_000, closureRepromptAt: 61_000 })).toBe('advance');
-    expect(
-      closureTimeoutAction({ ...base, now: 200_000, closureRepromptAt: 61_000, closureAdvancedAt: 181_000 }),
-    ).toBe('none');
+  it('fails the coordinator path past 180s', () => {
+    expect(escalationAction({ ...base, now: 181_000, closureRepromptAt: 61_000 })).toBe('fail');
+    // once failed, no repeat
+    expect(escalationAction({ ...base, now: 200_000, coordinatorPathFailedAt: 181_000 })).toBe('none');
   });
 
-  it('never times out a duress, tampering, or non-active event', () => {
-    expect(closureTimeoutAction({ ...base, now: 999_000, closeRequestStatus: 'unsat' })).toBe('none');
-    expect(closureTimeoutAction({ ...base, now: 999_000, tamperingAt: 5 })).toBe('none');
-    expect(closureTimeoutAction({ ...base, now: 999_000, status: 'closed' })).toBe('none');
+  it('never escalates a duress, tampering, guardian-tier, or non-active event', () => {
+    expect(escalationAction({ ...base, now: 999_000, closeRequestStatus: 'unsat' })).toBe('none');
+    expect(escalationAction({ ...base, now: 999_000, tamperingAt: 5 })).toBe('none');
+    expect(escalationAction({ ...base, now: 999_000, escalationTier: 'guardian' })).toBe('none');
+    expect(escalationAction({ ...base, now: 999_000, status: 'closed' })).toBe('none');
   });
 });
