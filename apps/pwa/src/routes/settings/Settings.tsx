@@ -10,10 +10,7 @@ import {
   setDisplayMode,
   type DisplayMode,
 } from '@/lib/auth';
-import { hashClosurePin, verifyPin } from '@/lib/crypto/pin';
-import { getStoredClosurePin, setStoredClosurePin } from '@/lib/storage';
 import { REGIONS } from '@/lib/regions';
-import { PinPad } from '@/components/PinPad';
 import { useActiveAlert } from '@/lib/active-alert';
 import { ContactTabs } from './ContactTabs';
 
@@ -30,7 +27,6 @@ export function Settings(): JSX.Element {
   const navigate = useNavigate();
   const alertActive = useActiveAlert();
   const [me, setMe] = useState<MeData | null>(null);
-  const [pinOverlay, setPinOverlay] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const load = (): void => {
@@ -156,13 +152,14 @@ export function Settings(): JSX.Element {
           </button>
         </Group>
 
-        <Group label="Closure pin">
-          <button onClick={() => setPinOverlay(true)} className="block w-full py-2 text-left text-med-text/80">
-            Change closure pin
-          </button>
+        <Group label="Ending an alert">
+          <p className="text-[12px] leading-relaxed text-med-text/70">
+            Press and <span className="text-med-text">hold the close control</span> until the ring
+            completes to request closure; your contact confirms.
+          </p>
           <p className="mt-1 text-[11px] leading-relaxed text-med-text/45">
-            Your 3-digit pin ends an alert (your contact confirms). To signal duress, enter it with
-            the last digit wrong — it looks normal but warns your contact.
+            If you’re ever forced to close against your will, let go early — it looks identical, but
+            silently warns your contact the danger is ongoing. Nothing to memorize, no code to type.
           </p>
         </Group>
 
@@ -205,16 +202,6 @@ export function Settings(): JSX.Element {
           {toast}
         </div>
       ) : null}
-
-      {pinOverlay ? (
-        <ClosurePinOverlay
-          onDone={(msg) => {
-            setPinOverlay(false);
-            flash(msg);
-          }}
-          onClose={() => setPinOverlay(false)}
-        />
-      ) : null}
     </main>
   );
 }
@@ -236,69 +223,3 @@ function Row({ k, v }: { k: string; v: string }): JSX.Element {
   );
 }
 
-/**
- * Change the ONE 3-digit closure pin (Brief 12). This is the single source of
- * truth — the same pin closure evaluates (SAT = exact; DURESS = last digit
- * altered). Stored on-device only; never transmitted. Requires the current pin
- * to change it (when one is already set). No backup code exists.
- */
-function ClosurePinOverlay({
-  onDone,
-  onClose,
-}: {
-  onDone: (msg: string) => void;
-  onClose: () => void;
-}): JSX.Element {
-  const [phase, setPhase] = useState<'auth' | 'new' | 'confirm'>('auth');
-  const [firstNew, setFirstNew] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  // If no pin is set yet, skip straight to choosing one.
-  useEffect(() => {
-    void getStoredClosurePin().then((existing) => {
-      if (!existing) {
-        setPhase('new');
-      }
-    });
-  }, []);
-
-  const prompts = {
-    auth: 'Enter your current pin',
-    new: 'Choose a new 3-digit pin',
-    confirm: 'Re-enter your new pin',
-  };
-
-  async function onCode(code: string): Promise<void> {
-    setError(null);
-    if (phase === 'auth') {
-      const existing = await getStoredClosurePin();
-      if (existing && (await verifyPin(code, existing.full))) {
-        setPhase('new');
-      } else {
-        setError('That pin is incorrect. Try again.');
-      }
-    } else if (phase === 'new') {
-      setFirstNew(code);
-      setPhase('confirm');
-    } else if (code === firstNew) {
-      await setStoredClosurePin(await hashClosurePin(code));
-      onDone('Closure pin changed');
-    } else {
-      setError('Pins did not match. Start again.');
-      setPhase('new');
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm p-8" onClick={onClose}>
-      <div className="stillpoint-bg w-full max-w-sm rounded-2xl p-8 text-med-text" onClick={(e) => e.stopPropagation()}>
-        <p className="mb-8 text-center font-serif text-lg font-light text-med-text/80">{prompts[phase]}</p>
-        <PinPad onComplete={(code) => void onCode(code)} resetKey={phase} length={3} />
-        {error ? <p className="mt-4 text-center text-sm text-med-warn">{error}</p> : null}
-        <button onClick={onClose} className="mt-6 block w-full text-center text-sm text-med-text/40 underline">
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}

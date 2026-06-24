@@ -9,7 +9,7 @@ import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { formatElapsed } from '@/lib/time';
 import { checkReadiness, osFixHint, type Readiness } from '@/lib/readiness';
 import { primePermissions } from '@/lib/permissions';
-import { PinEntryOverlay } from '@/routes/meditation/PinEntryOverlay';
+import { ClosureControl } from '@/routes/meditation/ClosureControl';
 
 /**
  * Direct-mode home (W8A) — the BLACK BOX interface from the reference design,
@@ -326,7 +326,7 @@ export function BlackBoxHome(): JSX.Element {
         </Section>
       </div>
 
-      <PinEntryOverlay open={pinOpen} onClose={() => setPinOpen(false)} />
+      <ClosureControl open={pinOpen} onClose={() => setPinOpen(false)} />
     </main>
   );
 }

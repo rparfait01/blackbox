@@ -9,7 +9,7 @@ import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { BreathingCircles } from './BreathingCircles';
 import { HoldProgressRing } from './HoldProgressRing';
 import { useActivationHold } from './use-activation-hold';
-import { PinEntryOverlay } from './PinEntryOverlay';
+import { ClosureControl } from './ClosureControl';
 
 /**
  * Stillpoint — the entire visible surface of the app. Nothing here references
@@ -107,7 +107,7 @@ export function MeditationHome(): JSX.Element {
         </button>
       </div>
 
-      <PinEntryOverlay open={pinOpen} onClose={() => setPinOpen(false)} />
+      <ClosureControl open={pinOpen} onClose={() => setPinOpen(false)} />
     </main>
   );
 }

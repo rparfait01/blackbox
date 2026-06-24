@@ -2,44 +2,22 @@ import { signRequest } from '@blackbox/shared';
 
 import { log } from '@/lib/log';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
-import { getActiveSession, getStoredClosurePin } from '@/lib/storage';
-import { evalClosurePin } from '@/lib/crypto/pin';
+import { getActiveSession } from '@/lib/storage';
 
 /**
- * Closure flow (Brief 9 Phase D, user side). The user taps Request closure and
- * enters their 3-digit pin. The pin is an INTENT tool — evaluated ON-DEVICE and
- * NEVER transmitted. Only the resulting status leaves the device:
+ * Closure flow (Fix Brief 15 §E2, user side). The 3-digit pin is RETIRED. The
+ * user makes a single press-and-hold gesture, evaluated entirely on-device:
  *
- *  - correct pin            → status 'sat'  → coordinator window shows SAT
- *  - last digit altered     → status 'unsat' (DURESS) → "threat ongoing"
- *  - other wrong patterns   → 'wrong' (a typo); the overlay retries / locks out
+ *  - hold ≥ 3s   → status 'sat'   (clean) → coordinator window shows SAT
+ *  - release < 3s → status 'unsat' (DURESS) → "threat ongoing"
  *
- * The user can NEVER close the alert — only the coordinator secures. After a
- * sat/unsat submit the user sees an awaiting-confirmation screen.
+ * Only the resulting status leaves the device — never the gesture timing, never
+ * a pin. The user can NEVER close the alert themselves; a coordinator confirms.
+ * Both gestures return 'awaiting' so the device screen (and any onlooker) can
+ * never tell a duress signal was sent.
  */
 
-export type ClosureResult = 'awaiting' | 'wrong' | 'no-session' | 'no-pin';
-
-/**
- * Report a closure-pin LOCKOUT (3 wrong, not-duress attempts) to the coordinator
- * (Brief 19 §6). The pin itself is never sent — only this signal, so the
- * coordinator's live dashboard can flag that someone may be failing to close.
- */
-export async function reportClosureLockout(): Promise<void> {
-  const session = await getActiveSession();
-  if (!session || session.status !== 'active' || !uploadsEnabled || !session.eventId || !session.hmacSecret) {
-    return;
-  }
-  try {
-    const path = `/v1/events/${session.eventId}/closure-lockout`;
-    const timestamp = Date.now();
-    const body = new TextEncoder().encode(JSON.stringify({}));
-    const signed = await signRequest({ secret: session.hmacSecret, eventId: session.eventId, method: 'POST', path, timestamp, body });
-    await fetch(`${API_BASE_URL}${path}`, { method: 'POST', headers: { ...signed, 'Content-Type': 'application/json' }, body: body as BodyInit });
-  } catch (error) {
-    log.error('closure-lockout report failed', error);
-  }
-}
+export type ClosureResult = 'awaiting' | 'no-session';
 
 async function postClosureRequest(
   eventId: string,
@@ -59,32 +37,18 @@ async function postClosureRequest(
 }
 
 /**
- * Evaluate the submitted pin on-device and, for sat/duress, send the STATUS
- * (never the pin) to the coordinator. Returns the verdict the overlay uses to
- * decide what to show — note that sat and duress BOTH return 'awaiting' so the
- * screen (and any onlooker) cannot tell a duress signal was sent.
+ * Send the gesture verdict (sat = clean, false = duress) to the coordinator as a
+ * STATUS only. Returns 'awaiting' for BOTH outcomes so the overlay shows the
+ * identical awaiting-confirmation screen (§E2 invariant).
  */
-export async function submitClosure(digits: string, reasonSecured: string): Promise<ClosureResult> {
+export async function submitClosureGesture(sat: boolean, reasonSecured: string): Promise<ClosureResult> {
   const session = await getActiveSession();
   if (!session || session.status !== 'active') {
     return 'no-session';
   }
-  const closurePin = await getStoredClosurePin();
-  if (!closurePin) {
-    return 'no-pin';
-  }
-  const verdict = await evalClosurePin(digits, closurePin);
-  if (verdict === 'wrong') {
-    return 'wrong';
-  }
   if (uploadsEnabled && session.eventId && session.hmacSecret) {
     try {
-      await postClosureRequest(
-        session.eventId,
-        session.hmacSecret,
-        verdict === 'duress' ? 'unsat' : 'sat',
-        reasonSecured,
-      );
+      await postClosureRequest(session.eventId, session.hmacSecret, sat ? 'sat' : 'unsat', reasonSecured);
     } catch (error) {
       log.error('closure-request failed', error);
     }

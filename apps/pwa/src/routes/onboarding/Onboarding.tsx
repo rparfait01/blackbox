@@ -8,10 +8,7 @@ import { primePermissions } from '@/lib/permissions';
 import { osFixHint } from '@/lib/readiness';
 import { InstallHint } from '@/components/InstallHint';
 import { ContactForm, type ContactValues } from '@/components/ContactForm';
-import { hashClosurePin } from '@/lib/crypto/pin';
-import { setStoredClosurePin } from '@/lib/storage';
 import { getUserHash } from '@/lib/device';
-import { PinPad } from '@/components/PinPad';
 import { COUNTRY_CODES, NATIONALITIES, REGIONS, defaultCountry, type CountryOption } from '@/lib/regions';
 
 /**
@@ -110,10 +107,8 @@ export function Onboarding(): JSX.Element {
   // Settings + the cascade use — primary contact or guardian).
   const [supportRole, setSupportRole] = useState<'primary' | 'guardian'>('primary');
 
-  // display + codes
+  // display mode (the closure pin is retired — §E2 gesture closure)
   const [displayMode, setMode] = useState<DisplayMode>('covert');
-  const [codePhase, setCodePhase] = useState<'pin' | 'pin-confirm'>('pin');
-  const [firstCode, setFirstCode] = useState('');
 
   // permissions priming (mic + location), requested from a user gesture here so
   // activation never triggers a permission dialog.
@@ -164,19 +159,19 @@ export function Onboarding(): JSX.Element {
     }
   }
 
-  async function finalize(pin: string): Promise<void> {
+  async function finalize(): Promise<void> {
     setBusy(true);
     setError(null);
-    // Store the 3-digit closure pin ON-DEVICE only (full + prefix hashes) so the
-    // closure flow can decide sat / duress / wrong without transmitting the pin
-    // (Brief 9). The server pin hash is vestigial.
-    await setStoredClosurePin(await hashClosurePin(pin));
+    // The closure pin is RETIRED (§E2 gesture closure). The server's finalize
+    // still requires a lockCode for legacy/standdown compatibility, so we send a
+    // random one the user never sets, sees, or uses. It is vestigial.
+    const lockCode = String(Math.floor(100000 + Math.random() * 900000));
     const userHash = await getUserHash();
     const res = await api<{ sessionToken: string; displayMode: DisplayMode }>(
       '/v1/auth/signup/finalize',
       {
         auth: false,
-        body: { signupId, displayMode, lockCode: pin, claimUserHash: userHash },
+        body: { signupId, displayMode, lockCode, claimUserHash: userHash },
       },
     );
     setBusy(false);
@@ -184,29 +179,11 @@ export function Onboarding(): JSX.Element {
       setSession(res.data.sessionToken, displayMode, { name: name.trim(), email: email.trim() });
       setStep(6);
     } else {
-      // Don't strand the user on a dead pin screen — surface why and let them
-      // re-enter the pin.
       setError(
         res.status === 0
           ? 'No connection — we couldn’t finish setting up. Check your signal and try again.'
           : 'Could not finish setting up your account. Please try again.',
       );
-      setCodePhase('pin');
-    }
-  }
-
-  function onCode(code: string): void {
-    if (codePhase === 'pin') {
-      setFirstCode(code);
-      setCodePhase('pin-confirm');
-      setError(null);
-    } else {
-      if (code === firstCode) {
-        void finalize(code);
-      } else {
-        setError('Pins did not match. Start again.');
-        setCodePhase('pin');
-      }
     }
   }
 
@@ -382,28 +359,34 @@ export function Onboarding(): JSX.Element {
   if (step === 5) {
     return (
       <Shell
-        title="Set your closure pin"
+        title="How to end an alert"
         onBack={() => {
           setError(null);
-          setCodePhase('pin');
           setStep(4);
         }}
       >
-        <p className="mb-8 text-center font-serif text-lg font-light text-med-text/80">
-          {codePhase === 'pin' ? 'Choose a 3-digit pin' : 'Re-enter your 3-digit pin'}
-        </p>
-        <PinPad onComplete={onCode} resetKey={codePhase} length={3} />
-        {error ? <p className="mt-4 text-center text-sm text-med-warn">{error}</p> : null}
-        <div className="mt-8 space-y-3 text-center text-xs leading-relaxed text-med-text/55">
+        <div className="space-y-5 text-sm leading-relaxed text-med-text/75">
           <p>
-            When you want to end an alert, you enter this pin to request closure. Your support
-            contact reviews and secures it — you’re always in the loop, never alone.
+            To end an alert you press and <span className="text-med-text">hold the close control</span>{' '}
+            until the ring completes. Your support contact then confirms — you’re always in the loop,
+            never alone.
           </p>
-          <p className="text-med-text/45">
-            If you are ever forced to end an alert against your will, enter your pin with the
-            <span className="text-med-text/70"> last digit wrong</span>. To anyone watching it looks
-            normal, but your contact is silently warned the danger is ongoing.
+          <div className="rounded-lg border border-med-text/20 bg-black/20 p-4 text-med-text/70">
+            <p>
+              If you are ever <span className="text-med-text">forced to end an alert against your will</span>,
+              let go early — before the ring completes. To anyone watching it looks exactly the same, but
+              your contact is silently warned the danger is ongoing.
+            </p>
+          </div>
+          <p className="text-xs text-med-text/45">
+            There’s nothing to memorize and no code to type — the gesture is the whole thing.
           </p>
+        </div>
+        {error ? <p className="mt-4 text-sm text-med-warn">{error}</p> : null}
+        <div className="mt-8">
+          <PrimaryButton onClick={() => void finalize()} disabled={busy}>
+            {busy ? 'Setting up…' : 'Got it — continue'}
+          </PrimaryButton>
         </div>
       </Shell>
     );
