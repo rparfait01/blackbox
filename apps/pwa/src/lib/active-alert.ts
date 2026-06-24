@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { signRequest } from '@blackbox/shared';
 
 import { getActiveSession } from '@/lib/storage';
 import type { SessionRecord } from '@/lib/storage';
@@ -87,12 +88,24 @@ export function useCoordinatorPathFailed(): boolean {
     let cancelled = false;
     const check = async (): Promise<void> => {
       const session = await getActiveSession();
-      if (!session || session.status !== 'active' || !session.eventId) {
+      if (!session || session.status !== 'active' || !session.eventId || !session.hmacSecret) {
         if (!cancelled) setFailed(false);
         return;
       }
       try {
-        const res = await fetch(`${API_BASE_URL}/v1/events/${session.eventId}/delivery-status`);
+        // delivery-status is HMAC-signed (per-event secret), same as the session
+        // monitor — an unsigned call is rejected unauthorized.
+        const path = `/v1/events/${session.eventId}/delivery-status`;
+        const signed = await signRequest({
+          secret: session.hmacSecret,
+          eventId: session.eventId,
+          method: 'GET',
+          path,
+          timestamp: Date.now(),
+          body: new Uint8Array(0),
+        });
+        const res = await fetch(`${API_BASE_URL}${path}`, { method: 'GET', headers: { ...signed } });
+        if (res.status !== 200) return;
         const data = (await res.json()) as { coordinatorPathFailed?: boolean };
         if (!cancelled) setFailed(!!data?.coordinatorPathFailed);
       } catch {

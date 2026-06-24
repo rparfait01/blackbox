@@ -417,8 +417,8 @@ async function run() {
     const state = await api('GET', `/v1/c/${ev.eventId}/state?t=${token}`);
     assert(state.data?.closure?.tier === 'coordinator', `closure.tier wrong: ${JSON.stringify(state.data?.closure)}`);
     assert(state.data?.closure?.coordinatorFailed === false, 'closure.coordinatorFailed should start false');
-    const ds = await api('GET', `/v1/events/${ev.eventId}/delivery-status`);
-    assert(ds.data?.coordinatorPathFailed === false && ds.data?.escalationTier === 'coordinator', `delivery-status escalation fields wrong: ${JSON.stringify(ds.data)}`);
+    const ds = await signed('GET', `/v1/events/${ev.eventId}/delivery-status`, ev.hmacSecret, ev.eventId, undefined);
+    assert(ds.data?.coordinatorPathFailed === false && ds.data?.escalationTier === 'coordinator', `delivery-status escalation fields wrong: ${ds.status} ${JSON.stringify(ds.data)}`);
   });
 
   await check('23. §5 emergency views: CAD dispatch summary renders read-only + logs access; auth-gated', async () => {
