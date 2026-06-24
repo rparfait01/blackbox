@@ -6,6 +6,7 @@ import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { attemptStandDown } from './lib/standdown';
 import { appendToChain, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
+import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import { qrSvg } from './lib/qr';
 import {
   getVerifiedRecipient,
@@ -655,12 +656,32 @@ app.post('/v1/c/:id/secure', async (c) => {
   if (!(await requireCoordinator(c, eventId))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
+  const secureBody = await c.req
+    .json<{ override?: boolean; overrideReason?: string }>()
+    .catch(() => ({}) as { override?: boolean; overrideReason?: string });
   const event = await c.env.DB
-    .prepare('SELECT userId, userHash, status, closeRequestStatus FROM events WHERE id = ?')
+    .prepare('SELECT userId, userHash, status, closeRequestStatus, tamperingAt FROM events WHERE id = ?')
     .bind(eventId)
-    .first<{ userId: string | null; userHash: string | null; status: string; closeRequestStatus: string | null }>();
+    .first<{ userId: string | null; userHash: string | null; status: string; closeRequestStatus: string | null; tamperingAt: number | null }>();
   if (!event) {
     return c.json({ error: 'not found' }, 404);
+  }
+  // §E4: a TAMPERING event never clean-closes. Responders stay engaged until a
+  // coordinator explicitly overrides WITH CAUSE, which is logged.
+  if (event.status !== 'closed' && event.tamperingAt != null) {
+    const reason = (secureBody.overrideReason ?? '').trim();
+    if (secureBody.override !== true || reason.length === 0) {
+      await audit(c.env, eventId, 'secure_rejected_tampering', null, null);
+      return c.json(
+        {
+          error: 'tampering_requires_override',
+          message:
+            'Repeated duress signals flagged this event as TAMPERING. Do not assume safe. Securing requires an explicit override and a reason.',
+        },
+        409,
+      );
+    }
+    await audit(c.env, eventId, 'tampering_override_secured', null, JSON.stringify({ reason }));
   }
   // GATE (canonical closure rule): a coordinator can SECURE only to APPROVE a
   // pending, on-device-code-validated user closure request. No request pending =
@@ -1140,6 +1161,32 @@ app.post('/v1/events/:id/closure-request', async (c) => {
   await audit(c.env, eventId, status === 'unsat' ? 'closure_requested_duress' : 'closure_requested', null, null);
   const workerOrigin = new URL(c.req.url).origin;
   c.executionCtx.waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, status));
+
+  // §E3: repetition → tampering. Count duress signals in the rolling window (the
+  // current one's audit row was just written, so it is included). Past the
+  // threshold, escalate disposition to TAMPERING and raise severity — invisibly:
+  // nothing the device can observe changes for signal #1…N.
+  if (status === 'unsat') {
+    const since = Date.now() - TAMPERING_WINDOW_MS;
+    const row = await c.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM audit_log WHERE eventId = ? AND action = 'closure_requested_duress' AND timestamp >= ?",
+    )
+      .bind(eventId, since)
+      .first<{ n: number }>();
+    if (crossesTamperingThreshold(row?.n ?? 0)) {
+      const ev = await c.env.DB.prepare('SELECT tamperingAt FROM events WHERE id = ?')
+        .bind(eventId)
+        .first<{ tamperingAt: number | null }>();
+      if (ev?.tamperingAt == null) {
+        await c.env.DB.prepare('UPDATE events SET tamperingAt = ? WHERE id = ?').bind(Date.now(), eventId).run();
+        await audit(c.env, eventId, 'tampering_escalation', null, JSON.stringify({ count: row?.n ?? 0, windowMs: TAMPERING_WINDOW_MS }));
+        // Raise severity: re-fire the duress dispatch (advance the cascade).
+        c.executionCtx.waitUntil(notifyClosureRequest(c.env, eventId, workerOrigin, 'unsat'));
+      } else {
+        await audit(c.env, eventId, 'tampering_repetition', null, JSON.stringify({ count: row?.n ?? 0 }));
+      }
+    }
+  }
   return c.json({ ok: true, awaitingCoordinator: true }, 200);
 });
 

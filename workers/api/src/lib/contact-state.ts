@@ -61,6 +61,8 @@ export interface ContactState {
     reasonSecured: string | null;
     reasonTriggered: string | null;
     lockout: boolean;
+    /** §E3/§E4 — repeated duress escalated this event to TAMPERING. */
+    tampering: boolean;
   };
   emergency: EmergencyNumbers;
 }
@@ -233,7 +235,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt FROM events WHERE id = ?',
+    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -247,6 +249,7 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       lostAt: number | null;
       escalatedAt: number | null;
       closeRequestStatus: string | null;
+      tamperingAt: number | null;
       reasonSecured: string | null;
       reasonTriggered: string | null;
       closureLockoutAt: number | null;
@@ -388,6 +391,7 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       // Repeated wrong closure-pin attempts (Brief 19 §6) — surfaced so the
       // coordinator sees someone may be failing to close (possibly not the user).
       lockout: event.closureLockoutAt != null,
+      tampering: event.tamperingAt != null,
     },
     emergency: await resolveEmergency(env, event.userId, event.locale),
   };

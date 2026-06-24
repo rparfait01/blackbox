@@ -668,8 +668,10 @@ const CLIENT_JS = `
     w.style.display='block';
     w.className = duress ? 'closure-window duress' : 'closure-window';
     var html='<div class="cw-title">Closure requested by the user</div>';
-    html+='<div class="cw-row"><span>PIN</span><span class="'+(duress?'cw-bad':'cw-ok')+'">'+(duress?'UNSAT · DURESS':'SAT')+'</span></div>';
-    if(duress){ html+='<div class="cw-warn">THREAT ONGOING — do not assume safe. Validate that the user is genuinely safe before securing.</div>'; }
+    var disp = cl.tampering ? 'TAMPERING' : (duress?'UNSAT · DURESS':'SAT');
+    html+='<div class="cw-row"><span>STATUS</span><span class="'+((duress||cl.tampering)?'cw-bad':'cw-ok')+'">'+disp+'</span></div>';
+    if(cl.tampering){ html+='<div class="cw-warn">⚠ TAMPERING — repeated duress signals in a short window. Responders stay engaged. Securing requires an explicit override with a logged reason; do NOT assume safe.</div>'; }
+    else if(duress){ html+='<div class="cw-warn">THREAT ONGOING — do not assume safe. Validate that the user is genuinely safe before securing.</div>'; }
     if(cl.reasonSecured){ html+='<div class="cw-reason">Reason for securing: '+sitEsc(cl.reasonSecured)+'</div>'; }
     // Status only — the coordinator secures via the single SECURE control below
     // (the confirm step), seeing PIN sat/unsat. They never enter the pin.
@@ -776,17 +778,31 @@ const CLIENT_JS = `
   // coordination was already claimed by the deliberate Take-coordination POST,
   // so there is no second "I am responding" affordance here. ----
   var secureAlert=el('secureAlert');
-  if(secureAlert){ secureAlert.onclick=function(){
-    if(secureAlert.disabled){ return; } // inert until the user requests closure
-    if(!window.confirm('Are you sure this person is safe? This ends the alert and stops recording.')){ return; }
-    secureAlert.disabled=true; secureAlert.textContent='SECURING…';
-    fetch(api('/secure'),{method:'POST'}).then(function(r){ return r.json().then(function(d){ return {status:r.status,d:d}; }); }).then(function(res){
+  if(secureAlert){
+    function postSecure(body){
+      return fetch(api('/secure'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){ return r.json().then(function(d){ return {status:r.status,d:d}; }); });
+    }
+    function handleSecure(res){
       var d=res.d;
-      if(d&&d.secured){ secureAlert.textContent='SECURED ✓'; }
-      else if(res.status===409){ secureAlert.disabled=true; secureAlert.textContent='SECURE — AWAITING USER REQUEST'; alert('The user has not requested closure yet. You can only secure once they do.'); }
-      else { secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; alert('Could not secure. Try again.'); }
-    }).catch(function(){ secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; });
-  };}
+      if(d&&d.secured){ secureAlert.textContent='SECURED ✓'; return; }
+      // §E4: a TAMPERING event never clean-closes. The coordinator must override
+      // with an explicit, logged reason that they have confirmed the user is safe.
+      if(res.status===409 && d && d.error==='tampering_requires_override'){
+        var reason=window.prompt('TAMPERING: repeated duress signals on this event. Do NOT assume safe. To secure anyway, type the reason you have confirmed the user is genuinely safe (this is logged):');
+        if(reason && reason.trim()){ secureAlert.textContent='SECURING…'; postSecure({override:true, overrideReason:reason.trim()}).then(handleSecure); }
+        else { secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; }
+        return;
+      }
+      if(res.status===409){ secureAlert.disabled=true; secureAlert.textContent='SECURE — AWAITING USER REQUEST'; alert('The user has not requested closure yet. You can only secure once they do.'); return; }
+      secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; alert('Could not secure. Try again.');
+    }
+    secureAlert.onclick=function(){
+      if(secureAlert.disabled){ return; } // inert until the user requests closure
+      if(!window.confirm('Are you sure this person is safe? This ends the alert and stops recording.')){ return; }
+      secureAlert.disabled=true; secureAlert.textContent='SECURING…';
+      postSecure({}).then(handleSecure).catch(function(){ secureAlert.disabled=false; secureAlert.textContent='SECURE — END ALERT'; });
+    };
+  }
   // ---- share with authorities: mint a dispatch link + QR (Fix Brief 4 G1) ----
   var sa=el('shareAuth');
   if(sa){ sa.onclick=function(){

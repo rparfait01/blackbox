@@ -9,6 +9,7 @@
 import { formatDtg } from '@blackbox/shared';
 import { getChainHead, hashString } from './integrity';
 import { getContactState } from './contact-state';
+import { disposition, type Disposition } from './tampering';
 import type { Env } from '../types';
 
 export interface ClosureReport {
@@ -18,6 +19,8 @@ export interface ClosureReport {
   generatedDtg: string;
   pin: 'sat' | 'unsat' | 'unknown';
   duress: boolean;
+  /** §E4 — the authoritative disposition recorded in the report. */
+  disposition: Disposition;
   reasonTriggered: string | null;
   reasonSecured: string | null;
   origin: unknown;
@@ -37,7 +40,7 @@ export async function buildClosureReport(
   eventId: string,
 ): Promise<{ report: ClosureReport; packageHash: string } | null> {
   const event = await env.DB.prepare(
-    'SELECT createdAt, closeRequestStatus, reasonSecured, reasonTriggered, securedAt, tzOffsetMinutes FROM events WHERE id = ?',
+    'SELECT createdAt, closeRequestStatus, reasonSecured, reasonTriggered, securedAt, tamperingAt, tzOffsetMinutes FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -46,6 +49,7 @@ export async function buildClosureReport(
       reasonSecured: string | null;
       reasonTriggered: string | null;
       securedAt: number | null;
+      tamperingAt: number | null;
       tzOffsetMinutes: number | null;
     }>();
   if (!event) {
@@ -70,6 +74,7 @@ export async function buildClosureReport(
     generatedDtg: formatDtg(now),
     pin,
     duress: pin === 'unsat',
+    disposition: disposition(event.closeRequestStatus, event.tamperingAt),
     reasonTriggered: event.reasonTriggered,
     reasonSecured: event.reasonSecured,
     origin: state?.origin ?? null,
