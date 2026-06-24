@@ -37,7 +37,7 @@ export async function sendCheckin(
   env: Env,
   userId: string,
   input: CheckinInput,
-): Promise<{ ok: boolean; at: number; recipients: number }> {
+): Promise<{ ok: boolean; id: string; at: number; recipients: number }> {
   const user = await getUserById(env, userId);
   const now = Date.now();
   const tz = input.tzOffsetMinutes ?? null;
@@ -72,5 +72,5 @@ export async function sendCheckin(
     }
   }
   await audit(env, checkinId, 'checkin', userId, { recipients: delivered, location: location != null });
-  return { ok: true, at: now, recipients: delivered };
+  return { ok: true, id: checkinId, at: now, recipients: delivered };
 }

@@ -117,6 +117,9 @@ export async function sendEmail(
 export class SendGridEmailChannel implements NotificationChannel {
   readonly channel = 'email' as const;
   lastProviderMessageId: string | null = null;
+  /** SendGrid's actual rejection (status + body) so an email failure is never
+   *  recorded as a bare "send_failed" — the delivery log carries the real reason. */
+  lastError: string | null = null;
 
   constructor(
     private readonly env: Env,
@@ -130,6 +133,7 @@ export class SendGridEmailChannel implements NotificationChannel {
       messageType,
     ).then((r) => {
       this.lastProviderMessageId = r.messageId ?? null;
+      this.lastError = r.ok ? null : `sendgrid_${r.status}: ${(r.body || '(empty)').slice(0, 180)}`;
       return r.ok;
     });
   }
