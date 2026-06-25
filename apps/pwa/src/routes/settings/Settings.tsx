@@ -28,6 +28,9 @@ export function Settings(): JSX.Element {
   const alertActive = useActiveAlert();
   const [me, setMe] = useState<MeData | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // §0: an in-app 2-step confirm for switching toward VISIBLE (the native confirm
+  // dialog is unreliable in the installed PWA — that is what left the toggle dead).
+  const [confirmVisible, setConfirmVisible] = useState(false);
 
   const load = (): void => {
     void api<MeData>('/v1/me').then((r) => r.ok && r.data && setMe(r.data));
@@ -48,17 +51,32 @@ export function Settings(): JSX.Element {
     window.setTimeout(() => setToast(null), 2500);
   };
 
-  async function switchMode(mode: DisplayMode): Promise<void> {
+  // PINNED mapping (load-bearing — never infer): Hidden = covert facade,
+  // Visible = overt instrument. applyMode persists server-side + locally, then
+  // HARD-navigates so the rendered mode is guaranteed to match the stored mode
+  // (a soft navigate can leave the old screen mounted; the native confirm dialog
+  // could not even be relied on to fire). §0a holds: Hidden re-enters the facade.
+  async function applyMode(mode: DisplayMode): Promise<void> {
+    setConfirmVisible(false);
     if (mode === getDisplayMode()) {
       return;
     }
-    if (!window.confirm('This will change how the app launches. Continue?')) {
+    const res = await api('/v1/me/display-mode', { body: { displayMode: mode } });
+    if (!res.ok) {
+      flash('Couldn’t change visibility — please try again.');
       return;
     }
-    const res = await api('/v1/me/display-mode', { body: { displayMode: mode } });
-    if (res.ok) {
-      setDisplayMode(mode);
-      navigate('/', { replace: true });
+    setDisplayMode(mode);
+    window.location.assign(mode === 'direct' ? '/blackbox' : '/');
+  }
+
+  // Hidden (covert) is the SAFE direction — frictionless. Visible (overt) is
+  // deliberate — a 2-step in-app confirmation first.
+  function selectVisibility(target: 'hidden' | 'visible'): void {
+    if (target === 'hidden') {
+      void applyMode('covert');
+    } else {
+      setConfirmVisible(true);
     }
   }
 
@@ -121,35 +139,70 @@ export function Settings(): JSX.Element {
           <Row k="Nationality" v={me?.user.nationality ?? '—'} />
         </Group>
 
-        {/* "Present" toggle (Brief 13 A4/B6). Deliberately ambiguous — no
-            safety-revealing subtext. Right = ON (overt instrument), left = OFF
-            (covert facade). switchMode carries the required second confirmation. */}
-        <Group label="Present">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={present}
-            aria-label="Present"
-            onClick={() => void switchMode(present ? 'covert' : 'direct')}
-            className="flex w-full items-center justify-between py-1"
-          >
-            <span className="text-med-text/80">{present ? 'On' : 'Off'}</span>
-            {/* Proper switch: ON = filled active track + knob right; OFF = muted
-                track + knob left. `block` so the width/height actually apply (an
-                inline span ignores them); knob pinned via left so position can't
-                drift from the label. Right = ON (overt), left = OFF (covert). */}
-            <span
-              className={`relative block h-7 w-12 shrink-0 rounded-full transition-colors ${
-                present ? 'bg-[#34c759]' : 'bg-med-text/20'
+        {/* §0 Visibility — a TWO-ENDED, both-ends-labeled control. Hidden = covert
+            (Stillpoint facade), Visible = overt (instrument). The mapping is pinned
+            and never inferred: a user choosing Hidden must NEVER get the instrument.
+            Hidden is the default. */}
+        <Group label="Visibility">
+          <div role="radiogroup" aria-label="App visibility" className="flex gap-2">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!present}
+              onClick={() => selectVisibility('hidden')}
+              className={`flex-1 rounded-lg border py-3 text-center font-mono text-xs uppercase tracking-[0.12em] transition-colors ${
+                !present
+                  ? 'border-med-text/80 bg-med-text/10 text-med-text'
+                  : 'border-med-text/25 text-med-text/55'
               }`}
             >
-              <span
-                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                  present ? 'left-6' : 'left-1'
-                }`}
-              />
-            </span>
-          </button>
+              Hidden
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={present}
+              onClick={() => selectVisibility('visible')}
+              className={`flex-1 rounded-lg border py-3 text-center font-mono text-xs uppercase tracking-[0.12em] transition-colors ${
+                present
+                  ? 'border-med-text/80 bg-med-text/10 text-med-text'
+                  : 'border-med-text/25 text-med-text/55'
+              }`}
+            >
+              Visible
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-med-text/45">
+            {present
+              ? 'Visible: the full app is shown.'
+              : 'Hidden: the app looks like an ordinary breathing app.'}
+          </p>
+
+          {/* 2-step in-app confirmation for switching TOWARD Visible (deliberate). */}
+          {confirmVisible ? (
+            <div className="mt-3 rounded-lg border border-med-warn/40 bg-med-warn/5 p-3">
+              <p className="text-[12px] leading-relaxed text-med-text/80">
+                Switch to <span className="text-med-text">Visible</span>? The full app will be shown
+                on this phone until you set it back to Hidden.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void applyMode('direct')}
+                  className="flex-1 rounded-full bg-med-text/90 py-2.5 text-sm font-medium text-[#071416]"
+                >
+                  Show the full app
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmVisible(false)}
+                  className="flex-1 rounded-full border border-med-text/25 py-2.5 text-sm text-med-text/70"
+                >
+                  Stay hidden
+                </button>
+              </div>
+            </div>
+          ) : null}
         </Group>
 
         <Group label="Ending an alert">
