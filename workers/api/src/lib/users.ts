@@ -21,12 +21,15 @@ export interface UserRow {
   passwordHash: string | null;
   guardianEnabled: number;
   nationality: string | null;
+  /** The contact designated as the check-in recipient (Brief 19). NULL → default
+   *  to the primary contact at resolve time. Never the guardian. */
+  checkinContactId: string | null;
   createdAt: number;
   updatedAt: number;
 }
 
 const USER_COLS =
-  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, createdAt, updatedAt';
+  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, checkinContactId, createdAt, updatedAt';
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -161,6 +164,18 @@ export async function updateUserFields(
   const now = Date.now();
   await env.DB.prepare(`UPDATE users SET ${sets.join(', ')}, updatedAt = ? WHERE id = ?`)
     .bind(...values, now, userId)
+    .run();
+}
+
+/**
+ * Designate the check-in recipient (Brief 19). Stores the chosen contact row id;
+ * passing null clears it back to the primary-contact default. Validation that the
+ * id is one of the user's own `contact` rows lives at the route, so this stays a
+ * plain setter mirroring setGuardianEnabled.
+ */
+export async function setCheckinContact(env: Env, userId: string, contactId: string | null): Promise<void> {
+  await env.DB.prepare('UPDATE users SET checkinContactId = ?, updatedAt = ? WHERE id = ?')
+    .bind(contactId, Date.now(), userId)
     .run();
 }
 

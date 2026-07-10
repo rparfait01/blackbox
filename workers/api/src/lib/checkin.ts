@@ -1,49 +1,82 @@
 /**
- * Check-in ("I'm OK") — Brief 10. The autonomy counterpart to the alert: a
- * voluntary, NON-emergency reassurance ping. It creates NO event, NO capture, NO
- * coordinator, NO escalation — it just sends a calm message to the chosen
- * recipients (default: guardian) and records the time. Location is included ONLY
- * if the user opted in for this tap.
+ * Check-in ("I'm OK") — Brief 10 + Brief 19. The autonomy counterpart to the
+ * alert: a voluntary, NON-emergency reassurance ping to ONE designated contact. It
+ * creates NO event, NO capture, NO coordinator, NO escalation — it just sends a
+ * calm status message and records the time.
+ *
+ * Recipient (Brief 19 — retires the guardian hardcode): the user's designated
+ * check-in contact if set and deliverable, else the primary contact if
+ * deliverable, else an HONEST failure. It is NEVER the guardian, and it NEVER
+ * reports success with zero recipients. Location is always captured on tap (Brief
+ * 17 §1) — no opt-in flag.
  */
 
 import { formatLocalClock } from '@blackbox/shared';
 import { dispatch } from '../channels/router';
+import { isChannelDeliverable } from '../channels/router';
 import { audit } from './audit';
-import { slotAddress, type SlotKey } from './roles';
-import { getUserById } from './users';
+import { getUserById, type UserRow } from './users';
 import type { Env } from '../types';
 
-async function slotContactId(env: Env, userId: string, slot: SlotKey): Promise<string | null> {
-  const addr = slotAddress(slot);
-  if (!addr) {
-    return null;
+/** A contact is a viable check-in target only if at least one of its endpoints can
+ *  actually deliver in this deployment (mirrors dispatch trying each endpoint). */
+async function contactDeliverable(env: Env, contactId: string): Promise<boolean> {
+  const { results } = await env.DB.prepare('SELECT channel FROM contact_endpoints WHERE contactId = ?')
+    .bind(contactId)
+    .all<{ channel: string }>();
+  return (results ?? []).some((e) => isChannelDeliverable(env, e.channel));
+}
+
+/**
+ * Resolve the single check-in recipient (Brief 19): designated contact → primary
+ * contact → none. Only ever a `contact` role (never guardian/emergency), and only
+ * if it can actually be reached. Returns the contact id or null.
+ */
+async function resolveCheckinContact(env: Env, userId: string, user: UserRow | null): Promise<string | null> {
+  if (user?.checkinContactId) {
+    const designated = await env.DB.prepare(
+      "SELECT id FROM contacts WHERE id = ? AND userId = ? AND role = 'contact'",
+    )
+      .bind(user.checkinContactId, userId)
+      .first<{ id: string }>();
+    if (designated && (await contactDeliverable(env, designated.id))) {
+      return designated.id;
+    }
   }
-  const row = await env.DB.prepare(
-    'SELECT id FROM contacts WHERE userId = ? AND role = ? AND ((? IS NULL AND priority IS NULL) OR priority = ?) LIMIT 1',
+  const primary = await env.DB.prepare(
+    "SELECT id FROM contacts WHERE userId = ? AND role = 'contact' AND priority = 1 LIMIT 1",
   )
-    .bind(userId, addr.role, addr.priority, addr.priority)
+    .bind(userId)
     .first<{ id: string }>();
-  return row?.id ?? null;
+  if (primary && (await contactDeliverable(env, primary.id))) {
+    return primary.id;
+  }
+  return null;
 }
 
 export interface CheckinInput {
-  includeLocation: boolean;
   location?: { lat: number; lon: number } | null;
-  recipients?: SlotKey[];
   tzOffsetMinutes?: number | null;
 }
 
-export async function sendCheckin(
-  env: Env,
-  userId: string,
-  input: CheckinInput,
-): Promise<{ ok: boolean; id: string; at: number; recipients: number }> {
+export interface CheckinResult {
+  ok: boolean;
+  id: string;
+  at: number;
+  recipients: number;
+  /** Present only on failure, so the client can show an honest, specific reason. */
+  reason?: 'no_recipient' | 'delivery_failed';
+}
+
+export async function sendCheckin(env: Env, userId: string, input: CheckinInput): Promise<CheckinResult> {
   const user = await getUserById(env, userId);
   const now = Date.now();
   const tz = input.tzOffsetMinutes ?? null;
-  const location = input.includeLocation && input.location ? input.location : null;
+  const location = input.location ?? null;
 
-  // Record the check-in (the reassurance trail) + the last-check-in pointer.
+  // Record the check-in (the reassurance trail) + the last-check-in pointer. The
+  // record is written regardless of delivery; the user-facing result reflects
+  // whether the designated contact was actually reached (no silent success).
   const checkinId = `chk-${crypto.randomUUID()}`;
   await env.DB.batch([
     env.DB.prepare(
@@ -52,25 +85,23 @@ export async function sendCheckin(
     env.DB.prepare('UPDATE users SET lastCheckinAt = ? WHERE id = ?').bind(now, userId),
   ]);
 
-  // Default recipient is the guardian; the user may choose contacts too.
-  const slots = input.recipients && input.recipients.length > 0 ? input.recipients : (['guardian'] as SlotKey[]);
+  const contactId = await resolveCheckinContact(env, userId, user);
+  if (!contactId) {
+    // No designated/primary contact that can be reached → honest failure. NEVER
+    // ok:true with zero recipients.
+    await audit(env, checkinId, 'checkin', userId, { recipients: 0, reason: 'no_recipient', location: location != null });
+    return { ok: false, id: checkinId, at: now, recipients: 0, reason: 'no_recipient' };
+  }
+
   const payload = {
     userDisplayName: user?.name ?? 'A BLACK BOX user',
     time: formatLocalClock(now, tz),
     location,
   };
-
-  let delivered = 0;
-  for (const slot of slots) {
-    const contactId = await slotContactId(env, userId, slot);
-    if (!contactId) {
-      continue;
-    }
-    const result = await dispatch(env, contactId, { kind: 'checkin', eventId: checkinId, payload });
-    if (result.delivered) {
-      delivered += 1;
-    }
-  }
+  const result = await dispatch(env, contactId, { kind: 'checkin', eventId: checkinId, payload });
+  const delivered = result.delivered ? 1 : 0;
   await audit(env, checkinId, 'checkin', userId, { recipients: delivered, location: location != null });
-  return { ok: true, id: checkinId, at: now, recipients: delivered };
+  return result.delivered
+    ? { ok: true, id: checkinId, at: now, recipients: 1 }
+    : { ok: false, id: checkinId, at: now, recipients: 0, reason: 'delivery_failed' };
 }

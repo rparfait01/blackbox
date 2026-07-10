@@ -45,6 +45,9 @@ export function slotAddress(slot: string): SlotAddress | null {
 export interface SlotView {
   slot: SlotKey;
   filled: boolean;
+  /** The contact row id (Brief 19 — lets the client designate a check-in
+   *  recipient by id). Null for an empty slot. */
+  id: string | null;
   contactName: string | null;
   channel: string | null;
   destination: string | null;
@@ -80,11 +83,11 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
   const rows = results ?? [];
 
   const slots: Record<SlotKey, SlotView> = {
-    primary: { slot: 'primary', filled: false, contactName: null, channel: null, destination: null },
-    secondary: { slot: 'secondary', filled: false, contactName: null, channel: null, destination: null },
-    tertiary: { slot: 'tertiary', filled: false, contactName: null, channel: null, destination: null },
-    guardian: { slot: 'guardian', filled: false, contactName: null, channel: null, destination: null },
-    emergency: { slot: 'emergency', filled: false, contactName: null, channel: null, destination: null },
+    primary: { slot: 'primary', filled: false, id: null, contactName: null, channel: null, destination: null },
+    secondary: { slot: 'secondary', filled: false, id: null, contactName: null, channel: null, destination: null },
+    tertiary: { slot: 'tertiary', filled: false, id: null, contactName: null, channel: null, destination: null },
+    guardian: { slot: 'guardian', filled: false, id: null, contactName: null, channel: null, destination: null },
+    emergency: { slot: 'emergency', filled: false, id: null, contactName: null, channel: null, destination: null },
   };
 
   for (const row of rows) {
@@ -100,6 +103,7 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
     slots[key] = {
       slot: key,
       filled: true,
+      id: row.id,
       contactName: row.contactName,
       channel: endpoint?.channel ?? null,
       destination: endpoint?.channelIdentifier ?? null,

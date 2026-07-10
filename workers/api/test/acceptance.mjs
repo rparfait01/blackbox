@@ -441,17 +441,22 @@ async function run() {
     }
   });
 
-  await check('24. §17 check-in hits the delivery path to the guardian (not a no-op); dormant-only', async () => {
+  await check('24. §19 check-in routes to designated→primary CONTACT (not guardian); honest failure; on-the-fly; dormant-only', async () => {
     assert(ADMIN, 'BBX_ADMIN_TOKEN not set — cannot read the delivery log');
     const u = await signup();
-    // The guardian is the check-in recipient.
-    const g = await api('POST', '/v1/me/contacts/guardian', { bearer: u.session, body: { contactName: 'G', channel: 'email', destination: `smoke+chkg-${uniq()}@example.com` } });
-    assert(g.status === 200, `add guardian failed: ${JSON.stringify(g.data)}`);
-    const chk = await api('POST', '/v1/me/checkin', { bearer: u.session, body: { includeLocation: true, location: { lat: 35.681, lon: 139.767 }, tzOffsetMinutes: -540 } });
+    // No contact at all → HONEST failure, never a silent success.
+    const none = await api('POST', '/v1/me/checkin', { bearer: u.session, body: {} });
+    assert(
+      none.status === 200 && none.data?.ok === false && (none.data?.recipients ?? -1) === 0 && none.data?.reason === 'no_recipient',
+      `no-contact check-in must honestly fail (ok:false, recipients:0, reason:no_recipient): ${JSON.stringify(none.data)}`,
+    );
+    // Add a PRIMARY contact → the default check-in recipient with no explicit pick.
+    assert((await addEmail(u.session, 'primary', 'P')).status === 200, 'add primary failed');
+    const chk = await api('POST', '/v1/me/checkin', { bearer: u.session, body: { location: { lat: 35.681, lon: 139.767 }, tzOffsetMinutes: -540 } });
     assert(chk.status === 200 && chk.data?.id, `check-in failed: ${chk.status} ${JSON.stringify(chk.data)}`);
     // Dormant-only: a check-in creates NO event (nothing to arm/coordinate).
     assert(chk.data?.eventId === undefined, 'check-in created an event — it must stay dormant-only');
-    // NOT a no-op: a delivery ATTEMPT to the guardian is recorded. delivered-vs-
+    // NOT a no-op: a delivery ATTEMPT to the contact is recorded. delivered-vs-
     // failed is provider-dependent (e.g. SendGrid credits) and is surfaced to the
     // user honestly; the regression guard here is that the PATH is hit at all.
     let recs = 0;
@@ -459,11 +464,26 @@ async function run() {
       recs = (await api('GET', `/v1/admin/events/${chk.data.id}/deliveries?kind=checkin`, { bearer: ADMIN })).data?.count ?? 0;
       if (recs < 1) await sleep(500);
     }
-    assert(recs >= 1, `check-in is a NO-OP — no delivery attempt recorded for the guardian: ${JSON.stringify(chk.data)}`);
-    // With NO guardian, the result honestly reports zero recipients (no silent success).
-    const u2 = await signup();
-    const chk2 = await api('POST', '/v1/me/checkin', { bearer: u2.session, body: { includeLocation: false } });
-    assert(chk2.status === 200 && (chk2.data?.recipients ?? -1) === 0, `no-guardian check-in should report 0 recipients: ${JSON.stringify(chk2.data)}`);
+    assert(recs >= 1, `check-in is a NO-OP — no delivery attempt recorded for the contact: ${JSON.stringify(chk.data)}`);
+    // Designate a DIFFERENT contact ON THE FLY → the resolve order prefers it, and
+    // the contacts view reflects the new designation immediately.
+    assert((await addEmail(u.session, 'secondary', 'S')).status === 200, 'add secondary failed');
+    const listed = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    const secondaryId = listed.data?.slots?.find((s) => s.slot === 'secondary')?.id;
+    assert(secondaryId, `secondary contact id missing from /contacts: ${JSON.stringify(listed.data)}`);
+    const desig = await api('POST', '/v1/me/checkin-contact', { bearer: u.session, body: { contactId: secondaryId } });
+    assert(desig.status === 200 && desig.data?.checkinContactId === secondaryId, `designate failed: ${JSON.stringify(desig.data)}`);
+    const relisted = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    assert(relisted.data?.checkinContactId === secondaryId, `designation not reflected in /contacts: ${JSON.stringify(relisted.data)}`);
+    // The guardian can NEVER be designated as the check-in recipient (contacts only).
+    assert(
+      (await api('POST', '/v1/me/contacts/guardian', { bearer: u.session, body: { contactName: 'G', channel: 'email', destination: `smoke+chkg-${uniq()}@example.com` } })).status === 200,
+      'add guardian failed',
+    );
+    const withG = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    const guardianId = withG.data?.slots?.find((s) => s.slot === 'guardian')?.id;
+    const badDesig = await api('POST', '/v1/me/checkin-contact', { bearer: u.session, body: { contactId: guardianId } });
+    assert(badDesig.status === 400, `guardian must not be designable as the check-in recipient: ${badDesig.status} ${JSON.stringify(badDesig.data)}`);
   });
 
   // ---- cleanup ----

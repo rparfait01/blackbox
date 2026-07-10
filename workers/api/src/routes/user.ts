@@ -8,7 +8,7 @@ import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { pairingStatus, startLinePairing } from '../lib/line-pairing';
-import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
+import { deleteAccount, getUserById, hasActiveEvent, setCheckinContact, setGuardianEnabled, updateUserFields } from '../lib/users';
 import {
   guardianLoad,
   hasDeliverableRecipient,
@@ -112,9 +112,33 @@ userRoutes.get('/contacts', async (c) => {
       // the user can never arm into the notify-no-one deadlock; the server also
       // enforces it at POST /v1/events.
       armable: await hasDeliverableRecipient(c.env, userId),
+      // Brief 19: the designated check-in recipient (null → the primary contact is
+      // used by default). Lets the UI mark which contact holds the check-in.
+      checkinContactId: user?.checkinContactId ?? null,
     },
     200,
   );
+});
+
+// Designate the check-in recipient (Brief 19). Exactly one contact holds it; it
+// must be one of the user's own `contact` rows (never the guardian). Passing null
+// clears back to the primary-contact default. Not locked during an alert —
+// check-in is a dormant-only reassurance feature and never touches the event.
+userRoutes.post('/checkin-contact', async (c) => {
+  const body = await c.req.json<{ contactId?: string | null }>().catch(() => ({}) as { contactId?: string | null });
+  const contactId = typeof body.contactId === 'string' && body.contactId.trim() ? body.contactId.trim() : null;
+  if (contactId) {
+    const owned = await c.env.DB.prepare(
+      "SELECT id FROM contacts WHERE id = ? AND userId = ? AND role = 'contact'",
+    )
+      .bind(contactId, c.get('userId'))
+      .first<{ id: string }>();
+    if (!owned) {
+      return c.json({ error: 'invalid_contact', message: 'Choose one of your own contacts.' }, 400);
+    }
+  }
+  await setCheckinContact(c.env, c.get('userId'), contactId);
+  return c.json({ ok: true, checkinContactId: contactId }, 200);
 });
 
 userRoutes.post('/contacts/:slot', async (c) => {
@@ -236,15 +260,16 @@ userRoutes.delete('/account', async (c) => {
 // locked during an alert (it's a separate, harmless reassurance ping).
 userRoutes.post('/checkin', async (c) => {
   const body = await c.req
-    .json<{ includeLocation?: boolean; location?: { lat: number; lon: number } | null; recipients?: string[]; tzOffsetMinutes?: number }>()
+    .json<{ location?: { lat: number; lon: number } | null; tzOffsetMinutes?: number }>()
     .catch(() => ({}) as Record<string, never>);
-  const recipients = Array.isArray(body.recipients)
-    ? (body.recipients.filter((r) => ['primary', 'secondary', 'tertiary', 'guardian'].includes(r)) as SlotKey[])
-    : undefined;
+  // Location is ALWAYS captured on tap (Brief 17 §1) — no opt-in flag. Carried
+  // when the client resolved a fix; null when it couldn't.
+  const location =
+    body.location && typeof body.location.lat === 'number' && typeof body.location.lon === 'number'
+      ? { lat: body.location.lat, lon: body.location.lon }
+      : null;
   const result = await sendCheckin(c.env, c.get('userId'), {
-    includeLocation: body.includeLocation === true,
-    location: body.includeLocation === true ? body.location ?? null : null,
-    recipients,
+    location,
     tzOffsetMinutes: typeof body.tzOffsetMinutes === 'number' ? body.tzOffsetMinutes : null,
   });
   return c.json(result, 200);

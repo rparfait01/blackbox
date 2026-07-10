@@ -47,7 +47,7 @@ export function BlackBoxHome(): JSX.Element {
   const alertStart = useActiveAlertStart();
   const [now, setNow] = useState(() => Date.now());
   // §17: check-in confirmation reflects ACTUAL delivery — never a silent success.
-  const [checkin, setCheckin] = useState<'idle' | 'sending' | 'delivered' | 'undelivered' | 'error'>('idle');
+  const [checkin, setCheckin] = useState<'idle' | 'sending' | 'delivered' | 'undelivered' | 'no-recipient' | 'error'>('idle');
   // Readiness (Brief 15 §C): re-verified (not re-prompted) on every mount/refresh.
   // A permission revoked in OS settings surfaces here as NOT READY within one launch.
   const [readiness, setReadiness] = useState<Readiness | null>(null);
@@ -133,18 +133,22 @@ export function BlackBoxHome(): JSX.Element {
         );
       });
     }
-    const res = await api<{ ok: boolean; recipients: number }>('/v1/me/checkin', {
+    const res = await api<{ ok: boolean; recipients: number; reason?: string }>('/v1/me/checkin', {
       body: {
-        includeLocation: location != null,
+        // Location is always captured on tap (Brief 17 §1) — no opt-in flag.
         location,
         tzOffsetMinutes: new Date().getTimezoneOffset(),
       },
     });
-    // No silent success: confirm ONLY on real delivery (recipients > 0).
-    if (!res.ok) {
+    // No silent success or silent failure (Brief 19): the endpoint returns 200 with
+    // a body whose `ok` reflects REAL delivery to the designated contact, and a
+    // `reason` on failure. A transport failure surfaces as status 0.
+    if (!res.ok || !res.data) {
       setCheckin('error');
-    } else if ((res.data?.recipients ?? 0) > 0) {
+    } else if (res.data.ok && res.data.recipients > 0) {
       setCheckin('delivered');
+    } else if (res.data.reason === 'no_recipient') {
+      setCheckin('no-recipient');
     } else {
       setCheckin('undelivered');
     }
@@ -306,7 +310,7 @@ export function BlackBoxHome(): JSX.Element {
             onClick={() => void sendCheckin()}
             disabled={alertActive || checkin === 'sending'}
             className={`w-full select-none rounded-full border py-3.5 font-mono text-sm font-medium uppercase tracking-[0.12em] disabled:opacity-40 ${
-              checkin === 'undelivered' || checkin === 'error'
+              checkin === 'undelivered' || checkin === 'no-recipient' || checkin === 'error'
                 ? 'border-status-armed/60 bg-status-armed/10 text-status-armed'
                 : 'border-[#34c759]/50 bg-[#13301a] text-[#34c759]'
             }`}
@@ -316,21 +320,25 @@ export function BlackBoxHome(): JSX.Element {
               : checkin === 'sending'
                 ? 'Checking in…'
                 : checkin === 'delivered'
-                  ? '✓ Guardian notified'
+                  ? '✓ Check-in sent'
                   : checkin === 'undelivered'
                     ? '⚠ Not delivered — tap to retry'
-                    : checkin === 'error'
-                      ? 'Couldn’t check in — tap to retry'
-                      : "I'm OK · Check in"}
+                    : checkin === 'no-recipient'
+                      ? '⚠ No check-in contact set'
+                      : checkin === 'error'
+                        ? 'Couldn’t check in — tap to retry'
+                        : "I'm OK · Check in"}
           </button>
           <p className="mt-2 text-center font-mono text-[10px] leading-relaxed text-bb-text-tertiary">
             {checkin === 'delivered'
-              ? 'Your guardian received your status, time, and location.'
+              ? 'Your check-in contact received your status, time, and location.'
               : checkin === 'undelivered'
-                ? 'No guardian could be reached — add or verify your guardian in settings.'
-                : checkin === 'error'
-                  ? 'No connection — please try again.'
-                  : 'Sends your status, time & location to your guardian. No recording, no tracking.'}
+                ? 'Your check-in contact couldn’t be reached — check it in settings.'
+                : checkin === 'no-recipient'
+                  ? 'No check-in contact set — choose one under your contacts in settings.'
+                  : checkin === 'error'
+                    ? 'No connection — please try again.'
+                    : 'Sends your status, time & location to your check-in contact. No recording, no tracking.'}
           </p>
         </div>
       </div>
