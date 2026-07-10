@@ -6,9 +6,9 @@ export interface ActivationHold {
   isHolding: boolean;
   handlers: {
     onPointerDown: (event: PointerEvent) => void;
-    onPointerUp: () => void;
-    onPointerLeave: () => void;
-    onPointerCancel: () => void;
+    onPointerUp: (event: PointerEvent) => void;
+    onPointerLeave: (event: PointerEvent) => void;
+    onPointerCancel: (event: PointerEvent) => void;
   };
 }
 
@@ -29,6 +29,9 @@ export function useActivationHold(holdMs: number, onComplete: () => void): Activ
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number | null>(null);
   const completedRef = useRef(false);
+  // True once the pointer is captured on this press. While captured we do NOT
+  // abort the hold on pointerleave/pointercancel (see the handlers below).
+  const capturedRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
 
   useEffect(() => {
@@ -70,6 +73,20 @@ export function useActivationHold(holdMs: number, onComplete: () => void): Activ
   const onPointerDown = useCallback(
     (event: PointerEvent): void => {
       event.preventDefault();
+      // Capture the pointer for the whole press (Brief 15 amendment — the real
+      // Hidden-mode trigger bug). Without this the mobile browser reclaims the
+      // press as a scroll/pan and fires pointercancel, or the finger drifts a few
+      // px off the orb and fires pointerleave — either one silently aborted the
+      // hold so activation never completed. A desktop mouse held still never
+      // reproduced it. With capture, every later pointer event for this press
+      // (including the release) is delivered to this element.
+      capturedRef.current = false;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        capturedRef.current = true;
+      } catch {
+        /* capture unsupported/invalid pointer — fall back to uncaptured behavior */
+      }
       completedRef.current = false;
       startRef.current = performance.now();
       setIsHolding(true);
@@ -77,6 +94,34 @@ export function useActivationHold(holdMs: number, onComplete: () => void): Activ
     },
     [tick],
   );
+
+  // Release = end of the press. An early release (short tap) resets without
+  // firing; only the full hold activates, so an innocent tap still does nothing.
+  const onPointerUp = useCallback(
+    (event: PointerEvent): void => {
+      if (capturedRef.current) {
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          /* already released */
+        }
+        capturedRef.current = false;
+      }
+      stop();
+    },
+    [stop],
+  );
+
+  // Once the pointer is captured, IGNORE pointerleave/pointercancel — on mobile
+  // they fire spuriously mid-press and were the abort that killed the gesture. A
+  // genuine release still arrives as pointerup (capture guarantees delivery). If
+  // capture wasn't available, preserve the original safety and reset here.
+  const onPointerLeaveOrCancel = useCallback((): void => {
+    if (capturedRef.current) {
+      return;
+    }
+    stop();
+  }, [stop]);
 
   useEffect(() => {
     return () => {
@@ -91,9 +136,9 @@ export function useActivationHold(holdMs: number, onComplete: () => void): Activ
     isHolding,
     handlers: {
       onPointerDown,
-      onPointerUp: stop,
-      onPointerLeave: stop,
-      onPointerCancel: stop,
+      onPointerUp,
+      onPointerLeave: onPointerLeaveOrCancel,
+      onPointerCancel: onPointerLeaveOrCancel,
     },
   };
 }
