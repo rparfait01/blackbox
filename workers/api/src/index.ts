@@ -171,28 +171,104 @@ interface OpenEventBody {
   location?: { lat?: number; lon?: number; accuracy?: number } | null;
 }
 
+/** The client dedups repeat triggers within this window; a resume for an event
+ *  older than it is a genuine second press (decision A: intensify), not a
+ *  same-gesture race/retry that should stay silent. */
+const RETRIGGER_INTENSIFY_MS = 60_000;
+
+interface CanonicalActive {
+  id: string;
+  hmacSecret: string;
+  createdAt: number;
+}
+
 /**
- * Resume the account's existing active event, if any — the "one active event per
- * user" guarantee. Returns the SAME 201 shape as a fresh create (eventId +
- * hmacSecret + createdAt) plus `resumed: true`, so the client transparently
- * rejoins the live session instead of stacking a second event. Returns null when
- * the account has no active event (the caller then creates one).
+ * ONE OPEN EVENT PER ACCOUNT (Brief 15). Resolve the account's single canonical
+ * active event and collapse any orphans. Matches by userId OR userHash, because a
+ * trigger carrying a session token keys on userId while a tokenless/legacy trigger
+ * keys on userHash-only — and both can belong to the same device/account. userHash
+ * is a per-install sha256, so an OR match never crosses accounts.
+ *
+ * The NEWEST match is canonical; every other active match is auto-closed
+ * (superseded) so closing the canonical later resolves the account to fully
+ * dormant with zero orphans — no open event is ever left unreachable. When a token
+ * is present and the canonical was userHash-only, its userId is backfilled so
+ * future userId-keyed triggers resume it directly and the 0017 index covers it.
+ *
+ * Returns the canonical active event, or null when the account has none (the
+ * caller then creates one). Idempotent — re-running collapses to the same row.
  */
-async function resumeActiveEvent(
+async function resolveSingleActive(
   c: AppContext,
-  userId: string,
+  userId: string | null,
   userHash: string,
-  source: string | undefined,
-): Promise<Response | null> {
-  const existing = await c.env.DB.prepare(
-    "SELECT id, hmacSecret, createdAt FROM events WHERE userId = ? AND status = 'active' ORDER BY createdAt DESC LIMIT 1",
+): Promise<CanonicalActive | null> {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, hmacSecret, createdAt, userId FROM events
+      WHERE status = 'active'
+        AND ( (? IS NOT NULL AND userId = ?) OR (? <> '' AND userHash = ?) )
+      ORDER BY createdAt DESC`,
   )
-    .bind(userId)
-    .first<{ id: string; hmacSecret: string; createdAt: number }>();
-  if (!existing) {
+    .bind(userId, userId, userHash, userHash)
+    .all<{ id: string; hmacSecret: string; createdAt: number; userId: string | null }>();
+  const rows = results ?? [];
+  if (rows.length === 0) {
     return null;
   }
+  const canonical = rows[0]!;
+  const now = Date.now();
+  // Close every non-canonical active event for this account (superseded), same
+  // disposition shape as the operator force-close / 0017 dedupe.
+  for (const row of rows.slice(1)) {
+    await c.env.DB.prepare(
+      'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ?, reasonSecured = ? WHERE id = ? AND status = ?',
+    )
+      .bind(
+        'closed',
+        now,
+        'superseded_resume',
+        now,
+        'system',
+        "auto-closed: superseded by the account's canonical active event (one-active-event-per-account enforcement)",
+        row.id,
+        'active',
+      )
+      .run();
+    await audit(c.env, row.id, 'event.superseded', userHash || userId, { canonical: canonical.id });
+  }
+  // Heal a userHash-only orphan into the account. Safe: siblings are closed above,
+  // so the one-active-per-user unique index cannot conflict.
+  if (userId && canonical.userId == null) {
+    await c.env.DB.prepare("UPDATE events SET userId = ? WHERE id = ? AND status = 'active'")
+      .bind(userId, canonical.id)
+      .run();
+    await audit(c.env, canonical.id, 'event.account_healed', userHash || userId, { userId });
+  }
+  return { id: canonical.id, hmacSecret: canonical.hmacSecret, createdAt: canonical.createdAt };
+}
+
+/**
+ * Build the resume 201 (same shape as a fresh create — eventId + hmacSecret +
+ * createdAt — plus `resumed: true`, so the client transparently rejoins). Per
+ * Brief 15 decision (A), a GENUINE re-trigger intensifies the LIVE event: it
+ * records a repeat signal (audit) and pushes it to the open coordinator dashboard,
+ * feeding the E3 repetition path. No second event is ever created. The contact
+ * cascade is deliberately NOT re-fired here — that would spam channels and disturb
+ * cascade timing; intensification is the coordinator-visible push + audit trail. A
+ * same-gesture race (event younger than the client dedup window) resumes silently.
+ */
+async function resumeResponse(
+  c: AppContext,
+  existing: CanonicalActive,
+  userId: string | null,
+  userHash: string,
+  source: string | undefined,
+): Promise<Response> {
   await audit(c.env, existing.id, 'event.resume', userHash || userId, { source });
+  if (Date.now() - existing.createdAt >= RETRIGGER_INTENSIFY_MS) {
+    await audit(c.env, existing.id, 'event.retrigger', userHash || userId, { source });
+    c.executionCtx.waitUntil(broadcastEventChange(c.env, existing.id, 'retrigger'));
+  }
   return c.json(
     { eventId: existing.id, hmacSecret: existing.hmacSecret, createdAt: existing.createdAt, resumed: true },
     201,
@@ -213,33 +289,32 @@ app.post('/v1/events', async (c) => {
   const session = secret && token ? await verifySession(secret, token) : null;
   const userId = session?.userId ?? null;
 
-  // ONE ACTIVE EVENT PER USER (data-layer guarantee + the partial unique index).
-  // Triggering while one is active RESUMES the existing event — it never stacks a
-  // second. The client keeps the eventId/hmacSecret it gets back, so a re-trigger
-  // simply rejoins the live session.
-  if (userId) {
-    const resumed = await resumeActiveEvent(c, userId, userHash, body.source);
-    if (resumed) {
-      return resumed;
-    }
-    // No active event to resume: refuse to ARM with no deliverable recipient. An
-    // alert that would notify no one is the exact deadlock (orphaned, unclosable)
-    // — so it is prevented at the source. The client also gates this; this is the
-    // authoritative server guarantee. (Anonymous userHash-only triggers have no
-    // account to gate on and are allowed.)
-    if (!(await hasDeliverableRecipient(c.env, userId))) {
-      await audit(c.env, null, 'event.create_blocked', userHash || userId, {
-        reason: 'no_deliverable_recipient',
-      });
-      return c.json(
-        {
-          error: 'no_deliverable_recipient',
-          message:
-            'Add a contact or guardian that can actually be reached before arming — an alert must reach someone.',
-        },
-        409,
-      );
-    }
+  // ONE OPEN EVENT PER ACCOUNT (Brief 15: data-layer guarantee + resolution).
+  // Resolve the account's single canonical active event — matched by userId when a
+  // token resolves one, else by userHash — collapsing any orphaned duplicates.
+  // Triggering while the account is already live RESUMES that event and (decision
+  // A) intensifies it; it NEVER stacks a second. This works even when userId is
+  // NULL, the gap that previously let tokenless/legacy triggers accumulate zombies.
+  const existing = await resolveSingleActive(c, userId, userHash);
+  if (existing) {
+    return resumeResponse(c, existing, userId, userHash, body.source);
+  }
+  // No active event to resume: refuse to ARM a logged-in account with no
+  // deliverable recipient. An alert that would notify no one is the exact deadlock
+  // (orphaned, unclosable) — prevented at the source. Anonymous userHash-only
+  // triggers have no account to gate on and are allowed.
+  if (userId && !(await hasDeliverableRecipient(c.env, userId))) {
+    await audit(c.env, null, 'event.create_blocked', userHash || userId, {
+      reason: 'no_deliverable_recipient',
+    });
+    return c.json(
+      {
+        error: 'no_deliverable_recipient',
+        message:
+          'Add a contact or guardian that can actually be reached before arming — an alert must reach someone.',
+      },
+      409,
+    );
   }
 
   // lastHeartbeatAt seeds to createdAt so a brand-new event is never instantly
@@ -262,14 +337,13 @@ app.post('/v1/events', async (c) => {
       )
       .run();
   } catch (error) {
-    // The partial unique index (one active event per user) is the hard backstop
-    // against a race that slipped past the resume check above: if a concurrent
-    // request already opened the active event, resume that one instead of failing.
-    if (userId) {
-      const resumed = await resumeActiveEvent(c, userId, userHash, body.source);
-      if (resumed) {
-        return resumed;
-      }
+    // Either partial unique index (userId — 0017, or userHash — 0027) is the hard
+    // backstop against a race that slipped past resolveSingleActive above: if a
+    // concurrent request already opened the account's active event, resolve +
+    // resume that one instead of failing. Covers the tokenless class too.
+    const raced = await resolveSingleActive(c, userId, userHash);
+    if (raced) {
+      return resumeResponse(c, raced, userId, userHash, body.source);
     }
     throw error;
   }
