@@ -55,6 +55,10 @@ userRoutes.get('/', async (c) => {
         nationality: user.nationality,
         hasDuressCode: user.duressCodeHash != null,
       },
+      // Server-truth live-alert flag (Brief 20 §1). The client gates settings entry
+      // and refuses sign-out on THIS, not just its local session — so a device that
+      // lost its local session can never open settings or sign out of a live alert.
+      activeEvent: await hasActiveEvent(c.env, user.id),
       region,
       guardian: invite
         ? {

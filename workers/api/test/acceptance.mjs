@@ -486,6 +486,30 @@ async function run() {
     assert(badDesig.status === 400, `guardian must not be designable as the check-in recipient: ${badDesig.status} ${JSON.stringify(badDesig.data)}`);
   });
 
+  await check('25. §20 live-alert lock: /me reports activeEvent; delete refused (423) during alert; restored after close', async () => {
+    const u = await signup();
+    // Armable so the trigger opens a real event.
+    assert((await addEmail(u.session, 'primary', 'P')).status === 200, 'add primary failed');
+    const ev = await trigger(u.session, 'lockspec');
+    assert(ev?.eventId, `trigger did not open an event: ${JSON.stringify(ev)}`);
+    // Server-truth lock: /me reports the live alert (the client gates settings +
+    // sign-out on this), and account-delete is refused.
+    const during = await api('GET', '/v1/me', { bearer: u.session });
+    assert(during.data?.activeEvent === true, `/me must report activeEvent during a live alert: ${JSON.stringify(during.data)}`);
+    const delDuring = await api('DELETE', '/v1/me/account', { bearer: u.session });
+    assert(delDuring.status === 423, `account delete must be refused (423) during a live alert, got ${delDuring.status}`);
+    // Close via the admin failsafe (stand-in for the gesture/dual-consent close),
+    // then the lock lifts in the same account with no reload.
+    if (ADMIN) {
+      const fc = await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN, body: { reason: 'acceptance §20 cleanup' } });
+      assert(fc.status === 200, `force-close failed: ${fc.status} ${JSON.stringify(fc.data)}`);
+      const after = await api('GET', '/v1/me', { bearer: u.session });
+      assert(after.data?.activeEvent === false, `activeEvent must clear after close: ${JSON.stringify(after.data)}`);
+      const delAfter = await api('DELETE', '/v1/me/account', { bearer: u.session });
+      assert(delAfter.status === 200, `account delete must work once dormant, got ${delAfter.status}`);
+    }
+  });
+
   // ---- cleanup ----
   await cleanup();
 

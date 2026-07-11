@@ -127,3 +127,71 @@ export async function closeFeedLostEvents(env: Env): Promise<void> {
     await broadcastEventChange(env, row.id, 'closed');
   }
 }
+
+/**
+ * Absolute safety ceiling on how long ANY event may stay active — the ultimate
+ * backstop against an orphaned/zombie event living forever (Brief 20 §2). Royce
+ * tunes the value. A live DURESS/TAMPERING event is exempt from the age bound
+ * (responders stay engaged; a live threat is never auto-closed by a clock).
+ */
+export const MAX_ACTIVE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Pure decision (Brief 20 §2): should this active event be auto-closed as an
+ * orphan? Yes when EITHER the owning account no longer exists (deleted → no one
+ * can ever see or close it, so it is closed regardless of age or disposition), OR
+ * it has been open past the absolute max bound. The age bound never fires on a
+ * duress/tampering event — those are live threats with responders engaged.
+ */
+export function shouldAutoCloseOrphan(input: {
+  status: string;
+  createdAt: number;
+  ownerMissing: boolean;
+  closeRequestDuress: number | null;
+  tamperingAt: number | null;
+  now: number;
+}): boolean {
+  if (input.status !== 'active') return false;
+  if (input.ownerMissing) return true;
+  const engaged = input.closeRequestDuress === 1 || input.tamperingAt != null;
+  if (engaged) return false;
+  return input.createdAt < input.now - MAX_ACTIVE_MS;
+}
+
+/**
+ * Scheduled orphan safeguard (Brief 20 §2). Closes any active event that can no
+ * longer be seen or closed by its owner — a deleted account, or an event open past
+ * the absolute safety ceiling — with the mandatory feed-loss note so it stops
+ * emitting notifications and is auditable. A closed event fires nothing further.
+ * This is defense-in-depth: §1 blocks sign-out/delete during a live alert, so new
+ * orphans should not form; this catches any that slip through or predate the lock.
+ */
+export async function closeOrphanedEvents(env: Env): Promise<void> {
+  const now = Date.now();
+  const { results } = await env.DB.prepare(
+    `SELECT e.id, e.status, e.createdAt, e.closeRequestDuress, e.tamperingAt,
+            CASE WHEN e.userId IS NOT NULL AND u.id IS NULL THEN 1 ELSE 0 END AS ownerMissing
+       FROM events e LEFT JOIN users u ON u.id = e.userId
+      WHERE e.status = 'active'`,
+  ).all<{
+    id: string;
+    status: string;
+    createdAt: number;
+    closeRequestDuress: number | null;
+    tamperingAt: number | null;
+    ownerMissing: number;
+  }>();
+  for (const row of results ?? []) {
+    if (!shouldAutoCloseOrphan({ ...row, ownerMissing: row.ownerMissing === 1, now })) {
+      continue;
+    }
+    await env.DB.prepare(
+      'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ?, reasonSecured = ? WHERE id = ? AND status = ?',
+    )
+      .bind('closed', now, 'orphan_auto_close', now, 'system', FEED_LOST_NOTE, row.id, 'active')
+      .run();
+    await audit(env, row.id, 'closed_orphan', null, JSON.stringify({ note: FEED_LOST_NOTE, ownerMissing: row.ownerMissing === 1 }));
+    await buildClosureReport(env, row.id);
+    await broadcastEventChange(env, row.id, 'closed');
+  }
+}

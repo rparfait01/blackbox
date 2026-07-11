@@ -16,6 +16,9 @@ import { ContactTabs } from './ContactTabs';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean };
+  /** Server-truth live-alert flag (Brief 20 §1): true while an event is open for
+   *  the account, even if this device lost its local session. */
+  activeEvent?: boolean;
 }
 
 /**
@@ -40,9 +43,11 @@ export function Settings(): JSX.Element {
   if (!isSetupComplete()) {
     return <Navigate to="/onboarding" replace />;
   }
-  // Active-alert lockdown (Fix Brief 8 P0): never render Settings during an alert,
-  // even via deep-link or back-navigation. Return to the armed screen.
-  if (alertActive) {
+  // Active-alert lockdown (Fix Brief 8 P0 + Brief 20 §1): never render Settings
+  // during an alert, even via deep-link or back-navigation. Gate on BOTH the local
+  // session (fast) and server truth (me.activeEvent) — so a device that lost its
+  // local session still cannot open settings while an event is open on the server.
+  if (alertActive || me?.activeEvent) {
     return <Navigate to={getDisplayMode() === 'direct' ? '/blackbox' : '/'} replace />;
   }
 
@@ -88,7 +93,15 @@ export function Settings(): JSX.Element {
     }
   }
 
-  function signOut(): void {
+  async function signOut(): Promise<void> {
+    // Server-truth guard (Brief 20 §1): the ONLY way out of a live alert is closing
+    // it — never by signing out and detaching the device from an event still open
+    // on the server. Re-check fresh (not the cached load) right before clearing.
+    const r = await api<MeData>('/v1/me');
+    if (r.data?.activeEvent) {
+      flash('Close the active alert first — you can’t sign out during a live alert.');
+      return;
+    }
     clearSession();
     navigate('/onboarding', { replace: true });
   }
@@ -232,7 +245,7 @@ export function Settings(): JSX.Element {
 
         <ContactTabs flash={flash} />
 
-        <button onClick={signOut} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
+        <button onClick={() => void signOut()} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
         </button>
 
