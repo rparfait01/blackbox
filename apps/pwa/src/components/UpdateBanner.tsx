@@ -4,25 +4,28 @@ import { useActiveAlert } from '@/lib/active-alert';
 import { log } from '@/lib/log';
 
 /**
- * Self-update path (Brief 13/14 B1). The user cannot hard-reset the installed PWA
- * on their phone, so a stale build could otherwise live forever. This registers
- * the service worker, polls for a newer build every minute while the app is open,
- * and applies it:
+ * Headless service-worker updater (Brief 13/14 B1 + Brief 21 §2). The installed
+ * PWA cannot be hard-reset on the phone, so a stale build could otherwise live
+ * forever. This registers the SW, checks for a newer build on an interval AND on
+ * every foreground/resume, and applies it — SAFELY, gated on alert state:
  *
- *  - DORMANT (no active alert): the update is applied AUTOMATICALLY — the waiting
- *    worker is told to skipWaiting, it clientsClaim()s, and `controllerchange`
- *    reloads the page onto the fresh build. No tap, no hard reset.
- *  - ACTIVE alert: auto-apply is suppressed (a reload would tear down the
- *    recording session). A single generic "Reload" banner is shown so the user
- *    can choose to apply it; otherwise it applies automatically once the alert
- *    ends. The copy never reveals the app's true purpose (covert-safe).
+ *  - DORMANT: apply automatically. The waiting worker is told to skipWaiting, it
+ *    clientsClaim()s, and `controllerchange` reloads onto the fresh build. Silent —
+ *    currency by default.
+ *  - LIVE ALERT (either mode): DEFER. Never skipWaiting, never reload — that would
+ *    tear down the capture session / coordinator WebSocket mid-alert. The waiting
+ *    worker is held; the instant the alert clears (alertActive → false) the effect
+ *    below re-runs and applies it automatically.
  *
- * The first-ever install (no prior controller) does NOT reload — only true
- * updates do — so there is no first-load reload loop.
+ * It renders NOTHING — ever. There is no banner or indicator, so it can never be a
+ * tell in Hidden and the §0a byte-identical facade holds under every condition.
+ * Currency is verifiable only by the build stamp in Settings (Visible), which
+ * reflects the actually-running bundle. The first-ever install (no prior
+ * controller) never reloads — only true updates do — so there is no reload loop.
  */
 const UPDATE_CHECK_INTERVAL_MS = 60_000;
 
-export function UpdateBanner(): JSX.Element | null {
+export function UpdateBanner(): null {
   const alertActive = useActiveAlert();
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
 
@@ -30,36 +33,52 @@ export function UpdateBanner(): JSX.Element | null {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) {
       return;
     }
-    // Whether a controller already exists at startup — distinguishes a true update
-    // (reload) from the first install (do not reload).
     const hadController = navigator.serviceWorker.controller != null;
     let interval: number | undefined;
+    let registration: ServiceWorkerRegistration | null = null;
 
     const offerWaiting = (sw: ServiceWorker | null): void => {
       if (sw) {
         setWaiting(sw);
       }
     };
-    const watchInstalling = (registration: ServiceWorkerRegistration): void => {
-      const sw = registration.installing;
+    const watchInstalling = (reg: ServiceWorkerRegistration): void => {
+      const sw = reg.installing;
       if (!sw) {
         return;
       }
       sw.addEventListener('statechange', () => {
         if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-          offerWaiting(registration.waiting);
+          offerWaiting(reg.waiting);
         }
       });
+    };
+    // Ask the browser to re-fetch sw.js and detect a newer build. Every build has a
+    // fresh id, so the SW is byte-changed and an update is found when one exists.
+    const check = (): void => {
+      if (registration) {
+        void registration.update();
+      }
     };
 
     navigator.serviceWorker
       .register('/sw.js', { scope: '/' })
-      .then((registration) => {
-        offerWaiting(registration.waiting);
-        registration.addEventListener('updatefound', () => watchInstalling(registration));
-        interval = window.setInterval(() => void registration.update(), UPDATE_CHECK_INTERVAL_MS);
+      .then((reg) => {
+        registration = reg;
+        offerWaiting(reg.waiting);
+        reg.addEventListener('updatefound', () => watchInstalling(reg));
+        interval = window.setInterval(check, UPDATE_CHECK_INTERVAL_MS);
       })
       .catch((error) => log.error('sw register failed', error));
+
+    // Check on every foreground/resume (Brief 21 §2) — an installed PWA is usually
+    // resumed, not cold-launched, so an interval alone misses updates for a while.
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') {
+        check();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
 
     let reloading = false;
     const onControllerChange = (): void => {
@@ -76,33 +95,20 @@ export function UpdateBanner(): JSX.Element | null {
       if (interval !== undefined) {
         window.clearInterval(interval);
       }
+      document.removeEventListener('visibilitychange', onVisible);
       navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
     };
   }, []);
 
-  // Apply automatically while dormant; defer while an alert is live.
+  // Apply automatically while DORMANT; DEFER while an alert is live. When the alert
+  // clears, this effect re-runs (alertActive dep) and applies the held update — so
+  // an update that arrives mid-alert lands the moment the session closes.
   useEffect(() => {
     if (waiting && !alertActive) {
       waiting.postMessage({ type: 'SKIP_WAITING' });
     }
   }, [waiting, alertActive]);
 
-  // The banner only appears during an active alert (auto-apply is paused then),
-  // giving the user a deliberate, safe way to update mid-session if they choose.
-  if (!waiting || !alertActive) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-[100] flex items-center justify-between gap-3 border-t border-white/10 bg-black/85 px-5 py-3 text-sm text-white backdrop-blur">
-      <span className="text-white/80">A new version is ready.</span>
-      <button
-        type="button"
-        onClick={() => waiting.postMessage({ type: 'SKIP_WAITING' })}
-        className="rounded-full border border-white/40 px-4 py-1.5 font-mono text-[12px] uppercase tracking-[0.1em] text-white"
-      >
-        Reload
-      </button>
-    </div>
-  );
+  // Renders nothing under any condition — no banner, no indicator, no tell.
+  return null;
 }

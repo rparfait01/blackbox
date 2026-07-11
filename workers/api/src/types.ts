@@ -15,6 +15,9 @@ export interface Env {
   /** The Worker's own public origin, used to build dashboard links from the cron
    *  (scheduled) context where there is no request URL. */
   WORKER_ORIGIN?: string;
+  /** Build stamp (git short SHA) injected at deploy via `--var WORKER_BUILD:<sha>`;
+   *  served at GET /version for the deploy-currency pairing (Brief 21). */
+  WORKER_BUILD?: string;
   /** Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the
    *  family pilot this is the operator/founder. */
   SECURITY_CONTACT_EMAIL?: string;

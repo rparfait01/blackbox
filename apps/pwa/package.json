@@ -10,7 +10,7 @@
     "lint": "eslint src",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "deploy:pages": "wrangler pages deploy dist --project-name=blackbox-pwa"
+    "deploy:pages": "node ../../scripts/deploy-pages.mjs"
   },
   "dependencies": {
     "@blackbox/classifier": "workspace:*",

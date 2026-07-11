@@ -115,6 +115,12 @@ app.onError((error, c) => {
   return c.json({ error: 'internal' }, 500);
 });
 
+// --- Build version (no auth, Brief 21) — the live worker build stamp, injected at
+// deploy via `wrangler deploy --var WORKER_BUILD:<git-sha>` ('dev' when unset).
+// Lets the deploy script print the LIVE worker build alongside the PWA build so a
+// server-newer-than-client split is visible immediately, not two weeks later. ---
+app.get('/version', (c) => c.json({ version: c.env.WORKER_BUILD ?? 'dev' }, 200));
+
 // --- Health (no auth) ---
 app.get('/v1/health', async (c) => {
   let d1 = false;
