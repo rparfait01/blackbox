@@ -15,6 +15,7 @@
 import { formatLocal, formatLocalClock, isLinkReissueDue } from '@blackbox/shared';
 
 import { dispatch } from '../channels/router';
+import { broadcastEventChange } from '../event-channel';
 import type { Env } from '../types';
 import { audit } from './audit';
 import { getContactForEvent, listCascadeContacts, listReachableContacts } from './contacts';
@@ -157,6 +158,14 @@ async function dispatchStep(
     )
       .bind(Date.now(), result.channel, eventId)
       .run();
+  } else {
+    // Brief 23 §2: this cascade step reached NOBODY — every channel for this
+    // recipient failed (e.g. sendgrid_401 "Maximum credits exceeded"). Fail LOUD:
+    // record it distinctly and push it to the coordinator dashboard, so a
+    // zero-delivery is never a swallowed retry-log line. dispatch() already audited
+    // the per-channel reasons; this is the event-level "reached no one" signal.
+    await audit(env, eventId, 'cascade_step_undelivered', actorHash, { step });
+    await broadcastEventChange(env, eventId, 'delivery_failed');
   }
 }
 

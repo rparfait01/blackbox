@@ -29,6 +29,9 @@ interface ContactsData {
   guardianAlsoFailsafeFor: number;
   /** Brief 19: the designated check-in contact id (null → primary is used). */
   checkinContactId: string | null;
+  /** Brief 23 §2: true only when at least one recipient is on a channel that can
+   *  actually deliver in this deployment. False → a config-time loud warning. */
+  armable: boolean;
 }
 
 const CONTACT_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary'];
@@ -120,6 +123,21 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
       <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/45">
         Support roles
       </div>
+
+      {/* Brief 23 §2: config-time LOUD warning when the account has no recipient on
+          a channel that can actually deliver — so a Hidden-primary user (who gets no
+          at-trigger notice) learns they're un-notifiable before it matters. */}
+      {data && !data.armable ? (
+        <div className="mb-4 rounded-lg border border-med-warn/50 bg-med-warn/10 p-3">
+          <p className="text-[12px] font-medium leading-relaxed text-med-warn">
+            No contact can be reached right now.
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-med-text/70">
+            Add a contact on a working channel (LINE or SMS) so your messages can actually be delivered —
+            an email‑only contact may not go through.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mb-4 grid grid-cols-5 gap-1.5">
         {(['primary', 'secondary', 'tertiary', 'guardian', 'emergency'] as SlotKey[]).map((key) => {
