@@ -137,11 +137,24 @@ export async function closeFeedLostEvents(env: Env): Promise<void> {
 export const MAX_ACTIVE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Pure decision (Brief 20 §2): should this active event be auto-closed as an
- * orphan? Yes when EITHER the owning account no longer exists (deleted → no one
- * can ever see or close it, so it is closed regardless of age or disposition), OR
- * it has been open past the absolute max bound. The age bound never fires on a
- * duress/tampering event — those are live threats with responders engaged.
+ * A dark + UNCLAIMED event auto-closes on this shorter bound (Brief 23 §1; Royce:
+ * 2h). "Dark" = no heartbeat for the bound; "unclaimed" = no coordinator ever
+ * engaged. This is the zombie case that otherwise locks the user out of their own
+ * account for up to MAX_ACTIVE_MS. A live-feed (recent heartbeat) or a
+ * coordinator-claimed event is NEVER touched by this rule.
+ */
+export const DARK_UNCLAIMED_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Pure decision (Brief 20 §2 + Brief 23 §1): should this active event be
+ * auto-closed as an orphan? Yes when ANY of:
+ *  - the owning account no longer exists (deleted → no one can ever see/close it),
+ *    regardless of age or disposition;
+ *  - it is DARK (no heartbeat for DARK_UNCLAIMED_MS) AND UNCLAIMED (no coordinator
+ *    ever engaged) — the zombie/lockout case;
+ *  - it has been open past the absolute max bound.
+ * The age/dark bounds NEVER fire on a duress/tampering event (live threats,
+ * responders engaged), and NEVER on a coordinator-claimed or live-feed event.
  */
 export function shouldAutoCloseOrphan(input: {
   status: string;
@@ -149,12 +162,20 @@ export function shouldAutoCloseOrphan(input: {
   ownerMissing: boolean;
   closeRequestDuress: number | null;
   tamperingAt: number | null;
+  lastHeartbeatAt: number | null;
+  coordinatorClaimedAt: number | null;
   now: number;
 }): boolean {
   if (input.status !== 'active') return false;
   if (input.ownerMissing) return true;
   const engaged = input.closeRequestDuress === 1 || input.tamperingAt != null;
   if (engaged) return false;
+  // §1: dark + unclaimed → shorter bound. A recent heartbeat (live feed) or a
+  // coordinator claim removes the event from this rule entirely.
+  const lastBeat = input.lastHeartbeatAt ?? input.createdAt;
+  const dark = lastBeat < input.now - DARK_UNCLAIMED_MS;
+  const unclaimed = input.coordinatorClaimedAt == null;
+  if (dark && unclaimed) return true;
   return input.createdAt < input.now - MAX_ACTIVE_MS;
 }
 
@@ -170,6 +191,7 @@ export async function closeOrphanedEvents(env: Env): Promise<void> {
   const now = Date.now();
   const { results } = await env.DB.prepare(
     `SELECT e.id, e.status, e.createdAt, e.closeRequestDuress, e.tamperingAt,
+            e.lastHeartbeatAt, e.coordinatorClaimedAt,
             CASE WHEN e.userId IS NOT NULL AND u.id IS NULL THEN 1 ELSE 0 END AS ownerMissing
        FROM events e LEFT JOIN users u ON u.id = e.userId
       WHERE e.status = 'active'`,
@@ -179,6 +201,8 @@ export async function closeOrphanedEvents(env: Env): Promise<void> {
     createdAt: number;
     closeRequestDuress: number | null;
     tamperingAt: number | null;
+    lastHeartbeatAt: number | null;
+    coordinatorClaimedAt: number | null;
     ownerMissing: number;
   }>();
   for (const row of results ?? []) {
