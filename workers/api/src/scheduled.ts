@@ -67,7 +67,7 @@ export const scheduled = async (
       try {
         // §3: reprompt the coordinator at 60s; at 180s declare the coordinator
         // path failed and escalate the qualified confirmer to the guardian tier.
-        await runEscalation(env);
+        await runEscalation(env, workerOrigin(env));
       } catch (error) {
         console.log(JSON.stringify({ level: 'error', job: 'escalation', detail: String(error) }));
       }

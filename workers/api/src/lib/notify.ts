@@ -470,6 +470,50 @@ export async function notifyEscalation(
   );
 }
 
+/**
+ * Brief 23 §3 backstop. The coordinator path failed at the fail bound and there is
+ * NO guardian to escalate to. Re-notify every reachable contact so coordination
+ * does not silently dead-end — the alert must never vanish because a guardian was
+ * never configured. The real fix is adding a guardian; this is the loud backstop.
+ */
+export async function renotifyContactsNoGuardian(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+): Promise<void> {
+  if (!env.MAGIC_LINK_SECRET) {
+    return;
+  }
+  const event = await env.DB.prepare('SELECT userId, userHash, status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ userId: string | null; userHash: string | null; status: string }>();
+  if (!event || event.status !== 'active') {
+    return;
+  }
+  const contacts = await listReachableContacts(env, event);
+  if (contacts.length === 0) {
+    await audit(env, eventId, 'renotify_no_recipient', event.userHash, null);
+    return;
+  }
+  const token = await mintMagicToken(env.MAGIC_LINK_SECRET, eventId);
+  await markLinkIssued(env, eventId);
+  const dashboardUrl = `${workerOrigin}/c/${eventId}?t=${token}`;
+  const location = await latestLocation(env, eventId);
+  for (const contact of contacts) {
+    await dispatch(
+      env,
+      contact.id,
+      {
+        kind: 'escalation',
+        eventId,
+        payload: { userDisplayName: contact.displayName, dashboardUrl, reason: 'client_lost', lastSeen: null, location },
+      },
+      event.userHash,
+    );
+  }
+  await audit(env, eventId, 'renotified_contacts_no_guardian', event.userHash, { count: contacts.length });
+}
+
 /** The account owner's name + email — "triggered by" in a reissue notice. */
 async function triggererIdentity(
   env: Env,

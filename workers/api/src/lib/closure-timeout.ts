@@ -22,6 +22,7 @@
 import { audit } from './audit';
 import { broadcastEventChange } from '../event-channel';
 import { buildClosureReport } from './closure-report';
+import { renotifyContactsNoGuardian } from './notify';
 import { FEED_LOST_NOTE } from './tampering';
 import type { Env } from '../types';
 
@@ -59,6 +60,7 @@ export function escalationAction(input: {
 
 interface EscalationRow {
   id: string;
+  userId: string | null;
   status: string;
   escalationTier: string | null;
   closeRequestStatus: string | null;
@@ -71,11 +73,12 @@ interface EscalationRow {
 /**
  * Scheduled sweep: reprompt the coordinator at 60s; declare the coordinator path
  * failed and escalate to the guardian at 180s. Each step fires once and is
- * audited. Pushes are in-app (§4) — no escalation emails.
+ * audited. Pushes are in-app (§4) — no escalation emails. workerOrigin is used by
+ * the §3 no-guardian backstop to mint the dashboard link for the re-notify.
  */
-export async function runEscalation(env: Env): Promise<void> {
+export async function runEscalation(env: Env, workerOrigin: string): Promise<void> {
   const { results } = await env.DB.prepare(
-    "SELECT id, status, escalationTier, closeRequestStatus, closeRequestedAt, tamperingAt, closureRepromptAt, coordinatorPathFailedAt FROM events WHERE status = 'active' AND closeRequestStatus = 'sat'",
+    "SELECT id, userId, status, escalationTier, closeRequestStatus, closeRequestedAt, tamperingAt, closureRepromptAt, coordinatorPathFailedAt FROM events WHERE status = 'active' AND closeRequestStatus = 'sat'",
   ).all<EscalationRow>();
   const now = Date.now();
   for (const row of results ?? []) {
@@ -98,6 +101,19 @@ export async function runEscalation(env: Env): Promise<void> {
       await audit(env, row.id, 'coordinator_path_failed', null, JSON.stringify({ afterMs: CLOSURE_FAIL_MS }));
       await audit(env, row.id, 'escalated_to_guardian', null, null);
       await broadcastEventChange(env, row.id, 'coordinator_path_failed');
+      // §3 (Brief 23): if there is NO guardian to escalate to, the guardian tier is
+      // a dead-end. Don't let it vanish — re-notify the reachable contacts and
+      // record the missing-guardian gap loudly. (Real fix: add a guardian.)
+      const guardian = row.userId
+        ? await env.DB.prepare("SELECT 1 AS x FROM contacts WHERE userId = ? AND role = 'guardian' LIMIT 1")
+            .bind(row.userId)
+            .first<{ x: number }>()
+        : null;
+      if (!guardian) {
+        await audit(env, row.id, 'escalation_no_guardian', null, null);
+        await broadcastEventChange(env, row.id, 'escalation_no_guardian');
+        await renotifyContactsNoGuardian(env, row.id, workerOrigin);
+      }
     }
   }
 }
