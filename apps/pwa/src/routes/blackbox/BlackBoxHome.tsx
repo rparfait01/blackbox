@@ -101,13 +101,12 @@ export function BlackBoxHome(): JSX.Element {
   }
 
   const activate = (): void => {
-    // Never arm into the notify-no-one deadlock: with no reachable recipient the
-    // activate disc is inert and the UI directs the user to add a contact. (The
-    // server also rejects POST /v1/events with no deliverable recipient.)
-    if (!armable) {
-      return;
-    }
-    // Covert by principle even here: produces no visible status change.
+    // Brief 22 §1: the tap ALWAYS dispatches — the SAME unconditional trigger the
+    // Hidden facade uses. The old `!armable` early-return silently swallowed taps,
+    // and its predicate disagreed with what the system can actually reach (a tap was
+    // blocked on an account check-in delivered to). A missing recipient is now a
+    // NON-BLOCKING notice below (Visible only), never a silent refusal. The server
+    // keeps its own authoritative delivery guarantee (untouched).
     void triggerActivation('direct-tap');
   };
 
@@ -190,7 +189,7 @@ export function BlackBoxHome(): JSX.Element {
               Alert active · Recording
             </>
           ) : !armable ? (
-            'Not armed · No contact to reach'
+            'Armed · No contact to reach yet'
           ) : notReady ? (
             <>
               <span aria-hidden className="font-bold">!</span>
@@ -223,11 +222,8 @@ export function BlackBoxHome(): JSX.Element {
         <button
           type="button"
           onClick={activate}
-          disabled={!armable && !alertActive}
-          aria-label={armable || alertActive ? 'Activate' : 'Add a contact to arm'}
-          className={`relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none] ${
-            !armable && !alertActive ? 'opacity-40' : ''
-          }`}
+          aria-label="Activate"
+          className="relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
           <span
             className={`absolute inset-0 rounded-full border ${
@@ -253,20 +249,22 @@ export function BlackBoxHome(): JSX.Element {
               Contacts are being notified
             </div>
           </div>
-        ) : armable ? (
-          <div className="mt-10 font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
-            Tap to activate
-          </div>
         ) : (
-          <Link
-            to="/settings"
-            className="mt-10 text-center font-mono text-sm font-medium uppercase tracking-[0.18em] text-status-armed"
-          >
-            Add a contact to arm
-            <span className="mt-1 block font-sans text-[11px] normal-case tracking-normal text-bb-text-secondary">
-              An alert must be able to reach someone. Add a contact or guardian in settings.
-            </span>
-          </Link>
+          <div className="mt-10 text-center">
+            <div className="font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
+              Tap to activate
+            </div>
+            {/* Brief 22 §1: a missing recipient is a NON-BLOCKING notice — the tap
+                still fires; this only tells the user to add someone reachable. */}
+            {!armable ? (
+              <Link
+                to="/settings"
+                className="mt-2 block font-sans text-[11px] normal-case tracking-normal text-status-armed"
+              >
+                No contact to reach yet — add one so your alert can notify someone.
+              </Link>
+            ) : null}
+          </div>
         )}
 
         {/* §3: the coordinator path failed to confirm — prompt a SECOND request,

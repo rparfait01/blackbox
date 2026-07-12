@@ -1,31 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Gear } from '@phosphor-icons/react';
 
-import { ACTIVATION_HOLD_MS } from '@/lib/env';
 import { formatElapsed } from '@/lib/time';
 import { triggerActivation } from '@/lib/activation';
 import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { BreathingCircles } from './BreathingCircles';
-import { HoldProgressRing } from './HoldProgressRing';
-import { useActivationHold } from './use-activation-hold';
 import { ClosureControl } from './ClosureControl';
+
+/** Two taps within this window count as the covert double-tap trigger (Brief 22). */
+const DOUBLE_TAP_MS = 400;
 
 /**
  * Stillpoint — the entire visible surface of the app. Nothing here references
  * BLACK BOX, safety, or emergency.
  *
- * A deliberate press-and-hold on the breathing circle is a covert activation
- * trigger. Completing the hold produces NO visible output: no navigation, no
- * screen change, no toast. The meditation view simply continues — and there is
- * no on-device feedback at any later point in the session either. BLACK BOX
- * records and reaches; it does not reassure.
+ * A deliberate DOUBLE-TAP on the breathing circle is the covert activation trigger
+ * (Brief 22 — replaces the press-and-hold, which was fragile under iOS long-press).
+ * It produces NO visible output: no navigation, no screen change, no toast. The
+ * meditation view simply continues — dormant and active are byte-identical — and
+ * there is no on-device feedback at any later point either. BLACK BOX records and
+ * reaches; it does not reassure. A single stray tap (pocket/cover/idle) never fires.
  *
  * The gear and "End session" controls are ordinary meditation-app affordances.
- * The gear opens preferences. "End session" carries the W6 covert closure
- * gesture: a quick TAP resets the timer (the W2 behavior), while a deliberate
- * long HOLD opens the disguised pin-entry overlay — the only way to request
- * closure. The hold does not reset the timer; only the tap does.
+ * The gear opens preferences. "End session" opens the disguised closure control —
+ * the only way to request closure.
  */
 export function MeditationHome(): JSX.Element {
   const [pinOpen, setPinOpen] = useState(false);
@@ -45,11 +44,20 @@ export function MeditationHome(): JSX.Element {
 
   const clockText = new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  const { progress, handlers } = useActivationHold(ACTIVATION_HOLD_MS, () => {
-    // Covert trigger fired. Start the recording session. No visible output by
-    // design — the meditation view continues unchanged.
-    void triggerActivation('stillpoint-press');
-  });
+  // Covert double-tap trigger (Brief 22). Two taps on the breathing circle within
+  // DOUBLE_TAP_MS start the recording session; a single tap does nothing (so a
+  // pocket/cover brush never fires a false cascade). No visible output by design —
+  // the facade continues unchanged, byte-identical dormant vs active.
+  const lastTapRef = useRef(0);
+  const onFacadeTap = (): void => {
+    const t = performance.now();
+    if (t - lastTapRef.current <= DOUBLE_TAP_MS) {
+      lastTapRef.current = 0;
+      void triggerActivation('stillpoint-press');
+    } else {
+      lastTapRef.current = t;
+    }
+  };
 
   return (
     <main className="stillpoint-bg animate-hue-drift motion-reduce:animate-none relative flex h-full w-full select-none flex-col items-center justify-center overflow-hidden p-8 text-med-text">
@@ -75,10 +83,9 @@ export function MeditationHome(): JSX.Element {
       </h1>
 
       <div
+        onClick={onFacadeTap}
         className="relative flex h-60 w-60 touch-none select-none items-center justify-center [-webkit-touch-callout:none] [-webkit-user-select:none]"
-        {...handlers}
       >
-        <HoldProgressRing progress={progress} />
         <BreathingCircles />
         <span className="animate-breath-label motion-reduce:animate-none pointer-events-none relative z-10 select-none font-serif text-lg font-light uppercase tracking-[0.3em] text-med-text">
           Breathe
