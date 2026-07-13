@@ -7,6 +7,7 @@ import {
   appendLocation,
   createSession,
   getActiveSession,
+  getSession,
   updateSessionStatus,
   type SessionRecord,
 } from '@/lib/storage';
@@ -166,9 +167,21 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
 
   try {
     if (active) {
-      log.debug('activation ignored: session already active', active.sessionId);
-      tracker.stop();
-      return active.sessionId;
+      // Brief 26: reconcile the IN-PAGE active session against the server too — not
+      // just the local DB record (Brief 25). A close the ~2s monitor hasn't torn
+      // down yet must NOT block a re-trigger, or the gesture starts (location watch)
+      // then no-ops ("asks for location, doesn't go into alert state"). Dedup only
+      // if still active on the server; else tear the stale session down + create
+      // fresh. Conservative on any uncertainty so a live recording is never dropped.
+      const activeRecord = await getSession(active.sessionId);
+      if (!activeRecord || (await isLocalSessionStillActive(activeRecord))) {
+        log.debug('activation deduplicated against in-page active session', active.sessionId);
+        tracker.stop();
+        return active.sessionId;
+      }
+      log.debug('stale in-page session cleared (server reports closed)', active.sessionId);
+      await stopActivation();
+      // fall through — create a fresh event
     }
 
     const existing = await getActiveSession();

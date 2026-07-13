@@ -57,4 +57,12 @@ describe('§25 trigger→close→trigger — no dedup against a STALE local acti
     expect(act).toContain('fetchEventStatus');
     expect(act).toMatch(/updateSessionStatus\(existing\.id, 'closed'/);
   });
+
+  it('reconciles the IN-PAGE active session too (Brief 26), not just the local record', () => {
+    // The module `active` guard must also verify against the server and tear down a
+    // stale in-page session, or a same-page re-trigger after a close no-ops.
+    const activeGuard = act.slice(act.indexOf('if (active) {'), act.indexOf('const existing'));
+    expect(activeGuard).toContain('isLocalSessionStillActive');
+    expect(activeGuard).toContain('stopActivation()');
+  });
 });
