@@ -10,6 +10,24 @@ This is the tripwire so a fixed bug can never silently regress a second time.
 committed.** Each break becomes a permanent tripwire. The closure gate is the first
 entry (Brief 19). When the suite is green, tag `known-good-<date>` and push.
 
+## Covert-trigger DEVICE MATRIX (manual, MANDATORY *before* deploy — Brief 24 §4)
+
+The covert trigger IS the product, and code-tests + one device keep missing on-device
+gesture breaks (press-and-hold iOS callout; double-tap iOS click-fusion). **Any change
+that touches the covert trigger gesture, its detection, or the facade trigger element
+must pass this matrix ON-DEVICE before it deploys to the live pilot — not after.**
+
+| Platform | Check | Pass |
+| --- | --- | --- |
+| **iOS Safari** (installed PWA) | Hidden gesture → LIVE event appears on the dashboard + location fix | ☐ |
+| **Android Chrome** (installed PWA) | Hidden gesture → LIVE event on the dashboard + location fix | ☐ |
+| both | facade byte-identical before/after; a stray single tap does nothing | ☐ |
+| both | Settings build stamp == deployed SHA (rule out stale build first) | ☐ |
+
+This is manual (a real gesture on a real phone can't be automated here). Record the
+matrix result in the commit/handoff; no `known-good` tag without both platforms signed
+off by Royce.
+
 ## What runs
 
 `pnpm gate` = `pnpm verify` + `pnpm acceptance`:

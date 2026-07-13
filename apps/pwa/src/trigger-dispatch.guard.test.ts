@@ -30,10 +30,15 @@ describe('§1 Visible — tap always fires (no blocking gate)', () => {
 describe('§2 Hidden — covert trigger is a double-tap, not press-and-hold', () => {
   const home = read('./routes/meditation/MeditationHome.tsx');
 
-  it('wires an onClick double-tap to the same covert dispatch', () => {
-    expect(home).toMatch(/onClick=\{onFacadeTap\}/);
+  it('detects the double-tap on POINTERDOWN (not click — unreliable on iOS touch)', () => {
+    expect(home).toMatch(/onPointerDown=\{onFacadeTap\}/);
+    expect(home).not.toMatch(/onClick=\{onFacadeTap\}/);
     expect(home).toContain("triggerActivation('stillpoint-press')");
     expect(home).toContain('DOUBLE_TAP_MS');
+  });
+
+  it('uses touch-action: manipulation on the trigger element (kills double-tap-zoom)', () => {
+    expect(home).toContain('touch-manipulation');
   });
 
   it('the press-and-hold gesture is retired (no useActivationHold / progress ring)', () => {

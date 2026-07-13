@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Gear } from '@phosphor-icons/react';
 
@@ -44,12 +44,16 @@ export function MeditationHome(): JSX.Element {
 
   const clockText = new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  // Covert double-tap trigger (Brief 22). Two taps on the breathing circle within
-  // DOUBLE_TAP_MS start the recording session; a single tap does nothing (so a
-  // pocket/cover brush never fires a false cascade). No visible output by design —
-  // the facade continues unchanged, byte-identical dormant vs active.
+  // Covert double-tap trigger (Brief 22 gesture; Brief 24 detection). Detected on
+  // POINTERDOWN — not click — because a touch `click` is synthesized late and the
+  // second tap of a double-tap is fused/eaten on iOS Safari (that was the on-device
+  // failure). pointerdown fires immediately and reliably per tap on both iOS Safari
+  // and Android Chrome. Two pointerdowns within DOUBLE_TAP_MS activate; a single tap
+  // does nothing (pocket/cover brush never fires). preventDefault suppresses the
+  // synthetic click / selection. No visible output — facade byte-identical.
   const lastTapRef = useRef(0);
-  const onFacadeTap = (): void => {
+  const onFacadeTap = (e: PointerEvent): void => {
+    e.preventDefault();
     const t = performance.now();
     if (t - lastTapRef.current <= DOUBLE_TAP_MS) {
       lastTapRef.current = 0;
@@ -83,8 +87,8 @@ export function MeditationHome(): JSX.Element {
       </h1>
 
       <div
-        onClick={onFacadeTap}
-        className="relative flex h-60 w-60 touch-none select-none items-center justify-center [-webkit-touch-callout:none] [-webkit-user-select:none]"
+        onPointerDown={onFacadeTap}
+        className="relative flex h-60 w-60 touch-manipulation select-none items-center justify-center [-webkit-touch-callout:none] [-webkit-user-select:none]"
       >
         <BreathingCircles />
         <span className="animate-breath-label motion-reduce:animate-none pointer-events-none relative z-10 select-none font-serif text-lg font-light uppercase tracking-[0.3em] text-med-text">
