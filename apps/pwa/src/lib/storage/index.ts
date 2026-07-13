@@ -135,6 +135,29 @@ export async function getActiveSession(): Promise<SessionRecord | null> {
   }
 }
 
+/**
+ * Mark EVERY local 'active' session 'closed' (Brief 27). Used to force the client
+ * back to a genuinely dormant state once the server confirms the account has no
+ * active event — so a closed event can never leave a stale 'active' record that the
+ * next trigger reads. Returns how many were cleared.
+ */
+export async function closeAllActiveSessions(endTime: number): Promise<number> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_SESSIONS, 'readwrite');
+    const store = tx.objectStore(STORE_SESSIONS);
+    const active = await promisifyRequest<SessionRecord[]>(store.index('byStatus').getAll('active'));
+    for (const s of active) {
+      await promisifyRequest(store.put({ ...s, status: 'closed', endTime }));
+    }
+    await transactionDone(tx);
+    return active.length;
+  } catch (error) {
+    log.error('closeAllActiveSessions failed', error);
+    return 0;
+  }
+}
+
 export async function appendChunk(chunk: RecordingChunk): Promise<void> {
   try {
     const db = await getDB();

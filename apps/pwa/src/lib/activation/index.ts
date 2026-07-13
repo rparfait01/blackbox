@@ -5,12 +5,15 @@ import {
   appendChunk,
   appendClassification,
   appendLocation,
+  closeAllActiveSessions,
   createSession,
   getActiveSession,
   getSession,
   updateSessionStatus,
   type SessionRecord,
 } from '@/lib/storage';
+import { api } from '@/lib/api';
+import { getSessionToken } from '@/lib/auth';
 import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
 import { CHUNK_INTERVAL_MS, captureModeForSource } from '@/lib/capture/config';
@@ -73,6 +76,41 @@ export function isSessionActive(): boolean {
 }
 
 /**
+ * Return the client to a genuinely dormant state (Brief 27): stop any in-page
+ * recording and mark EVERY local 'active' session closed. The caller has already
+ * established the event is closed (the session monitor, or a server dormancy read),
+ * so this clears ALL stale active-state — the module flag and every local record —
+ * exactly like a fresh login would, with no re-login.
+ */
+async function resetToDormant(): Promise<void> {
+  if (active) {
+    await stopActivation();
+  }
+  await closeAllActiveSessions(Date.now());
+}
+
+/**
+ * Server-authoritative dormancy reconcile (Brief 27). Asks the SESSION endpoint
+ * /v1/me — the same reliable, session-token path check-in uses (and which stays
+ * healthy while the event-scoped delivery-status reconcile may not) — whether the
+ * account still has an active event. If the server CONFIRMS none, clear all local
+ * active-state so the next trigger reads a clean session with no login. Only acts on
+ * a confirmed "no active event"; a still-open event (dual-consent not completed) is
+ * left alone — that is single-active working, not the bug. Runs on foreground/resume
+ * and after a close, so a closure that lands while the app is backgrounded still
+ * cleans the slate the moment the app is next seen.
+ */
+export async function reconcileToServerDormancy(): Promise<void> {
+  if (!uploadsEnabled || !getSessionToken()) {
+    return;
+  }
+  const res = await api<{ activeEvent?: boolean }>('/v1/me');
+  if (res.ok && res.data?.activeEvent === false) {
+    await resetToDormant();
+  }
+}
+
+/**
  * Reconcile a local 'active' session against the server (Brief 25). Returns true
  * only when the server confirms the event is still active. Conservative on any
  * uncertainty — no backend, no event id yet, or an unreachable server — so a
@@ -121,7 +159,9 @@ export async function resumeActiveSession(): Promise<void> {
   startHeartbeat(session.id);
   startSessionMonitor(session.id, () => {
     stopHeartbeat();
-    void updateSessionStatus(session.id, 'closed', Date.now());
+    // Brief 27: closure returns the client fully to dormant (clears every local
+    // 'active' record), not just this one session, so no stale state survives.
+    void resetToDormant();
   });
 }
 
@@ -242,7 +282,9 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
     // down if the contact approves closure. Teardown is exactly stopActivation
     // (covert: no UI change). There is no on-device feedback during the session.
     startSessionMonitor(newSessionId, () => {
-      void stopActivation();
+      // Brief 27: on server-confirmed closure, clear ALL local active-state so the
+      // next trigger reads a clean session (no re-login), not just stop this one.
+      void resetToDormant();
     });
 
     let sequence = 0;

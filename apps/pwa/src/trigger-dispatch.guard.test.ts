@@ -66,3 +66,21 @@ describe('§25 trigger→close→trigger — no dedup against a STALE local acti
     expect(activeGuard).toContain('stopActivation()');
   });
 });
+
+describe('§27 closure cleans the slate — server-authoritative dormancy reconcile', () => {
+  const act = read('./lib/activation/index.ts');
+  const main = read('./main.tsx');
+
+  it('reconciles active-state via /v1/me (session path) and clears ALL local active sessions', () => {
+    expect(act).toContain('reconcileToServerDormancy');
+    expect(act).toMatch(/api<[^>]*>\('\/v1\/me'\)/);
+    expect(act).toContain('closeAllActiveSessions');
+    // Only acts on a server-confirmed "no active event".
+    expect(act).toMatch(/activeEvent === false/);
+  });
+
+  it('runs on foreground/resume (visibilitychange), so no re-login is required', () => {
+    expect(main).toContain('reconcileToServerDormancy');
+    expect(main).toContain('visibilitychange');
+  });
+});
