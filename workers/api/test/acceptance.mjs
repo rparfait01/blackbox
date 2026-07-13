@@ -529,6 +529,32 @@ async function run() {
     }
   });
 
+  await check('27. mode-order matrix: every trigger ordering creates a fresh event; check-in never poisons a trigger', async () => {
+    assert(ADMIN, 'BBX_ADMIN_TOKEN not set — cannot close between triggers');
+    const u = await signup('direct');
+    assert((await addEmail(u.session, 'primary', 'P')).status === 200, 'add primary failed');
+    const seen = new Set();
+    const cycle = async (source) => {
+      const ev = await trigger(u.session, source);
+      assert(ev?.eventId && !ev.resumed, `${source} did not create a fresh event: ${JSON.stringify(ev)}`);
+      assert(!seen.has(ev.eventId), `${source} reused a prior event id: ${ev.eventId}`);
+      seen.add(ev.eventId);
+      const on = await api('GET', '/v1/me', { bearer: u.session });
+      assert(on.data?.activeEvent === true, `/me activeEvent should be true after ${source}: ${JSON.stringify(on.data)}`);
+      const fc = await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN, body: { reason: 'matrix' } });
+      assert(fc.status === 200, `close ${source} failed: ${fc.status}`);
+      const off = await api('GET', '/v1/me', { bearer: u.session });
+      assert(off.data?.activeEvent === false, `/me activeEvent should be false after closing ${source}: ${JSON.stringify(off.data)}`);
+    };
+    // Visible-first, Visible-only, both switch directions — every trigger fresh.
+    for (const s of ['direct-tap', 'direct-tap', 'stillpoint-press', 'direct-tap', 'stillpoint-press', 'direct-tap']) {
+      await cycle(s);
+    }
+    // A check-in must not poison the next trigger (the exact reported sequence).
+    assert((await api('POST', '/v1/me/checkin', { bearer: u.session, body: {} })).status === 200, 'check-in failed');
+    await cycle('direct-tap');
+  });
+
   // ---- cleanup ----
   await cleanup();
 

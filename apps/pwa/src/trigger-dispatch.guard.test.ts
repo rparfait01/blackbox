@@ -84,3 +84,25 @@ describe('§27 closure cleans the slate — server-authoritative dormancy reconc
     expect(main).toContain('visibilitychange');
   });
 });
+
+describe('§29 mode switch clears stale state LOCALLY, never on a blocking network await', () => {
+  const settings = read('./routes/settings/Settings.tsx');
+  const applyMode = settings.slice(
+    settings.indexOf('async function applyMode'),
+    settings.indexOf('async function applyMode') + 1200,
+  );
+
+  it('clears local active-state (closeAllActiveSessions) before navigating', () => {
+    expect(applyMode).toContain('closeAllActiveSessions');
+    expect(applyMode.indexOf('closeAllActiveSessions')).toBeLessThan(applyMode.indexOf('window.location.assign'));
+  });
+
+  it('does NOT gate the navigate on a network await (no pre-navigate awaited reconcile)', () => {
+    // The regression (baec2ce): `await reconcileToServerDormancy()` before the
+    // navigate deadlocked the switch. The navigate must ride a .finally on a LOCAL
+    // op, never a network await.
+    expect(applyMode).not.toMatch(/await\s+reconcileToServerDormancy\(\)/);
+    // The navigate rides a .finally (fires on resolve OR reject) on the local clear.
+    expect(applyMode).toContain('.finally(');
+  });
+});
