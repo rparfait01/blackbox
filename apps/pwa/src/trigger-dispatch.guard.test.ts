@@ -46,3 +46,15 @@ describe('§2 Hidden — covert trigger is a double-tap, not press-and-hold', ()
     expect(home).not.toContain('HoldProgressRing');
   });
 });
+
+describe('§25 trigger→close→trigger — no dedup against a STALE local active session', () => {
+  const act = read('./lib/activation/index.ts');
+
+  it('reconciles a local active session against server truth before deduping', () => {
+    // A local 'active' session in the dedup window is verified against the server;
+    // a genuinely-closed one is cleared and the trigger falls through to create.
+    expect(act).toContain('isLocalSessionStillActive');
+    expect(act).toContain('fetchEventStatus');
+    expect(act).toMatch(/updateSessionStatus\(existing\.id, 'closed'/);
+  });
+});

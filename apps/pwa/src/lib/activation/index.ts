@@ -8,6 +8,7 @@ import {
   createSession,
   getActiveSession,
   updateSessionStatus,
+  type SessionRecord,
 } from '@/lib/storage';
 import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
@@ -26,7 +27,7 @@ import {
 } from '@/lib/upload';
 import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
-import { startSessionMonitor, stopSessionMonitor } from './session-monitor';
+import { fetchEventStatus, startSessionMonitor, stopSessionMonitor } from './session-monitor';
 import { startHeartbeat, stopHeartbeat } from './heartbeat';
 
 /** A repeat trigger within this window of an existing active session is ignored. */
@@ -68,6 +69,24 @@ let visibilityHooked = false;
 /** True while a session is recording in this page lifetime. */
 export function isSessionActive(): boolean {
   return active !== null;
+}
+
+/**
+ * Reconcile a local 'active' session against the server (Brief 25). Returns true
+ * only when the server confirms the event is still active. Conservative on any
+ * uncertainty — no backend, no event id yet, or an unreachable server — so a
+ * transient failure can never spuriously discard a genuinely-live session; it only
+ * lets a trigger through when the server EXPLICITLY reports the event 'closed'.
+ */
+async function isLocalSessionStillActive(session: SessionRecord): Promise<boolean> {
+  if (!uploadsEnabled || !session.eventId || !session.hmacSecret) {
+    return true;
+  }
+  const status = await fetchEventStatus(session.eventId, session.hmacSecret).catch(() => null);
+  if (status == null) {
+    return true;
+  }
+  return status !== 'closed';
 }
 
 /**
@@ -158,9 +177,20 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
       existing.status === 'active' &&
       Date.now() - existing.startTime < DEDUP_WINDOW_MS
     ) {
-      log.debug('activation deduplicated against recent session', existing.id);
-      tracker.stop();
-      return existing.id;
+      // Brief 25: a local 'active' session can be STALE — the event was closed
+      // server-side but the monitor hasn't reconciled it yet (classically right
+      // after a close + a mode-switch reload). Deduping against it would silently
+      // refuse the NEXT trigger — the "Visible dead after closing a Hidden event"
+      // bug. Reconcile against SERVER truth: only dedup when the event is genuinely
+      // still active; otherwise clear it locally and fall through to create fresh.
+      if (await isLocalSessionStillActive(existing)) {
+        log.debug('activation deduplicated against recent active session', existing.id);
+        tracker.stop();
+        return existing.id;
+      }
+      log.debug('stale local active session cleared (server reports closed)', existing.id);
+      await updateSessionStatus(existing.id, 'closed', Date.now());
+      // fall through — create a fresh event
     }
 
     const newSessionId = crypto.randomUUID();

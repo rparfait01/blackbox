@@ -52,6 +52,17 @@ async function fetchStatus(eventId: string, secret: string): Promise<DeliverySta
   return (await response.json()) as DeliveryStatus;
 }
 
+/**
+ * One-shot read of the server's current lifecycle status for an event ('active' |
+ * 'closed' | ...), or null when it can't be read. Used to reconcile a possibly
+ * stale local 'active' session against server truth before deduping a trigger
+ * against it (Brief 25).
+ */
+export async function fetchEventStatus(eventId: string, secret: string): Promise<string | null> {
+  const status = await fetchStatus(eventId, secret);
+  return status?.status ?? null;
+}
+
 async function tick(state: MonitorState): Promise<void> {
   if (state.stopped) {
     return;

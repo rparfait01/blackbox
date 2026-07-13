@@ -510,6 +510,25 @@ async function run() {
     }
   });
 
+  await check('26. §25 trigger→close→trigger cycle: a fresh trigger after a close creates a NEW event, never resumes the closed one', async () => {
+    assert(ADMIN, 'BBX_ADMIN_TOKEN not set — cannot close between triggers');
+    const u = await signup();
+    assert((await addEmail(u.session, 'primary', 'P')).status === 200, 'add primary failed');
+    // Cycle it a few times, both "orders" are the same server path: create → close →
+    // create must always yield a DISTINCT, fresh event (resolveSingleActive filters
+    // status='active', so a closed event is never resumed).
+    let prev = null;
+    for (let i = 0; i < 3; i += 1) {
+      const ev = await trigger(u.session, `cycle-${i}`);
+      assert(ev?.eventId, `trigger ${i} did not open an event: ${JSON.stringify(ev)}`);
+      assert(!ev.resumed, `trigger ${i} resumed a prior event instead of a fresh create: ${JSON.stringify(ev)}`);
+      assert(ev.eventId !== prev, `trigger ${i} reused the previous event id after a close: ${ev.eventId}`);
+      prev = ev.eventId;
+      const fc = await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN, body: { reason: 'cycle test' } });
+      assert(fc.status === 200, `close ${i} failed: ${fc.status}`);
+    }
+  });
+
   // ---- cleanup ----
   await cleanup();
 
