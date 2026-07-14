@@ -51,15 +51,24 @@ describe('Brief 30 — two gesture inputs call the one core', () => {
   });
 });
 
-describe('Brief 30 — mode is display-only', () => {
-  it('the mode switch is a plain navigate with no trigger-state reconcile', () => {
-    const applyMode = settings.slice(
-      settings.indexOf('async function applyMode'),
-      settings.indexOf('async function applyMode') + 900,
-    );
-    expect(applyMode).toContain('window.location.assign');
+describe('Brief 30/31 — mode is a display preference only', () => {
+  const applyMode = settings.slice(
+    settings.indexOf('async function applyMode'),
+    settings.indexOf('async function applyMode') + 900,
+  );
+
+  it('selecting a mode sets the preference and does NOT navigate (no teleport, Brief 31 §3)', () => {
+    expect(applyMode).toContain('setSelectedMode');
+    expect(applyMode).not.toContain('window.location.assign');
+  });
+
+  it('touches no trigger state — no reconcile, no local clear', () => {
     expect(applyMode).not.toContain('reconcileToServerDormancy');
     expect(applyMode).not.toContain('closeAllActiveSessions');
+  });
+
+  it('the selected skin renders on leaving Settings (goBack uses selectedMode)', () => {
+    expect(settings).toMatch(/goBack[\s\S]{0,120}selectedMode/);
   });
 });
 

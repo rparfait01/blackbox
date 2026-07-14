@@ -34,6 +34,10 @@ export function Settings(): JSX.Element {
   // §0: an in-app 2-step confirm for switching toward VISIBLE (the native confirm
   // dialog is unreliable in the installed PWA — that is what left the toggle dead).
   const [confirmVisible, setConfirmVisible] = useState(false);
+  // Brief 31 §3: the display mode is a PREFERENCE. Selecting it here updates this
+  // selection + persists (local + server) but does NOT navigate — the user stays in
+  // Settings. The chosen skin renders when they LEAVE Settings (goBack reads this).
+  const [selectedMode, setSelectedMode] = useState<DisplayMode | null>(getDisplayMode());
 
   const load = (): void => {
     void api<MeData>('/v1/me').then((r) => r.ok && r.data && setMe(r.data));
@@ -63,7 +67,7 @@ export function Settings(): JSX.Element {
   // could not even be relied on to fire). §0a holds: Hidden re-enters the facade.
   async function applyMode(mode: DisplayMode): Promise<void> {
     setConfirmVisible(false);
-    if (mode === getDisplayMode()) {
+    if (mode === selectedMode) {
       return;
     }
     const res = await api('/v1/me/display-mode', { body: { displayMode: mode } });
@@ -71,13 +75,13 @@ export function Settings(): JSX.Element {
       flash('Couldn’t change visibility — please try again.');
       return;
     }
+    // Brief 31 §3: set the PREFERENCE only — persist (local + server) and update the
+    // selection. Do NOT navigate: the user stays in Settings and keeps working. The
+    // chosen skin renders when they leave Settings (goBack). Mode touches no trigger
+    // state (the one trigger core holds it), so there is nothing to reconcile.
     setDisplayMode(mode);
-    // Brief 30: mode is a DISPLAY setting only — it touches no trigger state, so the
-    // switch is a plain hard-navigate with nothing to reconcile. Trigger active-state
-    // lives solely in the one trigger core and is reset by this reload; the new mode's
-    // arm calls the same triggerAlert() and asks the server, so there is no residual
-    // state and no race to clear.
-    window.location.assign(mode === 'direct' ? '/blackbox' : '/');
+    setSelectedMode(mode);
+    flash(mode === 'direct' ? 'Visible — applies when you leave Settings' : 'Hidden — applies when you leave Settings');
   }
 
   // Hidden (covert) is the SAFE direction — frictionless. Visible (overt) is
@@ -129,11 +133,13 @@ export function Settings(): JSX.Element {
     }
   }
 
-  const mode = getDisplayMode();
-  const present = mode === 'direct';
+  const present = selectedMode === 'direct';
 
-  // Back returns to the armed screen — Stillpoint in covert, BLACK BOX in direct.
-  const goBack = (): void => navigate(mode === 'direct' ? '/blackbox' : '/', { replace: true });
+  // Back returns to the armed screen in the SELECTED mode — Brief 31 §3: leaving
+  // Settings is where the chosen skin renders (getDisplayMode() was already persisted
+  // to selectedMode by applyMode, so RootGate/the target route render it directly, no
+  // reload). Stillpoint in covert, BLACK BOX in direct.
+  const goBack = (): void => navigate(selectedMode === 'direct' ? '/blackbox' : '/', { replace: true });
 
   return (
     <main className="stillpoint-bg min-h-full w-full overflow-y-auto px-6 pb-6 pt-safe-6 text-med-text">

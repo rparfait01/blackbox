@@ -43,8 +43,13 @@ describe('§0 visibility toggle — relabel + pinned mapping', () => {
     expect(visRegion).not.toContain('window.confirm');
   });
 
-  it('hard-navigates so the rendered mode matches the stored mode', () => {
-    expect(settings).toMatch(/window\.location\.assign\(\s*mode === 'direct' \? '\/blackbox' : '\/'/);
+  it('renders the SELECTED mode on leaving Settings (Brief 31 §3 — no in-place teleport)', () => {
+    // Selecting a mode persists it (setDisplayMode) but does NOT navigate; goBack
+    // then routes to the selected mode's screen, so the rendered mode matches the
+    // stored/selected mode with no reload and no mid-task jump.
+    expect(settings).toContain('setDisplayMode(mode)');
+    expect(settings).toMatch(/goBack[\s\S]{0,140}selectedMode === 'direct' \? '\/blackbox' : '\/'/);
+    expect(settings).not.toContain('window.location.assign');
   });
 });
 

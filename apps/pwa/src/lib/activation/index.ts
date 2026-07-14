@@ -158,6 +158,9 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
   // path that does not hand the tracker off to a live session.
   tracker.start();
 
+  // True only for the call that ACQUIRES the create-window lock, so a guard-blocked
+  // re-entrant call never releases another call's lock in its finally (Brief 31).
+  let acquired = false;
   try {
     // The ONLY guard (Brief 30): a recording is already live or being created in
     // THIS page → don't start a second capture. No local-session dedup, no
@@ -170,6 +173,7 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
       return active?.sessionId ?? null;
     }
     starting = true;
+    acquired = true;
 
     const newSessionId = crypto.randomUUID();
     const startTime = Date.now();
@@ -257,8 +261,7 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
       latestFix,
       originCaptured: false,
     };
-    active = session;
-    starting = false; // `active` now holds the in-page guard
+    active = session; // `active` now holds the in-page guard; `starting` is released in finally
     ensureVisibilityReacquire();
 
     // Transcription uses its own audio path (Web Speech); start it regardless of
@@ -310,13 +313,21 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
     return newSessionId;
   } catch (error) {
     log.error('triggerAlert failed', error);
-    starting = false; // release the in-page guard so a later trigger can retry
     // If the tracker was never handed off to `active`, cancel it so no watcher
     // leaks. (Once handed off, the live session owns it.)
     if (active === null || active.tracker !== tracker) {
       tracker.stop();
     }
     return null;
+  } finally {
+    // Brief 31: the call that acquired the lock ALWAYS releases it — on completion,
+    // error, or abort — so a prior attempt can never wedge `starting` true and
+    // dead-arm the trigger until a reload. A guard-blocked re-entrant call
+    // (acquired=false) leaves the real owner's lock intact. (`active` remains the
+    // live-recording guard, cleared by the session monitor on close.)
+    if (acquired) {
+      starting = false;
+    }
   }
 }
 
