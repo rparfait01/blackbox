@@ -96,9 +96,9 @@ describe('Brief 15 §A — no instrument color leaks onto any facade surface', (
 });
 
 describe('Brief 15 §A — activation gesture survives the recolor', () => {
-  it('the breathing circle still wires the covert activation trigger (double-tap, Brief 22)', () => {
+  it('the breathing circle still wires the covert activation trigger (double-tap, Brief 30)', () => {
     const home = read('./routes/meditation/MeditationHome.tsx');
-    expect(home).toContain('triggerActivation');
-    expect(home).toContain('onFacadeTap');
+    expect(home).toContain('triggerAlert');
+    expect(home).toContain('useDoubleTap');
   });
 });

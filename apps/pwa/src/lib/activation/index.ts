@@ -5,15 +5,10 @@ import {
   appendChunk,
   appendClassification,
   appendLocation,
-  closeAllActiveSessions,
   createSession,
   getActiveSession,
-  getSession,
   updateSessionStatus,
-  type SessionRecord,
 } from '@/lib/storage';
-import { api } from '@/lib/api';
-import { getSessionToken } from '@/lib/auth';
 import type { ActivationSource } from '@/lib/storage/types';
 import { MediaCapture } from '@/lib/capture/media-capture';
 import { CHUNK_INTERVAL_MS, captureModeForSource } from '@/lib/capture/config';
@@ -31,11 +26,8 @@ import {
 } from '@/lib/upload';
 import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
-import { fetchEventStatus, startSessionMonitor, stopSessionMonitor } from './session-monitor';
+import { startSessionMonitor, stopSessionMonitor } from './session-monitor';
 import { startHeartbeat, stopHeartbeat } from './heartbeat';
-
-/** A repeat trigger within this window of an existing active session is ignored. */
-const DEDUP_WINDOW_MS = 60_000;
 
 /** How often the descriptive classifier runs over the session so far. */
 const CLASSIFY_INTERVAL_MS = 5000;
@@ -67,65 +59,21 @@ interface ActiveSession {
   originCaptured: boolean;
 }
 
+// The ONE place trigger active-state lives (Brief 30). `active` is the live in-page
+// recording session; `starting` guards the sub-second window while one is being
+// created. Both are module-scoped, so a reload (which every mode switch is) resets
+// them — they can NEVER be stale across a mode switch. The SERVER (resolveSingleActive)
+// is the single source of truth for one-event-per-account; these only prevent a
+// DUPLICATE in-page capture. There is no local-session dedup and no reconcile: a
+// closed event can never block the next trigger, because the client no longer trusts
+// a possibly-stale local record — it always asks the server, which decides.
 let active: ActiveSession | null = null;
+let starting = false;
 let visibilityHooked = false;
 
 /** True while a session is recording in this page lifetime. */
 export function isSessionActive(): boolean {
   return active !== null;
-}
-
-/**
- * Return the client to a genuinely dormant state (Brief 27): stop any in-page
- * recording and mark EVERY local 'active' session closed. The caller has already
- * established the event is closed (the session monitor, or a server dormancy read),
- * so this clears ALL stale active-state — the module flag and every local record —
- * exactly like a fresh login would, with no re-login.
- */
-async function resetToDormant(): Promise<void> {
-  if (active) {
-    await stopActivation();
-  }
-  await closeAllActiveSessions(Date.now());
-}
-
-/**
- * Server-authoritative dormancy reconcile (Brief 27). Asks the SESSION endpoint
- * /v1/me — the same reliable, session-token path check-in uses (and which stays
- * healthy while the event-scoped delivery-status reconcile may not) — whether the
- * account still has an active event. If the server CONFIRMS none, clear all local
- * active-state so the next trigger reads a clean session with no login. Only acts on
- * a confirmed "no active event"; a still-open event (dual-consent not completed) is
- * left alone — that is single-active working, not the bug. Runs on foreground/resume
- * and after a close, so a closure that lands while the app is backgrounded still
- * cleans the slate the moment the app is next seen.
- */
-export async function reconcileToServerDormancy(): Promise<void> {
-  if (!uploadsEnabled || !getSessionToken()) {
-    return;
-  }
-  const res = await api<{ activeEvent?: boolean }>('/v1/me');
-  if (res.ok && res.data?.activeEvent === false) {
-    await resetToDormant();
-  }
-}
-
-/**
- * Reconcile a local 'active' session against the server (Brief 25). Returns true
- * only when the server confirms the event is still active. Conservative on any
- * uncertainty — no backend, no event id yet, or an unreachable server — so a
- * transient failure can never spuriously discard a genuinely-live session; it only
- * lets a trigger through when the server EXPLICITLY reports the event 'closed'.
- */
-async function isLocalSessionStillActive(session: SessionRecord): Promise<boolean> {
-  if (!uploadsEnabled || !session.eventId || !session.hmacSecret) {
-    return true;
-  }
-  const status = await fetchEventStatus(session.eventId, session.hmacSecret).catch(() => null);
-  if (status == null) {
-    return true;
-  }
-  return status !== 'closed';
 }
 
 /**
@@ -158,30 +106,35 @@ export async function resumeActiveSession(): Promise<void> {
   // 'closed'), it tears down; otherwise it stays active.
   startHeartbeat(session.id);
   startSessionMonitor(session.id, () => {
+    // Server reported this event closed → tear the resumed lifecycle down. (active
+    // is null on a resume; the next trigger asks the server regardless — Brief 30.)
     stopHeartbeat();
-    // Brief 27: closure returns the client fully to dormant (clears every local
-    // 'active' record), not just this one session, so no stale state survives.
-    void resetToDormant();
+    void updateSessionStatus(session.id, 'closed', Date.now());
   });
 }
 
 /**
- * The single entry point that starts recording. In W2 it is called only by the
- * stillpoint-press handler; voice and button sources are accepted so W8 can
- * wire them in without changing this signature.
+ * triggerAlert — the SINGLE trigger core (Brief 30). Its only job is to emit the
+ * signal: create the event, start capture, fire the cascade. It does not know or
+ * care whether the app is Visible or Hidden — both display skins wire a double-tap
+ * gesture that calls exactly this. All trigger active-state lives here (`active`),
+ * in ONE place, never in a mode. Switching modes cannot break the trigger because
+ * there is no trigger state in the mode to reconcile.
+ *
+ * Server-authoritative: it never dedups against a local record and never reconciles
+ * — it always creates + POSTs, and the server's resolveSingleActive decides
+ * (resume the account's open event, or create fresh). The ONLY client guard is
+ * in-page: if a recording is already live/starting in this page, it does not start a
+ * second capture. Because that guard is module-scoped, a reload (every mode switch)
+ * resets it, so it is never stale.
  *
  * Geolocation note (Fix 1): `watchPosition` is started SYNCHRONOUSLY as the very
- * first statement, before any `await`, so it runs while the press-and-hold's
- * user-gesture context is still valid (Chrome drops the gesture after awaits).
- * Fixes that arrive before the session row exists are buffered in memory and
- * flushed once it does. If the activation is deduplicated, the watch we just
- * started is canceled immediately — no leaked watchers under any code path.
- *
- * Covert by construction: produces no UI output, swallows all errors, and
- * deduplicates repeat triggers within 60s. Returns the session id, or null on
- * failure.
+ * first statement, before any `await`, so it runs while the tap's user-gesture
+ * context is still valid (Chrome drops the gesture after awaits). Covert by
+ * construction: produces no UI output and swallows all errors. Returns the session
+ * id, or null on failure.
  */
-export async function triggerActivation(source: ActivationSource): Promise<string | null> {
+export async function triggerAlert(source: ActivationSource): Promise<string | null> {
   let sessionId: string | null = null;
   const bufferedFixes: GeoFix[] = [];
 
@@ -206,45 +159,17 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
   tracker.start();
 
   try {
-    if (active) {
-      // Brief 26: reconcile the IN-PAGE active session against the server too — not
-      // just the local DB record (Brief 25). A close the ~2s monitor hasn't torn
-      // down yet must NOT block a re-trigger, or the gesture starts (location watch)
-      // then no-ops ("asks for location, doesn't go into alert state"). Dedup only
-      // if still active on the server; else tear the stale session down + create
-      // fresh. Conservative on any uncertainty so a live recording is never dropped.
-      const activeRecord = await getSession(active.sessionId);
-      if (!activeRecord || (await isLocalSessionStillActive(activeRecord))) {
-        log.debug('activation deduplicated against in-page active session', active.sessionId);
-        tracker.stop();
-        return active.sessionId;
-      }
-      log.debug('stale in-page session cleared (server reports closed)', active.sessionId);
-      await stopActivation();
-      // fall through — create a fresh event
+    // The ONLY guard (Brief 30): a recording is already live or being created in
+    // THIS page → don't start a second capture. No local-session dedup, no
+    // reconcile — the server (resolveSingleActive) is the authority, so a closed
+    // event never blocks the next trigger. Module-scoped, so a reload / mode switch
+    // resets it and it is never stale.
+    if (active || starting) {
+      log.debug('trigger ignored: a recording is already live/starting in this page');
+      tracker.stop();
+      return active?.sessionId ?? null;
     }
-
-    const existing = await getActiveSession();
-    if (
-      existing &&
-      existing.status === 'active' &&
-      Date.now() - existing.startTime < DEDUP_WINDOW_MS
-    ) {
-      // Brief 25: a local 'active' session can be STALE — the event was closed
-      // server-side but the monitor hasn't reconciled it yet (classically right
-      // after a close + a mode-switch reload). Deduping against it would silently
-      // refuse the NEXT trigger — the "Visible dead after closing a Hidden event"
-      // bug. Reconcile against SERVER truth: only dedup when the event is genuinely
-      // still active; otherwise clear it locally and fall through to create fresh.
-      if (await isLocalSessionStillActive(existing)) {
-        log.debug('activation deduplicated against recent active session', existing.id);
-        tracker.stop();
-        return existing.id;
-      }
-      log.debug('stale local active session cleared (server reports closed)', existing.id);
-      await updateSessionStatus(existing.id, 'closed', Date.now());
-      // fall through — create a fresh event
-    }
+    starting = true;
 
     const newSessionId = crypto.randomUUID();
     const startTime = Date.now();
@@ -282,9 +207,9 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
     // down if the contact approves closure. Teardown is exactly stopActivation
     // (covert: no UI change). There is no on-device feedback during the session.
     startSessionMonitor(newSessionId, () => {
-      // Brief 27: on server-confirmed closure, clear ALL local active-state so the
-      // next trigger reads a clean session (no re-login), not just stop this one.
-      void resetToDormant();
+      // Server-confirmed closure → tear this in-page session down (clears `active`).
+      // The next trigger asks the server regardless, so nothing else needs clearing.
+      void stopActivation();
     });
 
     let sequence = 0;
@@ -333,6 +258,7 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
       originCaptured: false,
     };
     active = session;
+    starting = false; // `active` now holds the in-page guard
     ensureVisibilityReacquire();
 
     // Transcription uses its own audio path (Web Speech); start it regardless of
@@ -383,7 +309,8 @@ export async function triggerActivation(source: ActivationSource): Promise<strin
 
     return newSessionId;
   } catch (error) {
-    log.error('triggerActivation failed', error);
+    log.error('triggerAlert failed', error);
+    starting = false; // release the in-page guard so a later trigger can retry
     // If the tracker was never handed off to `active`, cancel it so no watcher
     // leaks. (Once handed off, the live session owns it.)
     if (active === null || active.tracker !== tracker) {

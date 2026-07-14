@@ -1,26 +1,21 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Gear } from '@phosphor-icons/react';
 
 import { formatElapsed } from '@/lib/time';
-import { triggerActivation } from '@/lib/activation';
+import { triggerAlert } from '@/lib/activation';
+import { useDoubleTap } from '@/lib/use-double-tap';
 import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { BreathingCircles } from './BreathingCircles';
 import { ClosureControl } from './ClosureControl';
 
-/** Two taps within this window count as the covert double-tap trigger (Brief 22). */
-const DOUBLE_TAP_MS = 400;
-
 /**
  * Stillpoint — the entire visible surface of the app. Nothing here references
- * BLACK BOX, safety, or emergency.
- *
- * A deliberate DOUBLE-TAP on the breathing circle is the covert activation trigger
- * (Brief 22 — replaces the press-and-hold, which was fragile under iOS long-press).
- * It produces NO visible output: no navigation, no screen change, no toast. The
- * meditation view simply continues — dormant and active are byte-identical — and
- * there is no on-device feedback at any later point either. BLACK BOX records and
- * reaches; it does not reassure. A single stray tap (pocket/cover/idle) never fires.
+ * BLACK BOX, safety, or emergency. Hidden is a DISPLAY skin (Brief 30): its only
+ * trigger role is to wire a covert DOUBLE-TAP on the breathing circle to the single
+ * triggerAlert() core (via the shared useDoubleTap detector). It produces NO visible
+ * output — dormant and active are byte-identical, no on-device feedback ever. A
+ * single stray tap (pocket/cover/idle) never fires.
  *
  * The gear and "End session" controls are ordinary meditation-app affordances.
  * The gear opens preferences. "End session" opens the disguised closure control —
@@ -44,24 +39,10 @@ export function MeditationHome(): JSX.Element {
 
   const clockText = new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  // Covert double-tap trigger (Brief 22 gesture; Brief 24 detection). Detected on
-  // POINTERDOWN — not click — because a touch `click` is synthesized late and the
-  // second tap of a double-tap is fused/eaten on iOS Safari (that was the on-device
-  // failure). pointerdown fires immediately and reliably per tap on both iOS Safari
-  // and Android Chrome. Two pointerdowns within DOUBLE_TAP_MS activate; a single tap
-  // does nothing (pocket/cover brush never fires). preventDefault suppresses the
-  // synthetic click / selection. No visible output — facade byte-identical.
-  const lastTapRef = useRef(0);
-  const onFacadeTap = (e: PointerEvent): void => {
-    e.preventDefault();
-    const t = performance.now();
-    if (t - lastTapRef.current <= DOUBLE_TAP_MS) {
-      lastTapRef.current = 0;
-      void triggerActivation('stillpoint-press');
-    } else {
-      lastTapRef.current = t;
-    }
-  };
+  // The covert trigger: a double-tap on the breathing circle wired to the ONE
+  // triggerAlert() core via the shared detector (Brief 30). This skin carries no
+  // trigger logic or active-state — it is only an input.
+  const facadeTap = useDoubleTap(() => void triggerAlert('stillpoint-press'));
 
   return (
     <main className="stillpoint-bg animate-hue-drift motion-reduce:animate-none relative flex h-full w-full select-none flex-col items-center justify-center overflow-hidden p-8 text-med-text">
@@ -87,7 +68,7 @@ export function MeditationHome(): JSX.Element {
       </h1>
 
       <div
-        onPointerDown={onFacadeTap}
+        {...facadeTap}
         className="relative flex h-60 w-60 touch-manipulation select-none items-center justify-center [-webkit-touch-callout:none] [-webkit-user-select:none]"
       >
         <BreathingCircles />

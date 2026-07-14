@@ -18,7 +18,7 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
 import { router } from '@/app/router';
-import { reconcileToServerDormancy, resumeActiveSession } from '@/lib/activation';
+import { resumeActiveSession } from '@/lib/activation';
 import { resumeUploads } from '@/lib/upload';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import '@/index.css';
@@ -31,17 +31,6 @@ void resumeActiveSession();
 
 // Resume draining any uploads queued by a previous (possibly offline) session.
 void resumeUploads();
-
-// Brief 27: on foreground/resume (and once on load), reconcile local active-state
-// against SERVER truth via /v1/me. If the account has no active event, clear any
-// stale local active-state so a closed event never no-ops the next trigger — the
-// client returns to dormant in place, exactly like a fresh login, with none.
-void reconcileToServerDormancy();
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    void reconcileToServerDormancy();
-  }
-});
 
 // Dev-only console harness for the classification foundation. Dynamically
 // imported behind the DEV guard so production builds never bundle it and

@@ -4,105 +4,78 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Brief 22 tripwires — both triggers are TAP-to-activate, and the Visible tap has
- * no blocking gate. Read as source so a future edit that reintroduces the
- * `!armable` early-return (silent Visible refusal) or restores the fragile
- * press-and-hold on the facade fails here instead of shipping.
+ * Brief 30 tripwires — ONE trigger core, two gesture inputs, mode as display-only.
+ * Read as source so a future edit that reintroduces a second trigger path, a
+ * per-mode local-session dedup / reconcile, a mode-switch trigger-state reconcile,
+ * the `!armable` gate, or the fragile press-and-hold fails here instead of shipping.
  */
 const SRC = dirname(fileURLToPath(import.meta.url));
 const read = (p: string): string => readFileSync(join(SRC, p), 'utf8');
 
-describe('§1 Visible — tap always fires (no blocking gate)', () => {
-  const home = read('./routes/blackbox/BlackBoxHome.tsx');
-  const activate = home.slice(home.indexOf('const activate'), home.indexOf('const activate') + 900);
+const act = read('./lib/activation/index.ts');
+const vis = read('./routes/blackbox/BlackBoxHome.tsx');
+const hid = read('./routes/meditation/MeditationHome.tsx');
+const hook = read('./lib/use-double-tap.ts');
+const settings = read('./routes/settings/Settings.tsx');
 
-  it('activate() dispatches unconditionally — no `if (!armable) return`', () => {
-    expect(activate).toContain("triggerActivation('direct-tap')");
-    expect(activate).not.toMatch(/if \(!armable\)\s*\{?\s*return/);
+describe('Brief 30 — exactly ONE trigger core', () => {
+  it('the core is triggerAlert(); the dual-path name is gone', () => {
+    expect(act).toContain('export async function triggerAlert');
+    expect(act).not.toContain('function triggerActivation');
   });
 
-  it('the activate disc is never disabled/dimmed on !armable', () => {
-    expect(home).not.toMatch(/disabled=\{!armable/);
-    expect(home).not.toMatch(/!armable && !alertActive \? 'opacity-40'/);
-  });
-});
-
-describe('§2 Hidden — covert trigger is a double-tap, not press-and-hold', () => {
-  const home = read('./routes/meditation/MeditationHome.tsx');
-
-  it('detects the double-tap on POINTERDOWN (not click — unreliable on iOS touch)', () => {
-    expect(home).toMatch(/onPointerDown=\{onFacadeTap\}/);
-    expect(home).not.toMatch(/onClick=\{onFacadeTap\}/);
-    expect(home).toContain("triggerActivation('stillpoint-press')");
-    expect(home).toContain('DOUBLE_TAP_MS');
-  });
-
-  it('uses touch-action: manipulation on the trigger element (kills double-tap-zoom)', () => {
-    expect(home).toContain('touch-manipulation');
-  });
-
-  it('the press-and-hold gesture is retired (no useActivationHold / progress ring)', () => {
-    expect(home).not.toContain('useActivationHold');
-    expect(home).not.toContain('HoldProgressRing');
+  it('is server-authoritative: no local-session dedup, no reconcile layer', () => {
+    expect(act).not.toContain('isLocalSessionStillActive');
+    expect(act).not.toContain('reconcileToServerDormancy');
+    expect(act).not.toContain('resetToDormant');
+    expect(act).not.toContain('DEDUP_WINDOW_MS');
+    // The ONLY guard is the in-page active/starting flag (module-scoped, reload-reset).
+    expect(act).toMatch(/if \(active \|\| starting\)/);
   });
 });
 
-describe('§25 trigger→close→trigger — no dedup against a STALE local active session', () => {
-  const act = read('./lib/activation/index.ts');
-
-  it('reconciles a local active session against server truth before deduping', () => {
-    // A local 'active' session in the dedup window is verified against the server;
-    // a genuinely-closed one is cleared and the trigger falls through to create.
-    expect(act).toContain('isLocalSessionStillActive');
-    expect(act).toContain('fetchEventStatus');
-    expect(act).toMatch(/updateSessionStatus\(existing\.id, 'closed'/);
+describe('Brief 30 — two gesture inputs call the one core', () => {
+  it('both skins wire a double-tap to triggerAlert via the shared detector', () => {
+    expect(vis).toContain("triggerAlert('direct-tap')");
+    expect(vis).toContain('useDoubleTap');
+    expect(hid).toContain("triggerAlert('stillpoint-press')");
+    expect(hid).toContain('useDoubleTap');
   });
 
-  it('reconciles the IN-PAGE active session too (Brief 26), not just the local record', () => {
-    // The module `active` guard must also verify against the server and tear down a
-    // stale in-page session, or a same-page re-trigger after a close no-ops.
-    const activeGuard = act.slice(act.indexOf('if (active) {'), act.indexOf('const existing'));
-    expect(activeGuard).toContain('isLocalSessionStillActive');
-    expect(activeGuard).toContain('stopActivation()');
+  it('there is ONE double-tap detection, on pointerdown (not click)', () => {
+    expect(hook).toContain('onPointerDown');
+    expect(hook).toContain('DOUBLE_TAP_MS');
+    // Neither skin carries its own inline detection any more.
+    expect(hid).not.toContain('onFacadeTap');
+    expect(hid).not.toContain('DOUBLE_TAP_MS');
   });
 });
 
-describe('§27 closure cleans the slate — server-authoritative dormancy reconcile', () => {
-  const act = read('./lib/activation/index.ts');
-  const main = read('./main.tsx');
-
-  it('reconciles active-state via /v1/me (session path) and clears ALL local active sessions', () => {
-    expect(act).toContain('reconcileToServerDormancy');
-    expect(act).toMatch(/api<[^>]*>\('\/v1\/me'\)/);
-    expect(act).toContain('closeAllActiveSessions');
-    // Only acts on a server-confirmed "no active event".
-    expect(act).toMatch(/activeEvent === false/);
-  });
-
-  it('runs on foreground/resume (visibilitychange), so no re-login is required', () => {
-    expect(main).toContain('reconcileToServerDormancy');
-    expect(main).toContain('visibilitychange');
+describe('Brief 30 — mode is display-only', () => {
+  it('the mode switch is a plain navigate with no trigger-state reconcile', () => {
+    const applyMode = settings.slice(
+      settings.indexOf('async function applyMode'),
+      settings.indexOf('async function applyMode') + 900,
+    );
+    expect(applyMode).toContain('window.location.assign');
+    expect(applyMode).not.toContain('reconcileToServerDormancy');
+    expect(applyMode).not.toContain('closeAllActiveSessions');
   });
 });
 
-describe('§29 mode switch clears stale state LOCALLY, never on a blocking network await', () => {
-  const settings = read('./routes/settings/Settings.tsx');
-  const applyMode = settings.slice(
-    settings.indexOf('async function applyMode'),
-    settings.indexOf('async function applyMode') + 1200,
-  );
-
-  it('clears local active-state (closeAllActiveSessions) before navigating', () => {
-    expect(applyMode).toContain('closeAllActiveSessions');
-    expect(applyMode.indexOf('closeAllActiveSessions')).toBeLessThan(applyMode.indexOf('window.location.assign'));
+describe('preserved invariants', () => {
+  it('Visible has no !armable gate (Brief 22)', () => {
+    expect(vis).not.toMatch(/if \(!armable\)\s*\{?\s*return/);
+    expect(vis).not.toMatch(/disabled=\{!armable/);
   });
 
-  it('does NOT gate the navigate on a network await (no pre-navigate awaited reconcile)', () => {
-    // The regression (baec2ce): `await reconcileToServerDormancy()` before the
-    // navigate deadlocked the switch. The navigate must ride a .finally on a LOCAL
-    // op, never a network await.
-    expect(applyMode).not.toMatch(/await\s+reconcileToServerDormancy\(\)/);
-    // The navigate rides a .finally (fires on resolve OR reject) on the local clear.
-    expect(applyMode).toContain('.finally(');
+  it('Hidden retains no press-and-hold (Brief 22/24)', () => {
+    expect(hid).not.toContain('useActivationHold');
+    expect(hid).not.toContain('HoldProgressRing');
+  });
+
+  it('trigger targets use touch-action: manipulation', () => {
+    expect(vis).toContain('touch-manipulation');
+    expect(hid).toContain('touch-manipulation');
   });
 });

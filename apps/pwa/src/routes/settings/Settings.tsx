@@ -12,7 +12,6 @@ import {
 } from '@/lib/auth';
 import { REGIONS } from '@/lib/regions';
 import { useActiveAlert } from '@/lib/active-alert';
-import { closeAllActiveSessions } from '@/lib/storage';
 import { ContactTabs } from './ContactTabs';
 
 interface MeData {
@@ -73,17 +72,12 @@ export function Settings(): JSX.Element {
       return;
     }
     setDisplayMode(mode);
-    // Brief 29: clear stale local active-state with a LOCAL-ONLY op (IndexedDB, no
-    // network — cannot hang) before navigating, so the new mode's screen loads from a
-    // deterministically-dormant state and its arm never has to win a race against the
-    // background /v1/me reconcile. Settings is only reachable while dormant (Brief 20
-    // gate), so any local 'active' record here is stale. `.finally` fires on resolve
-    // OR reject, so the navigate can NEVER be blocked — the exact opposite of
-    // baec2ce's pre-navigate network `await` that deadlocked the switch. The server
-    // reconcile on the new page stays best-effort and never gates the switch/arm.
-    void closeAllActiveSessions(Date.now()).finally(() => {
-      window.location.assign(mode === 'direct' ? '/blackbox' : '/');
-    });
+    // Brief 30: mode is a DISPLAY setting only — it touches no trigger state, so the
+    // switch is a plain hard-navigate with nothing to reconcile. Trigger active-state
+    // lives solely in the one trigger core and is reset by this reload; the new mode's
+    // arm calls the same triggerAlert() and asks the server, so there is no residual
+    // state and no race to clear.
+    window.location.assign(mode === 'direct' ? '/blackbox' : '/');
   }
 
   // Hidden (covert) is the SAFE direction — frictionless. Visible (overt) is

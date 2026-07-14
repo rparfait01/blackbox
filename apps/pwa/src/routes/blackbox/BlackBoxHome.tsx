@@ -4,7 +4,8 @@ import { Gear } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
 import { isSetupComplete } from '@/lib/auth';
-import { triggerActivation } from '@/lib/activation';
+import { triggerAlert } from '@/lib/activation';
+import { useDoubleTap } from '@/lib/use-double-tap';
 import { useActiveAlert, useActiveAlertStart, useCoordinatorPathFailed } from '@/lib/active-alert';
 import { formatElapsed } from '@/lib/time';
 import { checkReadiness, osFixHint, type Readiness } from '@/lib/readiness';
@@ -96,19 +97,17 @@ export function BlackBoxHome(): JSX.Element {
     });
   }, []);
 
+  // Visible is a DISPLAY skin (Brief 30): its only trigger role is to wire a
+  // double-tap on the alert disc to the ONE triggerAlert() core (via the shared
+  // detector) — the same gesture and same core the Hidden facade uses. No gate, no
+  // per-mode trigger state; a missing recipient is a non-blocking notice below, and
+  // the server keeps its own delivery guarantee. Declared before any early return so
+  // the hook order is stable (rules-of-hooks).
+  const activate = useDoubleTap(() => void triggerAlert('direct-tap'));
+
   if (!isSetupComplete()) {
     return <Navigate to="/onboarding" replace />;
   }
-
-  const activate = (): void => {
-    // Brief 22 §1: the tap ALWAYS dispatches — the SAME unconditional trigger the
-    // Hidden facade uses. The old `!armable` early-return silently swallowed taps,
-    // and its predicate disagreed with what the system can actually reach (a tap was
-    // blocked on an account check-in delivered to). A missing recipient is now a
-    // NON-BLOCKING notice below (Visible only), never a silent refusal. The server
-    // keeps its own authoritative delivery guarantee (untouched).
-    void triggerActivation('direct-tap');
-  };
 
   // Check-in ("I'm OK") — Brief 10 + Brief 17 §1. NON-emergency reassurance; no
   // capture, no event. A single button: location is captured and sent
@@ -221,7 +220,7 @@ export function BlackBoxHome(): JSX.Element {
 
         <button
           type="button"
-          onClick={activate}
+          {...activate}
           aria-label="Activate"
           className="relative flex h-48 w-48 touch-manipulation select-none items-center justify-center rounded-full transition-transform active:scale-95 [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
