@@ -106,6 +106,12 @@ export function Onboarding(): JSX.Element {
   // support person captured at signup (Brief: persists to the SAME slots model
   // Settings + the cascade use — primary contact or guardian).
   const [supportRole, setSupportRole] = useState<'primary' | 'guardian'>('primary');
+  // §2: "everybody has somebody" is enforced HERE — at setup, the only safe place.
+  // Setup cannot complete until a contact is actually saved server-side (this flips
+  // on a confirmed save, never on intent), so a new account effectively always has
+  // someone to notify. It is deliberately NOT enforced at the trigger: a panic
+  // button that refuses to fire is the one failure this product cannot ship.
+  const [contactSaved, setContactSaved] = useState(false);
 
   // display mode (the closure pin is retired — §E2 gesture closure)
   const [displayMode, setMode] = useState<DisplayMode>('covert');
@@ -198,6 +204,8 @@ export function Onboarding(): JSX.Element {
     });
     setBusy(false);
     if (res.ok) {
+      // Only a CONFIRMED server-side save satisfies §2 — never the attempt.
+      setContactSaved(true);
       setStep(7);
     } else if (res.status === 0) {
       setError('No connection — we couldn’t save your contact. Check your signal and try again.');
@@ -433,11 +441,20 @@ export function Onboarding(): JSX.Element {
           submitLabel="Save support contact"
           onSubmit={(v) => void saveSupport(v)}
           slot={supportRole === 'guardian' ? 'guardian' : 'primary'}
-          onLineConnected={() => setStep(7)}
+          onLineConnected={() => {
+            setContactSaved(true);
+            setStep(7);
+          }}
         />
-        <button onClick={() => setStep(7)} className="mt-5 block w-full text-center text-sm text-med-text/50 underline">
-          Skip — add later in settings
-        </button>
+        {/* §2: NO skip. This step is the enforcement point for "everybody has
+            somebody" — an account that finishes setup with no one to notify is an
+            account whose alert reaches nobody, and the survivor would not know it.
+            Setup is the only safe place to require this: the trigger itself is
+            never gated, so this can never become a reason a button won't fire. */}
+        <p className="mt-5 text-center text-[12px] leading-relaxed text-med-text/50">
+          Add at least one person who should be notified if you trigger. You can change or add more
+          in Settings at any time.
+        </p>
       </Shell>
     );
   }
@@ -451,7 +468,13 @@ export function Onboarding(): JSX.Element {
   // Onboarding may not complete to "armed" until mic is granted OR the user
   // explicitly acknowledges the degraded state (Brief 15 §B).
   const micOk = permsGranted && perms.mic;
-  const resolved = micOk || degradedAck;
+  const permsResolved = micOk || degradedAck;
+  // §2: setup completes only with a saved contact AND a resolved mic. Step 6 has no
+  // skip, so contactSaved is normally already true here — this is the belt-and-braces
+  // that keeps the guarantee if a bypass is ever reintroduced upstream. Degraded mic
+  // stays acknowledgeable (Brief 15 §B); a missing CONTACT is not — that is the whole
+  // point of §2. Neither gate ever touches the trigger.
+  const resolved = permsResolved && contactSaved;
 
   return (
     <Shell title="You're set up" onBack={() => setStep(6)}>
@@ -528,8 +551,22 @@ export function Onboarding(): JSX.Element {
         <InstallHint />
       </div>
 
+      {/* Name the ACTUAL blocker — never blame the mic for a missing contact. */}
+      {!contactSaved ? (
+        <button
+          type="button"
+          onClick={() => setStep(6)}
+          className="mb-3 w-full rounded-full border border-med-warn/40 py-2.5 text-[12px] leading-relaxed text-med-warn"
+        >
+          Add someone to notify first
+        </button>
+      ) : null}
       <PrimaryButton onClick={finish} disabled={!resolved}>
-        {resolved ? 'Continue' : 'Enable the microphone to continue'}
+        {resolved
+          ? 'Continue'
+          : !contactSaved
+            ? 'Add a contact to continue'
+            : 'Enable the microphone to continue'}
       </PrimaryButton>
     </Shell>
   );
