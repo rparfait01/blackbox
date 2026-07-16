@@ -195,10 +195,12 @@ async function run() {
     assert(got.data.guardianEnabled === true, 'guardian not re-enabled');
   });
 
-  await check('7. arm gate: no deliverable recipient → 409 (cannot arm into notify-no-one)', async () => {
+  await check('7. the button always fires: zero contacts still opens + captures (never 409)', async () => {
     const u = await signup();
     const ev = await api('POST', '/v1/events', { bearer: u.session, body: { source: 'acc' } });
-    assert(ev.status === 409 && ev.data.error === 'no_deliverable_recipient', `arm gate not enforced: ${ev.status} ${JSON.stringify(ev.data)}`);
+    assert(ev.status === 201, `zero-contact trigger refused — DEAD BUTTON: ${ev.status} ${JSON.stringify(ev.data)}`);
+    assert(ev.data.eventId, 'no eventId: trigger did not open an event');
+    created.events.push(ev.data.eventId);
   });
 
   await check('8. trigger → timed cascade fires 0/10/20/30/40 (DO alarm) + email delivered', async () => {

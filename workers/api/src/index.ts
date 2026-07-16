@@ -305,22 +305,23 @@ app.post('/v1/events', async (c) => {
   if (existing) {
     return resumeResponse(c, existing, userId, userHash, body.source);
   }
-  // No active event to resume: refuse to ARM a logged-in account with no
-  // deliverable recipient. An alert that would notify no one is the exact deadlock
-  // (orphaned, unclosable) — prevented at the source. Anonymous userHash-only
-  // triggers have no account to gate on and are allowed.
-  if (userId && !(await hasDeliverableRecipient(c.env, userId))) {
-    await audit(c.env, null, 'event.create_blocked', userHash || userId, {
+  // THE BUTTON ALWAYS FIRES. A zero-recipient account still opens an event and
+  // still captures: someone in danger is in danger whether or not their contact
+  // list is populated, and a refused trigger is the one failure this product
+  // cannot ship. This previously 409'd (no_deliverable_recipient) to prevent an
+  // alert that notifies no one from becoming an orphaned, unclosable event —
+  // that deadlock is now handled downstream instead, by closeOrphanedEvents and
+  // the dark+unclaimed auto-close, so it no longer costs a dead panic button.
+  // "Everybody has somebody" is enforced at SETUP and by a standing warning; it
+  // is never enforced here. The user is told the truth about who is being
+  // reached on the active screen — never given false comfort, never blocked.
+  const deliverable = userId ? await hasDeliverableRecipient(c.env, userId) : true;
+  if (!deliverable) {
+    // Not a gate — a trace. The event proceeds; this records that it opened with
+    // no one to notify (recording-only), which the active screen states plainly.
+    await audit(c.env, null, 'event.create_no_recipient', userHash || userId, {
       reason: 'no_deliverable_recipient',
     });
-    return c.json(
-      {
-        error: 'no_deliverable_recipient',
-        message:
-          'Add a contact or guardian that can actually be reached before arming — an alert must reach someone.',
-      },
-      409,
-    );
   }
 
   // lastHeartbeatAt seeds to createdAt so a brand-new event is never instantly

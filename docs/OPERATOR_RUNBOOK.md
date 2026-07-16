@@ -101,11 +101,21 @@ These are enforced in code; the failsafe above only covers the residual case.
    `idx_one_active_event_per_user`. `POST /v1/events` resumes the existing active
    event instead of stacking a second; the index is the hard backstop against a
    race.
-2. **No arming with no deliverable recipient.** `POST /v1/events` returns
-   `409 no_deliverable_recipient` when the account has no contact/guardian on a
-   deliverable channel, and `GET /v1/me/contacts` returns `armable:false` so the
-   client disables the activate affordance. An alert that notifies no one is the
-   deadlock; it is prevented at the source.
+2. **"Everybody has somebody" — enforced at SETUP, never at the trigger.**
+   `POST /v1/events` used to return `409 no_deliverable_recipient` for an account
+   with no reachable contact. **That gate is gone.** It was a dead panic button: a
+   survivor in an active threat got a refused trigger and no capture, which is the
+   one failure this product cannot ship. The orphan deadlock it guarded is now
+   handled downstream instead (layer 5: `closeOrphanedEvents` + the dark+unclaimed
+   auto-close), so it no longer costs a refusal. The guarantee is now enforced by:
+   onboarding that cannot complete with zero contacts; a standing zero-contact
+   warning in Visible + Settings; and an honest active-alert status line
+   (`recipientCount` / `allChannelsFailed` on `GET /v1/events/:id/delivery-status`)
+   that says "no contacts to notify · recording only" rather than claiming a
+   notification that is not happening. **The button always fires.** A contactless
+   activation is traceable via the `event.create_no_recipient` audit row.
+   `GET /v1/me/contacts` still returns `armable` — it drives warnings and copy, and
+   must never be used to disable the activate affordance.
 3. **Expiry regenerates the path.** The 1-min cron (`reissueExpiredLinks`) mints a
    FRESH coordinator link and re-notifies all current recipients — with full
    provenance (triggered by name/email, triggered at, link expired at, notice sent
