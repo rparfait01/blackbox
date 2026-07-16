@@ -24,7 +24,7 @@ import { acknowledgeCustody, exportPackage } from './lib/custody';
 import { bumpTrust, listTrust } from './lib/trust';
 import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
-import { getContactForEvent, listContacts, listFollows, upsertContact } from './lib/contacts';
+import { getContactForEvent, listCascadeContacts, listContacts, listFollows, upsertContact } from './lib/contacts';
 import { hasDeliverableRecipient } from './lib/roles';
 import { advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
@@ -1457,29 +1457,46 @@ app.post('/v1/events/:id/origin', async (c) => {
   return c.json({ ok: true }, 201);
 });
 
-// Delivery + closure status the PWA polls. Its only on-device effect is the
-// closure teardown (when status is closed by contact_approval). The `delivered`
-// field is informational only — there is no on-device delivery feedback.
+// Delivery + closure status the PWA polls. Two on-device effects: the closure
+// teardown (when status is closed by contact_approval), and the active screen's
+// honest status line — `recipientCount` and `allChannelsFailed` are what let it
+// say who is ACTUALLY being reached instead of always claiming "contacts are
+// being notified". A safety tool must never hand back false comfort.
 app.get('/v1/events/:id/delivery-status', async (c) => {
   const eventId = c.req.param('id');
   const row = await c.env.DB.prepare(
-    'SELECT notifiedAt, notifyChannel, status, closedBy, coordinatorPathFailedAt, escalationTier FROM events WHERE id = ?',
+    'SELECT userId, userHash, notifiedAt, notifyChannel, status, closedBy, coordinatorPathFailedAt, escalationTier, cascadeStep FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
+      userId: string | null;
+      userHash: string | null;
       notifiedAt: number | null;
       notifyChannel: string | null;
       status: string;
       closedBy: string | null;
       coordinatorPathFailedAt: number | null;
       escalationTier: string | null;
+      cascadeStep: number;
     }>();
   if (!row) {
     return c.json({ error: 'not found' }, 404);
   }
+  // The recipients the cascade will actually ATTEMPT — resolved from the same
+  // list the cascade itself uses, so the status line can never disagree with what
+  // the server is really doing. Resolved fresh: a contact added mid-event counts.
+  const recipientCount = (await listCascadeContacts(c.env, { userId: row.userId, userHash: row.userHash })).length;
+  const delivered = row.notifiedAt != null;
+  // "Reached no one" is only HONEST once the cascade is exhausted: every step has
+  // fired (cascadeStep counts fired steps) and not one delivery landed. Mid-cascade
+  // failures are not yet a total failure — later steps may still land. The last
+  // step's send can be in flight when cascadeStep hits the count, so this can read
+  // true for one 5s poll before a late delivery flips it back; that errs toward
+  // understating reach, which is the only safe direction to be wrong here.
+  const allChannelsFailed = recipientCount > 0 && !delivered && row.cascadeStep >= recipientCount;
   return c.json(
     {
-      delivered: row.notifiedAt != null,
+      delivered,
       channel: row.notifyChannel,
       deliveredAt: row.notifiedAt,
       status: row.status,
@@ -1488,6 +1505,10 @@ app.get('/v1/events/:id/delivery-status', async (c) => {
       // coordinator path has failed to confirm.
       coordinatorPathFailed: row.coordinatorPathFailedAt != null,
       escalationTier: row.escalationTier ?? 'coordinator',
+      // §1: the truth the active screen states. 0 → "no contacts to notify,
+      // recording only"; allChannelsFailed → "could not reach contacts".
+      recipientCount,
+      allChannelsFailed,
     },
     200,
   );

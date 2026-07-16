@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { isSetupComplete } from '@/lib/auth';
 import { triggerAlert } from '@/lib/activation';
 import { useDoubleTap } from '@/lib/use-double-tap';
-import { useActiveAlert, useActiveAlertStart, useCoordinatorPathFailed } from '@/lib/active-alert';
+import { activeStatusLine, useActiveAlert, useActiveAlertStart, useDeliveryStatus } from '@/lib/active-alert';
 import { formatElapsed } from '@/lib/time';
 import { checkReadiness, osFixHint, type Readiness } from '@/lib/readiness';
 import { primePermissions } from '@/lib/permissions';
@@ -42,8 +42,12 @@ export function BlackBoxHome(): JSX.Element {
   const [armable, setArmable] = useState(true);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
+  // §1: the server's real delivery result — ONE poll drives both the honest status
+  // line and the §3 closure prompt, so they can never disagree. Read-only: it
+  // never gates the trigger.
+  const delivery = useDeliveryStatus();
   // §3: coordinator closure path failed → prompt a second (guardian-tier) request.
-  const coordinatorFailed = useCoordinatorPathFailed();
+  const coordinatorFailed = delivery?.coordinatorPathFailed ?? false;
   // Elapsed alert time (overt: the instrument shows the live recording clock).
   const alertStart = useActiveAlertStart();
   const [now, setNow] = useState(() => Date.now());
@@ -244,8 +248,17 @@ export function BlackBoxHome(): JSX.Element {
             <div className="font-mono text-3xl font-semibold tracking-[0.1em] text-status-active">
               {formatElapsed(alertStart != null ? now - alertStart : 0)}
             </div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-bb-text-secondary">
-              Contacts are being notified
+            {/* §1: driven by the REAL recipient/delivery result — never a
+                hardcoded "being notified". Zero recipients or a total delivery
+                failure says so plainly; recording is stated truthfully either way. */}
+            <div
+              className={`mt-1 font-mono text-[11px] uppercase tracking-[0.18em] ${
+                delivery != null && (delivery.recipientCount === 0 || delivery.allChannelsFailed)
+                  ? 'text-status-armed'
+                  : 'text-bb-text-secondary'
+              }`}
+            >
+              {activeStatusLine(delivery)}
             </div>
           </div>
         ) : (

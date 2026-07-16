@@ -203,6 +203,22 @@ async function run() {
     created.events.push(ev.data.eventId);
   });
 
+  await check('7b. honest status: zero contacts → recipientCount 0 (never false comfort)', async () => {
+    const u = await signup();
+    const ev = await api('POST', '/v1/events', { bearer: u.session, body: { source: 'acc-honest' } });
+    assert(ev.status === 201 && ev.data.eventId, `trigger refused: ${ev.status}`);
+    created.events.push(ev.data.eventId);
+    // The active screen derives its line from these two fields. recipientCount 0
+    // is what makes it say "no contacts to notify" instead of "being notified".
+    const ds = await api('GET', `/v1/events/${ev.data.eventId}/delivery-status`);
+    assert(ds.data.recipientCount === 0, `recipientCount not 0 (false comfort): ${JSON.stringify(ds.data)}`);
+    assert(ds.data.allChannelsFailed === false, `allChannelsFailed true with no recipients: ${JSON.stringify(ds.data)}`);
+    // With a reachable contact added, the same event reports someone to notify.
+    await addEmail(u.session, 'primary', 'P');
+    const ds2 = await api('GET', `/v1/events/${ev.data.eventId}/delivery-status`);
+    assert(ds2.data.recipientCount >= 1, `recipientCount did not pick up the contact: ${JSON.stringify(ds2.data)}`);
+  });
+
   await check('8. trigger → timed cascade fires 0/10/20/30/40 (DO alarm) + email delivered', async () => {
     const u = await signup();
     for (const slot of ['primary', 'secondary', 'tertiary', 'guardian', 'emergency']) await addEmail(u.session, slot, slot);
