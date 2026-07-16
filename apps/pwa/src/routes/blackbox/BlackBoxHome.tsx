@@ -36,9 +36,12 @@ export function BlackBoxHome(): JSX.Element {
   // Read the SAME slot model Settings + the cascade use (single source of truth),
   // so a contact added at signup shows here with no re-add.
   const [support, setSupport] = useState<{ name: string; channel: string | null; role: string } | null>(null);
-  // Armable: an alert must be able to reach someone. Until /v1/me/contacts loads
-  // we assume armable (true) so a transient fetch failure never blocks a real
-  // activation; the server still enforces the guarantee at POST /v1/events.
+  // Armable = someone could actually be reached. It drives the §3 WARNING only —
+  // it has never gated the tap, and since §0 the server does not gate either: the
+  // button always fires. Defaults true so a transient fetch failure doesn't cry
+  // wolf with "no one will be notified" at a user who does have contacts; we
+  // simply say nothing until we know. The active-alert status line (§1) tells the
+  // truth from the server at the moment it actually matters.
   const [armable, setArmable] = useState(true);
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
@@ -266,14 +269,21 @@ export function BlackBoxHome(): JSX.Element {
             <div className="font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
               Tap to activate
             </div>
-            {/* Brief 22 §1: a missing recipient is a NON-BLOCKING notice — the tap
-                still fires; this only tells the user to add someone reachable. */}
+            {/* §3: standing zero-contact warning — persistent and unmissable while
+                the account has no one to reach. NON-BLOCKING by design (Brief 22 §1):
+                the tap still fires, because someone in danger is in danger whether or
+                not their contact list is populated. This informs; it never gates. */}
             {!armable ? (
               <Link
                 to="/settings"
-                className="mt-2 block font-sans text-[11px] normal-case tracking-normal text-status-armed"
+                className="mx-auto mt-4 block max-w-xs rounded-lg border border-status-armed/50 bg-status-armed/10 p-3 text-left"
               >
-                No contact to reach yet — add one so your alert can notify someone.
+                <p className="font-sans text-[12px] font-medium normal-case leading-relaxed tracking-normal text-status-armed">
+                  No one will be notified if you trigger.
+                </p>
+                <p className="mt-1 font-sans text-[11px] normal-case leading-relaxed tracking-normal text-bb-text-secondary">
+                  Add a contact in Settings. Your alert will still record if you trigger.
+                </p>
               </Link>
             ) : null}
           </div>

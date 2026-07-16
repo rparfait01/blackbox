@@ -124,17 +124,19 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
         Support roles
       </div>
 
-      {/* Brief 23 §2: config-time LOUD warning when the account has no recipient on
-          a channel that can actually deliver — so a Hidden-primary user (who gets no
-          at-trigger notice) learns they're un-notifiable before it matters. */}
+      {/* §3 (+ Brief 23 §2): the standing zero-contact/unreachable warning. Settings
+          is the ONLY place a Hidden-primary user can be warned — the covert facade
+          shows nothing (§0a: a warning banner there would be a tell), so this must
+          state the consequence plainly rather than only the technical cause.
+          It never blocks the trigger: the alert still fires and still records. */}
       {data && !data.armable ? (
         <div className="mb-4 rounded-lg border border-med-warn/50 bg-med-warn/10 p-3">
           <p className="text-[12px] font-medium leading-relaxed text-med-warn">
-            No contact can be reached right now.
+            No one will be notified if you trigger.
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-med-text/70">
             Add a contact on a working channel (LINE or SMS) so your messages can actually be delivered —
-            an email‑only contact may not go through.
+            an email‑only contact may not go through. Your alert will still record if you trigger.
           </p>
         </div>
       ) : null}
