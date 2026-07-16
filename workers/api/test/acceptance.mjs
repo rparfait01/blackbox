@@ -209,14 +209,26 @@ async function run() {
     assert(ev.status === 201 && ev.data.eventId, `trigger refused: ${ev.status}`);
     created.events.push(ev.data.eventId);
     // The active screen derives its line from these two fields. recipientCount 0
-    // is what makes it say "no contacts to notify" instead of "being notified".
-    const ds = await api('GET', `/v1/events/${ev.data.eventId}/delivery-status`);
+    // is what makes it say "no contacts to notify · recording only" instead of the
+    // false-comfort "being notified". delivery-status is behind hmacAuth
+    // (app.use '/v1/events/:id/*') — sign with the per-event secret.
+    const path = `/v1/events/${ev.data.eventId}/delivery-status`;
+    const ds = await signed('GET', path, ev.data.hmacSecret, ev.data.eventId);
+    assert(ds.status === 200, `delivery-status not readable: ${ds.status} ${JSON.stringify(ds.data)}`);
     assert(ds.data.recipientCount === 0, `recipientCount not 0 (false comfort): ${JSON.stringify(ds.data)}`);
     assert(ds.data.allChannelsFailed === false, `allChannelsFailed true with no recipients: ${JSON.stringify(ds.data)}`);
-    // With a reachable contact added, the same event reports someone to notify.
-    await addEmail(u.session, 'primary', 'P');
-    const ds2 = await api('GET', `/v1/events/${ev.data.eventId}/delivery-status`);
-    assert(ds2.data.recipientCount >= 1, `recipientCount did not pick up the contact: ${JSON.stringify(ds2.data)}`);
+
+    // ...and an account that DOES have someone reports it, so the same line reads
+    // "being notified" only when that is true. Contact is added BEFORE the trigger:
+    // the live-alert lock (Brief 20) refuses contact edits mid-event by design.
+    const u2 = await signup();
+    await addEmail(u2.session, 'primary', 'P');
+    const ev2 = await api('POST', '/v1/events', { bearer: u2.session, body: { source: 'acc-honest-2' } });
+    assert(ev2.status === 201 && ev2.data.eventId, `trigger refused: ${ev2.status}`);
+    created.events.push(ev2.data.eventId);
+    const path2 = `/v1/events/${ev2.data.eventId}/delivery-status`;
+    const ds2 = await signed('GET', path2, ev2.data.hmacSecret, ev2.data.eventId);
+    assert(ds2.data.recipientCount >= 1, `recipientCount did not see the contact: ${JSON.stringify(ds2.data)}`);
   });
 
   await check('8. trigger → timed cascade fires 0/10/20/30/40 (DO alarm) + email delivered', async () => {
