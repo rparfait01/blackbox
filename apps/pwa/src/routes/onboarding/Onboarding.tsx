@@ -5,6 +5,7 @@ import { CaretLeft } from '@phosphor-icons/react';
 import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
+import { enrollPasskey } from '@/lib/passkey';
 import { osFixHint } from '@/lib/readiness';
 import { InstallHint } from '@/components/InstallHint';
 import { ContactForm, type ContactValues } from '@/components/ContactForm';
@@ -95,7 +96,6 @@ export function Onboarding(): JSX.Element {
   // account fields
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [country, setCountry] = useState<CountryOption>(defaultCountry());
   const [phoneLocal, setPhoneLocal] = useState('');
   const [regionId, setRegionId] = useState(defaultCountry().regionId);
@@ -123,6 +123,12 @@ export function Onboarding(): JSX.Element {
   // setup — the only non-granted way past the permission gate (Brief 15 §B).
   const [degradedAck, setDegradedAck] = useState(false);
 
+  // §1/§2: passkey + recovery code. `passkeyState` drives the credential step;
+  // `recoveryCodes` are shown ONCE and never retrievable again.
+  const [passkeyState, setPasskeyState] = useState<'idle' | 'working' | 'enrolled' | 'unsupported' | 'failed'>('idle');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [codeAck, setCodeAck] = useState(false);
+
   const phoneE164 = (): string => `${country.code}${phoneLocal.replace(/[^0-9]/g, '')}`;
 
   async function startSignup(): Promise<void> {
@@ -141,16 +147,14 @@ export function Onboarding(): JSX.Element {
       setError('That email does not look right — please check it.');
       return;
     }
-    if (password.length < 6) {
-      setError('Please choose a password of at least 6 characters.');
-      return;
-    }
     setBusy(true);
     // Brief 14: create the account immediately. No email is sent and no email
     // delivery can fail here — we go straight on to display mode.
+    // §1: no password is sent. The account is created with passwordHash NULL and
+    // authenticates by passkey (enrolled at step 7).
     const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
       auth: false,
-      body: { name: name.trim(), email: email.trim(), password, phone: phoneE164(), regionId, nationality },
+      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId, nationality },
     });
     setBusy(false);
     if (res.ok && res.data?.signupId) {
@@ -181,13 +185,41 @@ export function Onboarding(): JSX.Element {
     setBusy(false);
     if (res.ok && res.data?.sessionToken) {
       setSession(res.data.sessionToken, displayMode, { name: name.trim(), email: email.trim() });
-      setStep(6);
+      // Step 3 (once the retired email-OTP step) is now the CREDENTIAL step: the
+      // session exists from here, so the passkey and recovery code can be created
+      // against it. It sits before contacts so the account is never left with no
+      // way back in.
+      setStep(3);
     } else {
       setError(
         res.status === 0
           ? 'No connection — we couldn’t finish setting up. Check your signal and try again.'
           : 'Could not finish setting up your account. Please try again.',
       );
+    }
+  }
+
+  /**
+   * §1: enroll the passkey. A cancel or an unsupported device is NOT a dead end —
+   * the recovery code below still gets the survivor back in, and the magic link
+   * still works for an account with no passkey. So we record the outcome and move
+   * on rather than trapping anyone here.
+   */
+  async function createPasskey(): Promise<void> {
+    setPasskeyState('working');
+    const result = await enrollPasskey();
+    if (result.ok) {
+      setPasskeyState('enrolled');
+      return;
+    }
+    setPasskeyState(result.reason === 'unsupported' ? 'unsupported' : result.reason === 'cancelled' ? 'idle' : 'failed');
+  }
+
+  /** §2: mint the one-time recovery code. Shown ONCE — never retrievable after. */
+  async function createRecoveryCodes(): Promise<void> {
+    const res = await api<{ codes: string[] }>('/v1/auth/recovery/issue', { body: {} });
+    if (res.ok && res.data?.codes?.length) {
+      setRecoveryCodes(res.data.codes);
     }
   }
 
@@ -243,7 +275,7 @@ export function Onboarding(): JSX.Element {
     return (
       <Shell
         title="Create account"
-        subtitle="Set an email and password to sign in. Your phone is captured for later."
+        subtitle="No password — you’ll sign in with your face, fingerprint, or device PIN."
         onBack={() => {
           setError(null);
           setStep(1);
@@ -252,7 +284,8 @@ export function Onboarding(): JSX.Element {
         <div className="space-y-5">
           <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name or alias" />
           <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" />
-          <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" autoComplete="new-password" />
+          {/* §1: NO password field. There is nothing to remember and nothing to
+              write down — so there is no credential an abuser can find. */}
           <div className="flex gap-3">
             <label className="block w-28">
               <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">Code</span>
@@ -327,6 +360,86 @@ export function Onboarding(): JSX.Element {
             {busy ? 'Creating account…' : 'Continue'}
           </PrimaryButton>
         </div>
+      </Shell>
+    );
+  }
+
+  // Step 3 — CREDENTIALS (§1 passkey + §2 recovery code). Runs straight after
+  // finalize, so a brand-new account always has a way back in before it has
+  // anything worth protecting. Never a dead end: the passkey can be skipped (magic
+  // link still works while no passkey exists), and the recovery code covers the
+  // lost-device-with-no-keychain case that the keychain cannot.
+  if (step === 3) {
+    return (
+      <Shell title="Secure your account" subtitle="No password to remember, and nothing to write down that someone could find.">
+        {recoveryCodes ? (
+          <>
+            <p className="mb-4 text-[13px] leading-relaxed text-med-text/70">
+              Save this recovery code somewhere only you can reach. It gets you back in if you lose your
+              device. We’ll only show it once, and we can’t send it to you later.
+            </p>
+            <div className="mb-4 rounded-lg border border-med-text/25 bg-black/30 p-4 text-center">
+              {recoveryCodes.map((c) => (
+                <p key={c} className="font-mono text-xl tracking-[0.18em] text-med-text">
+                  {c}
+                </p>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setCodeAck(!codeAck)}
+              className={`mb-5 flex w-full items-start gap-3 rounded-lg border p-3 text-left text-[12px] leading-relaxed transition-colors ${
+                codeAck ? 'border-med-text/60 text-med-text' : 'border-med-text/25 text-med-text/60'
+              }`}
+            >
+              <span aria-hidden className="font-mono">{codeAck ? '✓' : '○'}</span>
+              I’ve saved my recovery code somewhere safe.
+            </button>
+            <PrimaryButton onClick={() => setStep(6)} disabled={!codeAck}>
+              {codeAck ? 'Continue' : 'Save your code to continue'}
+            </PrimaryButton>
+          </>
+        ) : (
+          <>
+            <div className="mb-6 rounded-lg border border-med-text/20 bg-black/20 p-5 text-sm leading-relaxed text-med-text/80">
+              <p className="mb-2">
+                A <span className="text-med-text">passkey</span> signs you in with your face, fingerprint, or
+                device PIN. It stays on this device and syncs to your other devices through your
+                Apple or Google account — so a new phone signs in on its own.
+              </p>
+              <p className="text-med-text/60">
+                There’s nothing to type and nothing to write down, so there’s no password for anyone else to find.
+              </p>
+            </div>
+
+            {passkeyState === 'enrolled' ? (
+              <p className="mb-5 font-mono text-[12px] text-med-text/70">✓ Passkey created on this device</p>
+            ) : passkeyState === 'unsupported' ? (
+              <p className="mb-5 rounded-md border border-med-warn/40 bg-med-warn/5 p-3 text-[12px] leading-relaxed text-med-text/80">
+                This device can’t make a passkey. You’ll sign in with a one-tap email link instead — and the
+                recovery code below still works.
+              </p>
+            ) : passkeyState === 'failed' ? (
+              <p className="mb-5 rounded-md border border-med-warn/40 bg-med-warn/5 p-3 text-[12px] leading-relaxed text-med-text/80">
+                That didn’t work. You can try again, or continue — your recovery code will still get you in.
+              </p>
+            ) : null}
+
+            {passkeyState !== 'enrolled' && passkeyState !== 'unsupported' ? (
+              <PrimaryButton onClick={() => void createPasskey()} disabled={passkeyState === 'working'}>
+                {passkeyState === 'working' ? 'Waiting…' : passkeyState === 'failed' ? 'Try again' : 'Create a passkey'}
+              </PrimaryButton>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => void createRecoveryCodes()}
+              className={`${passkeyState !== 'enrolled' && passkeyState !== 'unsupported' ? 'mt-4' : ''} block w-full text-center text-sm text-med-text/50 underline`}
+            >
+              {passkeyState === 'enrolled' || passkeyState === 'unsupported' ? 'Continue' : 'Skip — set up a passkey later'}
+            </button>
+          </>
+        )}
       </Shell>
     );
   }
