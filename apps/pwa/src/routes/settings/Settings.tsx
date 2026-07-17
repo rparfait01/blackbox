@@ -12,6 +12,7 @@ import {
 } from '@/lib/auth';
 import { REGIONS } from '@/lib/regions';
 import { useActiveAlert } from '@/lib/active-alert';
+import { enrollPasskey, passkeySupported } from '@/lib/passkey';
 import { ContactTabs } from './ContactTabs';
 
 interface MeData {
@@ -19,6 +20,25 @@ interface MeData {
   /** Server-truth live-alert flag (Brief 20 §1): true while an event is open for
    *  the account, even if this device lost its local session. */
   activeEvent?: boolean;
+  /** §3 "Track": this account's own state. Self-view only — never anyone else's. */
+  account?: {
+    passkeys: number;
+    hasRecoveryCode: boolean;
+    contactsConfigured: number;
+    lastCheckinAt: number | null;
+  };
+}
+
+/** Plain-language "when", for the self-view. Never a raw timestamp. */
+function whenText(ts: number | null | undefined): string {
+  if (!ts) return 'Never';
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? 'Yesterday' : `${days} days ago`;
 }
 
 /**
@@ -38,6 +58,8 @@ export function Settings(): JSX.Element {
   // selection + persists (local + server) but does NOT navigate — the user stays in
   // Settings. The chosen skin renders when they LEAVE Settings (goBack reads this).
   const [selectedMode, setSelectedMode] = useState<DisplayMode | null>(getDisplayMode());
+  // §1: enrolling a passkey from Settings — the upgrade path off the email link.
+  const [enrolling, setEnrolling] = useState(false);
 
   const load = (): void => {
     void api<MeData>('/v1/me').then((r) => r.ok && r.data && setMe(r.data));
@@ -162,6 +184,60 @@ export function Settings(): JSX.Element {
           <Row k="Phone" v={me?.user.phone ?? '—'} />
           <Row k="Nationality" v={me?.user.nationality ?? '—'} />
         </Group>
+
+        {/* §3 "Track" — the account's own state, in plain language: how you get in,
+            how many people an alert reaches, when you last checked in. Self-view
+            only; nothing here is visible to any other account. */}
+        <Group label="Your account">
+          <Row
+            k="Sign-in"
+            v={
+              me?.account
+                ? me.account.passkeys > 0
+                  ? `Passkey · ${me.account.passkeys} device${me.account.passkeys === 1 ? '' : 's'}`
+                  : 'Email link'
+                : '—'
+            }
+          />
+          <Row k="Recovery code" v={me?.account ? (me.account.hasRecoveryCode ? 'Saved' : 'None') : '—'} />
+          <Row
+            k="People notified"
+            v={me?.account ? (me.account.contactsConfigured === 0 ? 'No one yet' : String(me.account.contactsConfigured)) : '—'}
+          />
+          <Row k="Last check-in" v={me?.account ? whenText(me.account.lastCheckinAt) : '—'} />
+        </Group>
+
+        {/* An account with no passkey is still reachable by an emailed link — which
+            matters if someone else can read that inbox. Offer the upgrade plainly;
+            enrolling is what closes that door. Never nag, never block. */}
+        {me?.account && me.account.passkeys === 0 && passkeySupported() ? (
+          <div className="mb-8 rounded-lg border border-med-text/20 bg-black/20 p-4">
+            <p className="mb-1 text-[12px] font-medium leading-relaxed text-med-text">Add a passkey</p>
+            <p className="mb-3 text-[11px] leading-relaxed text-med-text/60">
+              Sign in with your face, fingerprint, or device PIN — and we’ll stop sending sign-in links for
+              your account, so your email can’t be used to get in.
+            </p>
+            <button
+              type="button"
+              disabled={enrolling}
+              onClick={() => {
+                setEnrolling(true);
+                void enrollPasskey().then((r) => {
+                  setEnrolling(false);
+                  if (r.ok) {
+                    flash('Passkey added');
+                    load();
+                  } else if (r.reason === 'failed') {
+                    flash('Could not add a passkey');
+                  }
+                });
+              }}
+              className="w-full rounded-full border border-med-text/40 py-2.5 text-sm font-medium text-med-text disabled:opacity-50"
+            >
+              {enrolling ? 'Waiting…' : 'Create a passkey'}
+            </button>
+          </div>
+        ) : null}
 
         {/* §0 Visibility — a TWO-ENDED, both-ends-labeled control. Hidden = covert
             (Stillpoint facade), Visible = overt (instrument). The mapping is pinned

@@ -48,6 +48,7 @@ import {
   finalizeUser,
   getUserByEmail,
   getUserById,
+  hasActiveEvent,
   isActive,
   normalizeEmail,
   verifyLoginCredential,
@@ -72,6 +73,25 @@ async function bearerUserId(c: { env: Env; req: { header: (n: string) => string 
   if (!secret || !token) return null;
   const session = await verifySession(secret, token);
   return session?.userId ?? null;
+}
+
+/**
+ * §5 + Brief 20: account MUTATIONS are locked during a live alert — enrolling a
+ * credential or re-minting recovery codes mid-event is exactly the kind of account
+ * change the lock exists to refuse (and, under coercion, exactly what an aggressor
+ * holding the phone would do).
+ *
+ * Deliberately NOT applied to any LOGIN path (passkey/login, magic/consume,
+ * recovery/consume). A survivor whose alert is live may be on a borrowed or
+ * replacement device and must still be able to sign in and reach their own alert.
+ * Locking sign-in mid-crisis would be the dead-button failure wearing a different
+ * hat. The lock refuses CHANGES to the account, never ACCESS to it.
+ *
+ * Follows the codebase's opt-in per-route pattern (user.ts lockedDuringAlert), not
+ * middleware — so a new route is never silently locked or silently not.
+ */
+async function lockedDuringAlert(env: Env, userId: string): Promise<boolean> {
+  return hasActiveEvent(env, userId);
 }
 
 // --- Sign-up ---
@@ -216,6 +236,10 @@ authRoutes.post('/passkey/register/verify', async (c) => {
   if (!userId || !body.response) {
     return c.json({ error: 'unauthorized' }, 401);
   }
+  // Enrolling a credential is an account change — refused while an alert is live.
+  if (await lockedDuringAlert(c.env, userId)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
   const ok = await verifyRegistration(c.env, userId, body.response, body.deviceLabel?.slice(0, 60) ?? null);
   if (!ok) {
     return c.json({ error: 'registration_failed' }, 400);
@@ -329,6 +353,11 @@ authRoutes.post('/recovery/issue', async (c) => {
   const user = await getUserById(c.env, userId);
   if (!user) {
     return c.json({ error: 'not found' }, 404);
+  }
+  // Re-minting recovery codes invalidates the old set — an account change, and one
+  // an aggressor holding the phone mid-event would love. Refused while live.
+  if (await lockedDuringAlert(c.env, userId)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
   }
   const codes = await issueRecoveryCodes(c.env, userId);
   await audit(c.env, null, 'auth.recovery_codes_issued', userId, {});

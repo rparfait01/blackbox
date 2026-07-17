@@ -30,6 +30,44 @@ async function lockedDuringAlert(c: { env: Env; get: (k: 'userId') => string }):
   return hasActiveEvent(c.env, c.get('userId'));
 }
 
+/**
+ * §3 "Track" — what the account can see about ITSELF: how it is protected, who it
+ * can reach, and when it last checked in. Self-view only.
+ *
+ * `lastCheckinAt` is read with its own query because USER_COLS deliberately does
+ * not select it.
+ */
+async function accountState(
+  env: Env,
+  userId: string,
+): Promise<{
+  passkeys: number;
+  hasRecoveryCode: boolean;
+  contactsConfigured: number;
+  lastCheckinAt: number | null;
+}> {
+  const [passkeys, recovery, slots, checkin] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) AS n FROM webauthn_credentials WHERE userId = ?')
+      .bind(userId)
+      .first<{ n: number }>(),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM recovery_codes WHERE userId = ? AND consumedAt IS NULL')
+      .bind(userId)
+      .first<{ n: number }>(),
+    listSlots(env, userId),
+    env.DB.prepare('SELECT lastCheckinAt FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ lastCheckinAt: number | null }>(),
+  ]);
+  return {
+    passkeys: passkeys?.n ?? 0,
+    hasRecoveryCode: (recovery?.n ?? 0) > 0,
+    // The recipients an alert would actually fan out to — 'emergency' is the
+    // unclaimed-tail fallback, not someone the survivor configured to be told.
+    contactsConfigured: slots.filter((s) => s.filled && s.slot !== 'emergency').length,
+    lastCheckinAt: checkin?.lastCheckinAt ?? null,
+  };
+}
+
 userRoutes.get('/', async (c) => {
   const user = await getUserById(c.env, c.get('userId'));
   if (!user) {
@@ -59,6 +97,10 @@ userRoutes.get('/', async (c) => {
       // and refuses sign-out on THIS, not just its local session — so a device that
       // lost its local session can never open settings or sign out of a live alert.
       activeEvent: await hasActiveEvent(c.env, user.id),
+      // §3 "Track": the account's own state, for the SELF-VIEW only. Strictly this
+      // user's own row — there is no cross-account visibility anywhere here, and
+      // Tenancy must not quietly turn this into one.
+      account: await accountState(c.env, user.id),
       region,
       guardian: invite
         ? {

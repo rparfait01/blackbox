@@ -658,6 +658,35 @@ async function run() {
     assert(junk.status === 401, `junk assertion accepted: ${junk.status}`);
   });
 
+  await check('32. §5 live-alert lock: account CHANGES refused mid-alert, sign-in never is', async () => {
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const issued = await api('POST', '/v1/auth/recovery/issue', { bearer: u.session, body: {} });
+    assert(issued.status === 200, `pre-alert issue failed: ${issued.status}`);
+    const code = issued.data.codes[0];
+
+    const ev = await trigger(u.session, 'acc-lock');
+    assert(ev.eventId, 'no event');
+    // Account CHANGES are refused while live — an aggressor holding the phone
+    // must not be able to re-mint credentials mid-event.
+    const reissue = await api('POST', '/v1/auth/recovery/issue', { bearer: u.session, body: {} });
+    assert(reissue.status === 423, `recovery re-issue not locked during alert: ${reissue.status}`);
+    // ACCESS is never refused: the survivor may be on a borrowed/replacement device
+    // mid-alert and must still be able to sign in and reach their own alert.
+    // Locking sign-in here would be the dead-button failure in another costume.
+    const login = await api('POST', '/v1/auth/recovery/consume', { body: { email: u.email, code } });
+    assert(login.status === 200 && login.data?.sessionToken, `sign-in BLOCKED during alert — dead button: ${login.status}`);
+    const opts = await api('POST', '/v1/auth/passkey/login/options', { body: {} });
+    assert(opts.status === 200, `passkey login options blocked during alert: ${opts.status}`);
+
+    // Close it so the account is not left live, and confirm the lock LIFTS —
+    // a lock that never releases is its own kind of trap.
+    const fc = await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN, body: { reason: 'acceptance §5 lock' } });
+    assert(fc.status === 200, `force-close failed: ${fc.status}`);
+    const after = await api('POST', '/v1/auth/recovery/issue', { bearer: u.session, body: {} });
+    assert(after.status === 200, `account changes still locked after close: ${after.status}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 
