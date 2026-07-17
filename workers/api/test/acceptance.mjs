@@ -687,6 +687,59 @@ async function run() {
     assert(after.status === 200, `account changes still locked after close: ${after.status}`);
   });
 
+  await check('33. dispatcher: channels are server truth; a backup is stored + validated', async () => {
+    const u = await signup();
+    const got = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    // The UI renders channels from THIS, not a hardcoded list — so SMS appears by
+    // itself the day Twilio lands and email disappears the day it is retired.
+    assert(Array.isArray(got.data.deliverableChannels), `no deliverableChannels: ${JSON.stringify(got.data)}`);
+    assert(!got.data.deliverableChannels.includes('whatsapp'), 'whatsapp must be a SEAM, not deliverable');
+    // Twilio is not provisioned as of this brief — pinned so the day it IS, this
+    // check fails loudly and the email-retirement follow-up gets picked up rather
+    // than forgotten.
+    const smsLive = got.data.deliverableChannels.includes('sms');
+    console.log(`      (note: sms deliverable = ${smsLive} — when true, retire email per §1)`);
+
+    // A backup on a channel that cannot deliver is refused, not silently stored:
+    // it would be a second silent failure discovered mid-alert.
+    const badFb = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: {
+        contactName: 'P',
+        channel: 'email',
+        destination: `smoke+pref-${uniq()}@example.com`,
+        fallbackChannel: 'whatsapp',
+        fallbackDestination: '+81900000000',
+      },
+    });
+    assert(badFb.status === 400, `unbuilt channel accepted as a backup: ${badFb.status}`);
+
+    // The same channel twice is the same failure twice — refused.
+    const sameFb = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: {
+        contactName: 'P',
+        channel: 'email',
+        destination: `smoke+pref-${uniq()}@example.com`,
+        fallbackChannel: 'email',
+        fallbackDestination: `smoke+fb-${uniq()}@example.com`,
+      },
+    });
+    assert(sameFb.status === 400 && sameFb.data?.error === 'fallback_same_channel', `same-channel backup accepted: ${sameFb.status}`);
+
+    // A plain save still works and reports no backup.
+    const ok = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: { contactName: 'P', channel: 'email', destination: `smoke+pref-${uniq()}@example.com` },
+    });
+    assert(ok.status === 200, `plain save failed: ${ok.status} ${JSON.stringify(ok.data)}`);
+    const after = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    const primary = after.data.slots.find((s) => s.slot === 'primary');
+    assert(primary.filled && primary.channel === 'email', `primary not stored: ${JSON.stringify(primary)}`);
+    assert(primary.fallbackChannel === null, `unexpected backup: ${JSON.stringify(primary)}`);
+    assert('fallbackChannel' in primary, 'slot view must expose fallbackChannel');
+  });
+
   // ---- cleanup ----
   await cleanup();
 

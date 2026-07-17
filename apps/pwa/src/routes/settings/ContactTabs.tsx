@@ -21,6 +21,9 @@ interface Slot {
   contactName: string | null;
   channel: ContactChannel | null;
   destination: string | null;
+  /** §2: the backup channel the dispatcher tries if the preferred one fails. */
+  fallbackChannel: ContactChannel | null;
+  fallbackDestination: string | null;
 }
 
 interface ContactsData {
@@ -32,6 +35,8 @@ interface ContactsData {
   /** Brief 23 §2: true only when at least one recipient is on a channel that can
    *  actually deliver in this deployment. False → a config-time loud warning. */
   armable: boolean;
+  /** Server truth: which channels can actually deliver right now. */
+  deliverableChannels?: ContactChannel[];
 }
 
 const CONTACT_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary'];
@@ -67,7 +72,14 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
     setBusy(true);
     setError(null);
     const res = await api<{ error?: string; message?: string }>(`/v1/me/contacts/${selected}`, {
-      body: { contactName: values.name, channel: values.channel, destination: values.destination },
+      body: {
+        contactName: values.name,
+        channel: values.channel,
+        destination: values.destination,
+        // §2: the backup the dispatcher falls back to before reporting not-reached.
+        fallbackChannel: values.fallbackChannel ?? null,
+        fallbackDestination: values.fallbackDestination ?? null,
+      },
     });
     setBusy(false);
     if (res.ok) {
@@ -129,6 +141,25 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
           shows nothing (§0a: a warning banner there would be a tell), so this must
           state the consequence plainly rather than only the technical cause.
           It never blocks the trigger: the alert still fires and still records. */}
+      {/* Email is being retired from the alert path (notification brief §1): a
+          single-vendor daily cap has silently taken alerts down twice. It still
+          DELIVERS for now — pulling it before SMS exists would leave these accounts
+          with no path at all, which is the outcome the brief forbids. So: tell them
+          plainly, don't nag, don't block, and don't pretend it's already broken.
+          This notice retires itself once the contact has a non-email channel. */}
+      {data?.armable &&
+      data.slots.some((s) => s.filled && s.channel === 'email' && !s.fallbackChannel) ? (
+        <div className="mb-4 rounded-lg border border-med-text/25 bg-black/20 p-3">
+          <p className="text-[12px] font-medium leading-relaxed text-med-text">
+            Email is being retired for alerts.
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-med-text/60">
+            It still works today, but it&apos;s the least reliable way to reach someone. Add LINE — or a
+            backup channel — to any email-only contact below so an alert always has a second way through.
+          </p>
+        </div>
+      ) : null}
+
       {data && !data.armable ? (
         <div className="mb-4 rounded-lg border border-med-warn/50 bg-med-warn/10 p-3">
           <p className="text-[12px] font-medium leading-relaxed text-med-warn">
@@ -177,6 +208,10 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
                       relationship: '',
                       channel: slot.channel ?? 'sms',
                       destination: slot.destination ?? '',
+                      // Carry the existing backup in, or editing the contact would
+                      // silently DELETE it (upsertSlot rewrites every endpoint).
+                      fallbackChannel: slot.fallbackChannel,
+                      fallbackDestination: slot.fallbackDestination,
                     }
                   : undefined
               }

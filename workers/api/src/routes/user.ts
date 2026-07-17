@@ -161,6 +161,18 @@ userRoutes.get('/contacts', async (c) => {
       // Brief 19: the designated check-in recipient (null → the primary contact is
       // used by default). Lets the UI mark which contact holds the check-in.
       checkinContactId: user?.checkinContactId ?? null,
+      // Which channels can ACTUALLY deliver right now — server truth, derived from
+      // the same isChannelDeliverable the dispatcher and the save-guard use. The UI
+      // renders from THIS rather than a hardcoded list, so the day Twilio is
+      // provisioned SMS appears everywhere on its own and email disappears the day
+      // it is retired — no client release, no list to forget to update. Channels are
+      // inputs to one dispatcher; the UI has to reflect that or it drifts.
+      deliverableChannels: (['sms', 'line', 'email'] as const).filter((ch) =>
+        isChannelDeliverable(c.env, ch),
+      ),
+      // LINE is captured ONLY by QR (Brief 18) — it can never be a typed address,
+      // which the UI needs to know to offer a usable backup channel.
+      typeableChannels: (['sms', 'email'] as const).filter((ch) => isChannelDeliverable(c.env, ch)),
     },
     200,
   );

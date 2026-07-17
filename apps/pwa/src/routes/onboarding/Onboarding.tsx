@@ -232,7 +232,15 @@ export function Onboarding(): JSX.Element {
     // here (finalize ran at step 5), so this authenticated call succeeds.
     const slot = supportRole === 'guardian' ? 'guardian' : 'primary';
     const res = await api<{ error?: string; message?: string }>(`/v1/me/contacts/${slot}`, {
-      body: { contactName: values.name, channel: values.channel, destination: values.destination },
+      body: {
+        contactName: values.name,
+        channel: values.channel,
+        destination: values.destination,
+        // §2: optional backup channel — tried before this contact is ever reported
+        // as not reached.
+        fallbackChannel: values.fallbackChannel ?? null,
+        fallbackDestination: values.fallbackDestination ?? null,
+      },
     });
     setBusy(false);
     if (res.ok) {

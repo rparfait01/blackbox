@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
+import { api } from '@/lib/api';
 import { LineConnect } from '@/components/LineConnect';
 
 /**
@@ -21,6 +22,10 @@ export interface ContactValues {
   relationship: string;
   channel: ContactChannel;
   destination: string;
+  /** Optional BACKUP channel — the dispatcher tries it only if the preferred one
+   *  fails, before ever reporting this contact as not reached. */
+  fallbackChannel?: ContactChannel | null;
+  fallbackDestination?: string | null;
 }
 
 interface ChannelMeta {
@@ -38,12 +43,15 @@ const CHANNEL_META: Record<ContactChannel, ChannelMeta> = {
   sms: { label: 'Text', hint: 'Phone number', inputMode: 'tel', placeholder: '+1 555 123 4567' },
 };
 
-// Only channels that can ACTUALLY deliver are offered. SMS is omitted until the
-// SMS channel is implemented — presenting it would let a contact be saved that
-// silently never gets reached. Email is the default (the reliably-delivering
-// channel for the pilot). The server also rejects a non-deliverable channel, so
-// this is belt-and-suspenders, never the only guard.
-const SELECTABLE_CHANNELS: ContactChannel[] = ['email', 'line'];
+// Which channels are offered is SERVER TRUTH, not a list maintained here. It comes
+// from /v1/me/contacts.deliverableChannels, derived from the same isChannelDeliverable
+// the dispatcher uses — so SMS appears by itself the day Twilio is provisioned, and
+// email vanishes the day it is retired, with no client change and no list to forget.
+// A hardcoded list is how a channel ends up offered that silently never delivers.
+// Falls back to Email only while the fetch is in flight — the conservative choice:
+// the server rejects a non-deliverable channel anyway, so this can never be the
+// only guard.
+const FALLBACK_WHILE_LOADING: ContactChannel[] = ['email'];
 
 export function ContactForm({
   initial,
@@ -69,10 +77,34 @@ export function ContactForm({
   const [relationship, setRelationship] = useState(initial?.relationship ?? '');
   const [channel, setChannel] = useState<ContactChannel>(initial?.channel ?? 'email');
   const [destination, setDestination] = useState(initial?.destination ?? '');
+  const [fallbackChannel, setFallbackChannel] = useState<ContactChannel | null>(
+    initial?.fallbackChannel ?? null,
+  );
+  const [fallbackDestination, setFallbackDestination] = useState(initial?.fallbackDestination ?? '');
+  const [deliverable, setDeliverable] = useState<ContactChannel[]>(FALLBACK_WHILE_LOADING);
+  const [typeable, setTypeable] = useState<ContactChannel[]>(FALLBACK_WHILE_LOADING);
+
+  useEffect(() => {
+    void api<{ deliverableChannels?: ContactChannel[]; typeableChannels?: ContactChannel[] }>(
+      '/v1/me/contacts',
+    ).then((r) => {
+      if (r.ok && r.data?.deliverableChannels?.length) {
+        setDeliverable(r.data.deliverableChannels);
+        setTypeable(r.data.typeableChannels ?? []);
+      }
+    });
+  }, []);
 
   const active = CHANNEL_META[channel];
   const isLine = channel === 'line';
   const lineConnectable = isLine && !!slot && !!onLineConnected;
+  // A usable BACKUP must be deliverable, typeable (LINE is QR-only, so it can never
+  // be a typed backup), and different from the preferred channel — the same vendor
+  // twice is the same failure twice. Today that set is usually empty: with Twilio
+  // unprovisioned the only typeable channel is Email, which is normally already the
+  // preferred one. So the backup UI stays HIDDEN rather than offering a choice that
+  // cannot work, and appears on its own the day SMS goes live.
+  const backupOptions = typeable.filter((ch) => ch !== channel && deliverable.includes(ch));
   const canSubmit = name.trim().length > 0 && destination.trim().length > 0 && !busy;
 
   return (
@@ -92,7 +124,7 @@ export function ContactForm({
           Preferred channel
         </span>
         <div className="flex gap-2">
-          {SELECTABLE_CHANNELS.map((key) => (
+          {deliverable.map((key) => (
             <button
               key={key}
               type="button"
@@ -147,12 +179,80 @@ export function ContactForm({
             />
           </label>
 
+          {/* §2 BACKUP channel — only rendered when a genuinely usable one exists.
+              If the preferred channel fails, the alert is retried here BEFORE this
+              contact is ever reported as not reached. Optional by design: pressing
+              a survivor to fill a second address is not worth blocking setup over. */}
+          {backupOptions.length > 0 ? (
+            <div>
+              <span className="mb-2 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">
+                Backup channel (optional)
+              </span>
+              <div className="mb-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFallbackChannel(null);
+                    setFallbackDestination('');
+                  }}
+                  className={`flex-1 rounded-lg border py-2.5 font-mono text-xs uppercase tracking-[0.1em] transition-colors ${
+                    fallbackChannel === null
+                      ? 'border-med-text/80 bg-med-text/10 text-med-text'
+                      : 'border-med-text/25 text-med-text/55'
+                  }`}
+                >
+                  None
+                </button>
+                {backupOptions.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setFallbackChannel(key)}
+                    className={`flex-1 rounded-lg border py-2.5 font-mono text-xs uppercase tracking-[0.1em] transition-colors ${
+                      fallbackChannel === key
+                        ? 'border-med-text/80 bg-med-text/10 text-med-text'
+                        : 'border-med-text/25 text-med-text/55'
+                    }`}
+                  >
+                    {CHANNEL_META[key].label}
+                  </button>
+                ))}
+              </div>
+              {fallbackChannel ? (
+                <input
+                  value={fallbackDestination}
+                  onChange={(e) => setFallbackDestination(e.target.value)}
+                  inputMode={CHANNEL_META[fallbackChannel].inputMode}
+                  type={fallbackChannel === 'email' ? 'email' : 'text'}
+                  placeholder={CHANNEL_META[fallbackChannel].placeholder}
+                  className="w-full border-b border-med-text/25 bg-transparent py-2 font-sans text-lg text-med-text outline-none placeholder:text-med-text/30 focus:border-med-text/60"
+                />
+              ) : (
+                <p className="text-[11px] leading-relaxed text-med-text/45">
+                  If their {active.label.toLowerCase()} fails, we&apos;ll try the backup before telling you
+                  they couldn&apos;t be reached.
+                </p>
+              )}
+            </div>
+          ) : null}
+
           {error ? <p className="text-sm text-med-warn">{error}</p> : null}
 
           <button
             type="button"
             disabled={!canSubmit}
-            onClick={() => onSubmit({ name: name.trim(), relationship: relationship.trim(), channel, destination: destination.trim() })}
+            onClick={() =>
+              onSubmit({
+                name: name.trim(),
+                relationship: relationship.trim(),
+                channel,
+                destination: destination.trim(),
+                // Only send a backup when it is actually complete — a half-filled
+                // backup would be refused server-side and block the save.
+                fallbackChannel: fallbackChannel && fallbackDestination.trim() ? fallbackChannel : null,
+                fallbackDestination: fallbackChannel && fallbackDestination.trim() ? fallbackDestination.trim() : null,
+              })
+            }
             className="w-full rounded-full bg-med-text/90 py-4 font-sans text-base font-medium tracking-[0.04em] text-[#071416] transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             {busy ? 'Saving…' : submitLabel}
