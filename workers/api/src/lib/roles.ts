@@ -49,8 +49,13 @@ export interface SlotView {
    *  recipient by id). Null for an empty slot. */
   id: string | null;
   contactName: string | null;
+  /** The PREFERRED channel (endpoint priority 1) — tried first. */
   channel: string | null;
   destination: string | null;
+  /** The FALLBACK channel (endpoint priority 2), tried only if the preferred one
+   *  fails. Null when the contact has just one channel. */
+  fallbackChannel: string | null;
+  fallbackDestination: string | null;
 }
 
 interface ContactRowLite {
@@ -83,11 +88,11 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
   const rows = results ?? [];
 
   const slots: Record<SlotKey, SlotView> = {
-    primary: { slot: 'primary', filled: false, id: null, contactName: null, channel: null, destination: null },
-    secondary: { slot: 'secondary', filled: false, id: null, contactName: null, channel: null, destination: null },
-    tertiary: { slot: 'tertiary', filled: false, id: null, contactName: null, channel: null, destination: null },
-    guardian: { slot: 'guardian', filled: false, id: null, contactName: null, channel: null, destination: null },
-    emergency: { slot: 'emergency', filled: false, id: null, contactName: null, channel: null, destination: null },
+    primary: { slot: 'primary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
+    secondary: { slot: 'secondary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
+    tertiary: { slot: 'tertiary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
+    guardian: { slot: 'guardian', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
+    emergency: { slot: 'emergency', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
   };
 
   for (const row of rows) {
@@ -95,29 +100,52 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
     if (!key) {
       continue;
     }
-    const endpoint = await env.DB.prepare(
-      'SELECT channel, channelIdentifier FROM contact_endpoints WHERE contactId = ? ORDER BY priority ASC LIMIT 1',
+    // Read BOTH endpoints in fire order: priority 1 is the preferred channel, 2 is
+    // the fallback. Previously this took only the first (LIMIT 1), which is why a
+    // second channel would have been invisible to the UI even once stored.
+    const { results: eps } = await env.DB.prepare(
+      'SELECT channel, channelIdentifier FROM contact_endpoints WHERE contactId = ? ORDER BY priority ASC LIMIT 2',
     )
       .bind(row.id)
-      .first<{ channel: string; channelIdentifier: string }>();
+      .all<{ channel: string; channelIdentifier: string }>();
+    const [preferred, fallback] = eps ?? [];
     slots[key] = {
       slot: key,
       filled: true,
       id: row.id,
       contactName: row.contactName,
-      channel: endpoint?.channel ?? null,
-      destination: endpoint?.channelIdentifier ?? null,
+      channel: preferred?.channel ?? null,
+      destination: preferred?.channelIdentifier ?? null,
+      fallbackChannel: fallback?.channel ?? null,
+      fallbackDestination: fallback?.channelIdentifier ?? null,
     };
   }
   return [slots.primary, slots.secondary, slots.tertiary, slots.guardian, slots.emergency];
 }
 
-/** Insert or replace a single slot with its chosen channel + destination. */
+/**
+ * Insert or replace a single slot with its PREFERRED channel and, optionally, a
+ * FALLBACK channel (§2).
+ *
+ * The fallback is what makes the dispatcher's retry loop real. `dispatch()` has
+ * always walked a contact's endpoints in priority order until one delivers — but
+ * this function only ever wrote ONE endpoint, so no contact ever had a second
+ * channel and the fallback path could never fire. The machinery existed with
+ * nothing to feed it. A second endpoint at priority 2 is the whole fix.
+ */
 export async function upsertSlot(
   env: Env,
   userId: string,
   slot: SlotKey,
-  input: { contactName: string; userDisplayName: string; channel: string; destination: string },
+  input: {
+    contactName: string;
+    userDisplayName: string;
+    channel: string;
+    destination: string;
+    /** Optional second channel, tried only if the preferred one fails. */
+    fallbackChannel?: string | null;
+    fallbackDestination?: string | null;
+  },
 ): Promise<void> {
   const addr = slotAddress(slot);
   if (!addr) {
@@ -143,6 +171,25 @@ export async function upsertSlot(
       'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, 1, ?, ?)',
     ).bind(crypto.randomUUID(), contactId, input.channel, input.destination, Date.now(), Date.now()),
   );
+  // Priority 2 = the fallback. dispatch() tries priority 1 first and only reaches
+  // this if that channel actually failed — so a contact with two channels is
+  // reported "not reached" only after BOTH have failed. Ignored when it duplicates
+  // the preferred channel: two endpoints on the same broken vendor is not a
+  // fallback, it is the same failure twice.
+  if (input.fallbackChannel && input.fallbackDestination && input.fallbackChannel !== input.channel) {
+    statements.push(
+      env.DB.prepare(
+        'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, 2, ?, ?)',
+      ).bind(
+        crypto.randomUUID(),
+        contactId,
+        input.fallbackChannel,
+        input.fallbackDestination,
+        Date.now(),
+        Date.now(),
+      ),
+    );
+  }
   await env.DB.batch(statements);
 }
 

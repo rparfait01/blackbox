@@ -115,7 +115,17 @@ export interface CheckinPayload {
 }
 
 /** Every channel ('push' | 'line' | 'telegram' | 'sms' | 'email'). */
-export type ChannelName = 'push' | 'line' | 'telegram' | 'sms' | 'email';
+/**
+ * Every channel the ONE dispatcher knows about. Channels are INPUTS to the
+ * dispatcher, not separate systems — adding one means a case in
+ * channels/router.ts `createChannel` and an entry here, never a new send path.
+ *
+ * 'whatsapp' is the proof of that seam: named and routable, deliberately unbuilt
+ * (isChannelDeliverable → false, so it resolves to a stub and cannot be saved on
+ * a contact). 'email' is being retired from the ALERT path — see
+ * isChannelDeliverable for why it is still live.
+ */
+export type ChannelName = 'push' | 'line' | 'telegram' | 'sms' | 'email' | 'whatsapp';
 
 export interface NotificationChannel {
   readonly channel: ChannelName;

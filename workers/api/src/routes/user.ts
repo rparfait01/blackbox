@@ -196,7 +196,13 @@ userRoutes.post('/contacts/:slot', async (c) => {
     return c.json({ error: 'invalid slot' }, 400);
   }
   const body = await c.req
-    .json<{ contactName?: string; channel?: string; destination?: string }>()
+    .json<{
+      contactName?: string;
+      channel?: string;
+      destination?: string;
+      fallbackChannel?: string;
+      fallbackDestination?: string;
+    }>()
     .catch(() => ({}) as Record<string, string>);
   const channel = body.channel as PreferredChannel | undefined;
   if (!body.contactName?.trim() || !body.destination?.trim()) {
@@ -236,12 +242,59 @@ userRoutes.post('/contacts/:slot', async (c) => {
   if (destProblem) {
     return c.json({ error: 'invalid_destination', channel, message: destProblem }, 400);
   }
+  // §2: the optional FALLBACK channel — what the dispatcher reaches for when the
+  // preferred one fails. Validated to the same standard as the preferred channel:
+  // a fallback that cannot deliver is not a fallback, it is a second silent
+  // failure, so it is refused rather than stored and discovered mid-alert.
+  let fallbackChannel: PreferredChannel | null = null;
+  let fallbackDestination: string | null = null;
+  if (body.fallbackChannel && body.fallbackDestination?.trim()) {
+    const fb = body.fallbackChannel as PreferredChannel;
+    if (fb !== 'sms' && fb !== 'line' && fb !== 'email') {
+      return c.json({ error: 'invalid_fallback_channel', message: 'Fallback must be sms, line or email.' }, 400);
+    }
+    if (fb === 'line') {
+      // Same rule as the preferred channel — LINE is only ever captured by QR.
+      return c.json(
+        { error: 'line_requires_pairing', channel: fb, message: 'Connect LINE with the QR code — never typed.' },
+        400,
+      );
+    }
+    if (fb === channel) {
+      return c.json(
+        {
+          error: 'fallback_same_channel',
+          message: 'The backup must be a different channel — the same one twice is the same failure twice.',
+        },
+        400,
+      );
+    }
+    if (!isChannelDeliverable(c.env, fb)) {
+      return c.json(
+        {
+          error: 'channel_not_available',
+          channel: fb,
+          message: `${fb.toUpperCase()} is not available yet — it could not be a backup.`,
+        },
+        400,
+      );
+    }
+    const fbProblem = destinationProblem(fb, body.fallbackDestination.trim());
+    if (fbProblem) {
+      return c.json({ error: 'invalid_destination', channel: fb, message: fbProblem }, 400);
+    }
+    fallbackChannel = fb;
+    fallbackDestination = normalizeDestination(fb, body.fallbackDestination.trim());
+  }
+
   const user = await getUserById(c.env, c.get('userId'));
   await upsertSlot(c.env, c.get('userId'), slot, {
     contactName: body.contactName.trim(),
     userDisplayName: user?.name ?? 'BLACK BOX user',
     channel,
     destination: normalizeDestination(channel, body.destination.trim()),
+    fallbackChannel,
+    fallbackDestination,
   });
   return c.json({ ok: true }, 200);
 });
