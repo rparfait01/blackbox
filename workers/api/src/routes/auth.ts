@@ -1,21 +1,47 @@
 /**
- * Sign-up + sign-in (Brief 14: email removed from the critical path).
+ * Sign-up + sign-in — PASSWORDLESS (Accounts §1).
  *
- * Accounts authenticate by PASSWORD, not an emailed code. Signing up creates the
- * account immediately and never depends on an outbound email succeeding; the
- * email is stored unverified and verification (if ever added back) is an optional,
- * non-blocking step. Signing in checks the password — with a fallback to the
- * existing closure-pin hash for legacy accounts that predate passwords — so no
- * email or SMS provider is in the signup/login path for the pilot.
+ * Identity only. No payment, no billing, no org model (Tenancy owns those).
  *
- * On success the user receives an HMAC session token (no expiry in v0).
+ * The credential ladder, in the order the app offers it:
+ *
+ *   1. PASSKEY (primary). Nothing to remember, nothing written down, nothing an
+ *      abuser can find or phish out of an inbox. Lives in the device keychain and
+ *      restores itself on a new device via iCloud/Google.
+ *   2. MAGIC LINK (fallback ONLY while the account has no passkey). For devices
+ *      that cannot do WebAuthn, and the migration path for pilot accounts. REFUSED
+ *      once a passkey exists — see lib/account-magic-link.ts for why that gate is
+ *      the whole point rather than a nicety.
+ *   3. RECOVERY CODE (backup). Shown once at setup, never emailed — the path that
+ *      survives a monitored inbox.
+ *
+ * There is NO password-reset-by-email path: §2 forbids it (the abuser may read the
+ * inbox), and /forgot + /reset were deleted with this brief.
+ *
+ * POST /signin (password) is RETAINED server-side but is no longer reachable from
+ * any UI. It is the pilot's safety net during migration — deleting it in the same
+ * commit that removes the password field would strand any pilot user whose magic
+ * link failed to arrive. It goes in a follow-up once the pilot has migrated.
+ *
+ * Every path mints the SAME session token shape (lib/session.ts). The token is
+ * never extended to record how you authenticated — a new claim changes the signed
+ * string and would invalidate every live pilot session.
  */
 
 import { Hono } from 'hono';
 import { sessionSecret } from '../auth';
 import { hashSecret } from '../lib/crypto';
 import { mintSession } from '../lib/session';
-import { createResetToken, consumeResetToken } from '../lib/password-reset';
+import { audit } from '../lib/audit';
+import {
+  authenticationOptions,
+  pruneChallenges,
+  registrationOptions,
+  verifyAuthentication,
+  verifyRegistration,
+} from '../lib/passkey';
+import { createMagicLink, consumeMagicLink } from '../lib/account-magic-link';
+import { consumeRecoveryCode, issueRecoveryCodes } from '../lib/recovery-code';
 import {
   claimByUserHash,
   createDraftUser,
@@ -26,12 +52,26 @@ import {
   normalizeEmail,
   verifyLoginCredential,
 } from '../lib/users';
+import { verifySession } from '../lib/session';
 import type { Env, Vars } from '../types';
+import type {
+  AuthenticationResponseJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/server';
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 function isPassword(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 6;
+}
+
+/** Resolve the caller's userId from a Bearer session, or null. */
+async function bearerUserId(c: { env: Env; req: { header: (n: string) => string | undefined } }): Promise<string | null> {
+  const secret = sessionSecret(c.env);
+  const token = (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+  if (!secret || !token) return null;
+  const session = await verifySession(secret, token);
+  return session?.userId ?? null;
 }
 
 // --- Sign-up ---
@@ -52,16 +92,18 @@ authRoutes.post('/signup/start', async (c) => {
   if (!body.name || !body.email) {
     return c.json({ error: 'name and email are required' }, 400);
   }
-  if (!isPassword(body.password)) {
-    return c.json({ error: 'password must be at least 6 characters' }, 400);
-  }
+  // PASSWORDLESS (§1): no password is required or requested. The field is accepted
+  // only so an older client build mid-rollout still signs up successfully; new
+  // accounts are created with passwordHash NULL and authenticate by passkey. A
+  // NULL passwordHash can never satisfy verifyLoginCredential (users.ts), so a
+  // passwordless account is not sign-in-able by password — which is the intent.
   const result = await createDraftUser(c.env, {
     name: body.name,
     phone: body.phone ?? '',
     email: body.email,
     regionId: body.regionId ?? 'jp',
     nationality: body.nationality?.trim() ? body.nationality.trim() : null,
-    passwordHash: await hashSecret(body.password),
+    passwordHash: isPassword(body.password) ? await hashSecret(body.password) : null,
   });
   if (!result.ok || !result.userId) {
     return c.json({ error: result.reason ?? 'signup_failed' }, 409);
@@ -130,48 +172,191 @@ authRoutes.post('/signin', async (c) => {
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
 });
 
-// --- Forgot password (Brief 15 §D) ---
-// Issue a single-use, expiring reset link to the account email. Always returns
-// 200 with no hint about whether the account exists (no enumeration here, unlike
-// the deliberate signin UX choice), and the email send is fire-and-forget so the
-// response timing carries no signal either.
-authRoutes.post('/forgot', async (c) => {
+// --- PASSKEY (§1: primary credential) ---
+
+/**
+ * Registration options. Authenticated by EITHER a live session (enrolling another
+ * device / re-enrolling from Settings) or a signupId (enrolling during onboarding,
+ * before finalize has minted a session). The signupId path is safe because a draft
+ * user id is a UUID that only this client has just been handed.
+ */
+authRoutes.post('/passkey/register/options', async (c) => {
+  const body = await c.req.json<{ signupId?: string }>().catch(() => ({}) as { signupId?: string });
+  const sessionUserId = await bearerUserId(c);
+  const userId = sessionUserId ?? body.signupId ?? null;
+  if (!userId) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  // userName/userDisplayName are only the label the OS shows in the passkey picker.
+  // Fall back rather than fail: an account with no email/name on file must still be
+  // able to enroll a credential.
+  const options = await registrationOptions(c.env, {
+    id: user.id,
+    email: user.email ?? user.id,
+    name: user.name ?? 'BLACK BOX',
+  });
+  if (!options) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
+  c.executionCtx.waitUntil(pruneChallenges(c.env));
+  return c.json(options, 200);
+});
+
+/** Verify enrollment and persist the passkey. */
+authRoutes.post('/passkey/register/verify', async (c) => {
+  const body = await c.req
+    .json<{ signupId?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>()
+    .catch(() => ({}) as Record<string, never>);
+  const sessionUserId = await bearerUserId(c);
+  const userId = sessionUserId ?? body.signupId ?? null;
+  if (!userId || !body.response) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const ok = await verifyRegistration(c.env, userId, body.response, body.deviceLabel?.slice(0, 60) ?? null);
+  if (!ok) {
+    return c.json({ error: 'registration_failed' }, 400);
+  }
+  await audit(c.env, null, 'auth.passkey_registered', userId, {});
+  return c.json({ ok: true }, 200);
+});
+
+/**
+ * Login options. Usernameless — no email is typed, and the request carries no
+ * identifier, so this endpoint leaks nothing about who has an account.
+ */
+authRoutes.post('/passkey/login/options', async (c) => {
+  const options = await authenticationOptions(c.env);
+  if (!options) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
+  return c.json(options, 200);
+});
+
+/** Verify a passkey login → session. */
+authRoutes.post('/passkey/login/verify', async (c) => {
+  const body = await c.req
+    .json<{ response?: AuthenticationResponseJSON }>()
+    .catch(() => ({}) as Record<string, never>);
+  if (!body.response) {
+    return c.json({ error: 'invalid_credentials' }, 401);
+  }
+  const userId = await verifyAuthentication(c.env, body.response);
+  if (!userId) {
+    return c.json({ error: 'invalid_credentials' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  const secret = sessionSecret(c.env);
+  if (!user || !isActive(user) || !secret) {
+    return c.json({ error: 'invalid_credentials' }, 401);
+  }
+  await audit(c.env, null, 'auth.passkey_login', userId, {});
+  const sessionToken = await mintSession(secret, user.id);
+  return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
+});
+
+// --- MAGIC LINK (§1b: fallback ONLY while no passkey exists) ---
+
+/**
+ * Request a login link. ALWAYS 200, regardless of whether the account exists or
+ * whether it was refused for holding a passkey — the response must not tell a
+ * prober which emails are enrolled, nor which accounts are passkey-protected
+ * (that would be a map of which survivors are reachable by inbox).
+ */
+authRoutes.post('/magic/start', async (c) => {
   const body = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
-  const email = (body.email ?? '').trim();
-  if (email) {
-    const token = await createResetToken(c.env, normalizeEmail(email));
-    if (token && c.env.PWA_ORIGIN) {
-      const link = `${c.env.PWA_ORIGIN}/reset?token=${token}`;
+  const raw = (body.email ?? '').trim();
+  if (raw) {
+    const result = await createMagicLink(c.env, normalizeEmail(raw));
+    if ('token' in result && c.env.PWA_ORIGIN) {
+      const link = `${c.env.PWA_ORIGIN}/magic?token=${result.token}`;
       const { sendEmail } = await import('../channels/sendgrid-email');
       c.executionCtx.waitUntil(
         sendEmail(
           c.env,
           {
-            to: email,
-            subject: 'Reset your BLACK BOX password',
-            html: `<p>We received a request to reset your password. This link is valid for one hour and can be used once:</p><p><a href="${link}">${link}</a></p><p>If you didn’t request this, you can ignore this email — nothing has changed.</p>`,
-            text: `Reset your BLACK BOX password (valid 1 hour, single use): ${link}\n\nIf you didn’t request this, ignore this email.`,
+            to: raw,
+            subject: 'Your BLACK BOX sign-in link',
+            html: `<p>Tap to sign in. This link works once and expires in 15 minutes:</p><p><a href="${link}">${link}</a></p><p>If you didn’t ask to sign in, ignore this email — nothing has changed.</p>`,
+            text: `Sign in to BLACK BOX (works once, expires in 15 minutes): ${link}\n\nIf you didn’t ask to sign in, ignore this email.`,
           },
-          'password_reset',
+          'account_magic_link',
         ),
       );
+    } else if ('refused' in result && result.refused === 'has_passkey') {
+      // Not an error — the gate working. Audited so a burst of these against one
+      // account is visible as what it is: someone with inbox access trying to get in.
+      await audit(c.env, null, 'auth.magic_link_refused_has_passkey', null, {});
     }
   }
   return c.json({ ok: true }, 200);
 });
 
-// Redeem a reset token: set the new password and invalidate all prior sessions.
-authRoutes.post('/reset', async (c) => {
-  const body = await c.req
-    .json<{ token?: string; password?: string }>()
-    .catch(() => ({}) as { token?: string; password?: string });
+/** Redeem a login link → session. */
+authRoutes.post('/magic/consume', async (c) => {
+  const body = await c.req.json<{ token?: string }>().catch(() => ({}) as { token?: string });
   const token = (body.token ?? '').trim();
-  if (!token || !isPassword(body.password)) {
-    return c.json({ error: 'token and a password of at least 6 characters are required' }, 400);
-  }
-  const ok = await consumeResetToken(c.env, token, body.password);
-  if (!ok) {
+  if (!token) {
     return c.json({ error: 'invalid_or_expired_token' }, 400);
   }
-  return c.json({ ok: true }, 200);
+  const userId = await consumeMagicLink(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'invalid_or_expired_token' }, 400);
+  }
+  const user = await getUserById(c.env, userId);
+  const secret = sessionSecret(c.env);
+  if (!user || !isActive(user) || !secret) {
+    return c.json({ error: 'invalid_or_expired_token' }, 400);
+  }
+  await audit(c.env, null, 'auth.magic_link_login', userId, {});
+  const sessionToken = await mintSession(secret, user.id);
+  return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
+});
+
+// --- RECOVERY CODE (§2: discreet backup, never emailed) ---
+
+/** Mint (or re-mint) recovery codes for the signed-in / just-signed-up account. */
+authRoutes.post('/recovery/issue', async (c) => {
+  const body = await c.req.json<{ signupId?: string }>().catch(() => ({}) as { signupId?: string });
+  const sessionUserId = await bearerUserId(c);
+  const userId = sessionUserId ?? body.signupId ?? null;
+  if (!userId) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user) {
+    return c.json({ error: 'not found' }, 404);
+  }
+  const codes = await issueRecoveryCodes(c.env, userId);
+  await audit(c.env, null, 'auth.recovery_codes_issued', userId, {});
+  return c.json({ codes }, 200);
+});
+
+/**
+ * Redeem a recovery code → session. Scoped by email so a guess is bounded to one
+ * account rather than sprayed across every account at once.
+ */
+authRoutes.post('/recovery/consume', async (c) => {
+  const body = await c.req
+    .json<{ email?: string; code?: string }>()
+    .catch(() => ({}) as { email?: string; code?: string });
+  if (!body.email || !body.code) {
+    return c.json({ error: 'invalid_recovery_code' }, 400);
+  }
+  const user = await getUserByEmail(c.env, normalizeEmail(body.email));
+  // One flat answer for "no such account" and "wrong code" — never confirm that an
+  // address is enrolled to someone probing with a junk code.
+  if (!user || !isActive(user) || !(await consumeRecoveryCode(c.env, user.id, body.code))) {
+    return c.json({ error: 'invalid_recovery_code' }, 400);
+  }
+  const secret = sessionSecret(c.env);
+  if (!secret) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
+  await audit(c.env, null, 'auth.recovery_code_login', user.id, {});
+  const sessionToken = await mintSession(secret, user.id);
+  return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
 });
