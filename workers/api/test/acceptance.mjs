@@ -770,6 +770,46 @@ async function run() {
     assert(!/install the app|download the app|app store/i.test(body), 'dashboard demands an app install');
   });
 
+  await check('35. SMS: a malformed number is refused AT SAVE, with the fix in the message', async () => {
+    const u = await signup();
+    // A bad number must never reach storage — the first anyone would learn of it is
+    // Twilio rejecting the alert mid-emergency, when it cannot be fixed.
+    for (const bad of ['hello', '090-1234-5678', '+1234', '+0123456789']) {
+      const res = await api('POST', '/v1/me/contacts/primary', {
+        bearer: u.session,
+        body: { contactName: 'P', channel: 'sms', destination: bad },
+      });
+      assert(res.status === 400, `malformed number "${bad}" was accepted: ${res.status}`);
+      assert(typeof res.data?.message === 'string' && res.data.message.length > 0, `no surfaced reason for "${bad}"`);
+    }
+    // A local-format number must name the ACTUAL fix, not just say "invalid".
+    const local = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: { contactName: 'P', channel: 'sms', destination: '090-1234-5678' },
+    });
+    assert(/country code/i.test(local.data.message), `message must name the fix: ${local.data.message}`);
+
+    // NOTE: a WELL-FORMED sms contact is refused too right now — but for a
+    // different, correct reason: Twilio is not provisioned, so isChannelDeliverable
+    // ('sms') is false and the save-guard refuses a channel that cannot deliver.
+    // When the TWILIO_* secrets land this flips to 200 and SMS appears in the UI on
+    // its own (the form renders from deliverableChannels). Asserted loosely so this
+    // check passes on BOTH sides of that ops change and never blocks the rollout.
+    const good = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: { contactName: 'P', channel: 'sms', destination: '+819012345678' },
+    });
+    if (good.status === 400) {
+      assert(good.data?.error === 'channel_not_available', `well-formed number refused for the WRONG reason: ${JSON.stringify(good.data)}`);
+      console.log('      (note: sms not provisioned — well-formed number refused as channel_not_available, as expected)');
+    } else {
+      assert(good.status === 200, `well-formed sms save failed: ${good.status} ${JSON.stringify(good.data)}`);
+      const after = await api('GET', '/v1/me/contacts', { bearer: u.session });
+      const p = after.data.slots.find((s) => s.slot === 'primary');
+      assert(p.channel === 'sms' && p.destination === '+819012345678', `sms contact not stored E.164: ${JSON.stringify(p)}`);
+    }
+  });
+
   // ---- cleanup ----
   await cleanup();
 

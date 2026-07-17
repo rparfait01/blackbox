@@ -88,9 +88,12 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
       load();
     } else if (res.status === 423) {
       setError('Locked during an active alert.');
-    } else if (res.data?.error === 'channel_not_available') {
-      // Never let a non-deliverable channel be saved silently.
-      setError(res.data.message ?? 'That channel is not available yet.');
+    } else if (res.data?.message) {
+      // The server's message is the SPECIFIC one — "add the country code, starting
+      // with +", "that is not a LINE user ID", "that channel is not available yet".
+      // Surface it verbatim: a generic "check the destination" here would swallow
+      // the only thing that tells the user how to fix it.
+      setError(res.data.message);
     } else {
       setError('Could not save. Check the destination and try again.');
     }

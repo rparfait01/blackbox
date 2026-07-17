@@ -46,15 +46,42 @@ export function normalizeDestination(channel: PreferredChannel, destination: str
 const LINE_USER_ID = /^U[0-9a-f]{32}$/;
 
 /**
+ * E.164 — the ONLY phone format Twilio reliably delivers to: a leading `+`, a
+ * country code that cannot start with 0, then 7–14 more digits (15 total max).
+ *
+ * A local-format number ("090-1234-5678") is genuinely ambiguous — the same digits
+ * are a different person in a different country — so it is rejected here rather
+ * than guessed at. Guessing a country code would mean an alert quietly going to a
+ * stranger, or nowhere.
+ */
+const E164 = /^\+[1-9]\d{7,14}$/;
+
+/**
  * Validate a destination is actually deliverable on its channel BEFORE it is
  * stored, so a malformed value can never be saved and then fail silently at alert
- * time. Returns null when valid, or a surfaced reason when not. Currently guards
- * the LINE userId shape (the common "typed my LINE handle" mistake); email/sms are
- * normalized elsewhere and accepted as-is for the pilot.
+ * time. Returns null when valid, or a surfaced reason when not.
+ *
+ * Guards the LINE userId shape (the common "typed my LINE handle" mistake) and the
+ * SMS phone shape. SMS was previously accepted "as-is for the pilot", which meant a
+ * typo survived the save: normalizePhone strips every non-digit, so "hello" became
+ * "" and a local number lost nothing but still had no country code — and either way
+ * the first anyone learned of it was Twilio rejecting the alert mid-emergency. That
+ * is exactly the silent failure this function exists to prevent.
  */
 export function destinationProblem(channel: PreferredChannel, destination: string): string | null {
   if (channel === 'line' && !LINE_USER_ID.test(destination.trim())) {
     return 'That is not a LINE user ID. A LINE user ID looks like "U" followed by 32 characters — it is NOT your public LINE ID / handle. Message the BLACK BOX LINE account to capture yours.';
+  }
+  if (channel === 'sms') {
+    // Validate the NORMALIZED value — the user may type spaces, dashes or brackets,
+    // and those are fine; what matters is what we would actually send to.
+    const normalized = normalizePhone(destination);
+    if (!normalized.startsWith('+')) {
+      return 'Add the country code, starting with + — for example +81 90 1234 5678 for Japan, or +1 555 123 4567 for the US. Without it we cannot know which country the number belongs to.';
+    }
+    if (!E164.test(normalized)) {
+      return 'That does not look like a phone number. Use the full international format, starting with + and the country code — for example +81 90 1234 5678.';
+    }
   }
   return null;
 }

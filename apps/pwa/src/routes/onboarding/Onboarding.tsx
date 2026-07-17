@@ -249,8 +249,11 @@ export function Onboarding(): JSX.Element {
       setStep(7);
     } else if (res.status === 0) {
       setError('No connection — we couldn’t save your contact. Check your signal and try again.');
-    } else if (res.data?.error === 'channel_not_available') {
-      setError(res.data.message ?? 'That channel is not available yet — use Email.');
+    } else if (res.data?.message) {
+      // Surface the server's SPECIFIC reason verbatim (missing country code, wrong
+      // LINE id, channel unavailable) — a generic message here would hide the only
+      // thing that tells the user how to fix it, at the step they cannot skip.
+      setError(res.data.message);
     } else {
       setError('Could not save your support contact. Check the destination and try again.');
     }
