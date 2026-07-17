@@ -585,6 +585,79 @@ async function run() {
     await cycle('direct-tap');
   });
 
+  await check('28. accounts: signup takes NO password; the email-reset path is GONE', async () => {
+    // A passwordless signup is the new normal path — no password field exists in
+    // the app, so the server must not require one.
+    const email = `smoke+acc-${uniq()}@example.com`;
+    const s1 = await api('POST', '/v1/auth/signup/start', { body: { name: 'Passwordless', email, regionId: 'jp' } });
+    assert(s1.status === 201 && s1.data?.signupId, `passwordless signup refused: ${s1.status} ${JSON.stringify(s1.data)}`);
+    created.emails.push(email);
+    const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: 'direct' } });
+    assert(s2.data?.sessionToken, `finalize failed: ${JSON.stringify(s2.data)}`);
+    // ...and the session it mints is a real one.
+    const me = await api('GET', '/v1/me', { bearer: s2.data.sessionToken });
+    assert(me.status === 200, `passwordless session not usable: ${me.status}`);
+    // A passwordless account cannot be signed into by password (passwordHash NULL).
+    const bad = await api('POST', '/v1/auth/signin', { body: { email, password: 'anything-at-all' } });
+    assert(bad.status === 401, `passwordless account accepted a password: ${bad.status}`);
+    // §2: password-reset-by-email must not exist. An abuser may read the inbox.
+    for (const path of ['/v1/auth/forgot', '/v1/auth/reset']) {
+      const gone = await api('POST', path, { body: { email } });
+      assert(gone.status === 404, `${path} still exists (${gone.status}) — email-reset is forbidden`);
+    }
+  });
+
+  await check('29. recovery code: issue → sign in → single-use (never emailed)', async () => {
+    const u = await signup();
+    const issued = await api('POST', '/v1/auth/recovery/issue', { bearer: u.session, body: {} });
+    assert(issued.status === 200 && issued.data?.codes?.length, `no codes issued: ${JSON.stringify(issued.data)}`);
+    const code = issued.data.codes[0];
+    // The code signs you in with no password and no email round-trip.
+    const login = await api('POST', '/v1/auth/recovery/consume', { body: { email: u.email, code } });
+    assert(login.status === 200 && login.data?.sessionToken, `recovery login failed: ${JSON.stringify(login.data)}`);
+    const me = await api('GET', '/v1/me', { bearer: login.data.sessionToken });
+    assert(me.status === 200, `recovery session not usable: ${me.status}`);
+    // Single-use: a replay of the same code must be refused.
+    const replay = await api('POST', '/v1/auth/recovery/consume', { body: { email: u.email, code } });
+    assert(replay.status === 400, `recovery code replayable — NOT single-use: ${replay.status}`);
+    // A wrong code on a real account is refused, and reads identically to an
+    // unknown account (no enumeration).
+    const wrong = await api('POST', '/v1/auth/recovery/consume', { body: { email: u.email, code: 'ZZZZ-ZZZZ-ZZZZ' } });
+    const unknown = await api('POST', '/v1/auth/recovery/consume', { body: { email: 'nobody@example.com', code: 'ZZZZ-ZZZZ-ZZZZ' } });
+    assert(wrong.status === 400 && unknown.status === 400, `recovery enumeration leak: ${wrong.status} vs ${unknown.status}`);
+    assert(JSON.stringify(wrong.data) === JSON.stringify(unknown.data), `recovery answers differ — enumeration leak`);
+  });
+
+  await check('30. magic link: never enumerates; a bogus token is refused', async () => {
+    // NOTE ON COVERAGE: the full link loop (receive → consume) cannot be exercised
+    // here — the token exists only inside the email, and only its hash is stored,
+    // so no amount of DB access would recover it. What IS asserted: the endpoint
+    // never leaks which accounts exist or which are passkey-protected (that would
+    // map which survivors are still reachable through their inbox), and a forged
+    // token buys nothing. The redeem path itself needs an on-device pass.
+    const u = await signup();
+    const real = await api('POST', '/v1/auth/magic/start', { body: { email: u.email } });
+    const fake = await api('POST', '/v1/auth/magic/start', { body: { email: `nobody-${uniq()}@example.com` } });
+    assert(real.status === 200 && fake.status === 200, `magic/start status leak: ${real.status} vs ${fake.status}`);
+    assert(JSON.stringify(real.data) === JSON.stringify(fake.data), 'magic/start body differs — account enumeration leak');
+    const forged = await api('POST', '/v1/auth/magic/consume', { body: { token: 'not-a-real-token' } });
+    assert(forged.status === 400, `forged magic token accepted: ${forged.status}`);
+  });
+
+  await check('31. passkey endpoints are live and refuse the unauthenticated', async () => {
+    // The ceremonies themselves need a real authenticator (device pass covers that).
+    // Asserted here: the routes exist, login options are public (usernameless — the
+    // request carries no identifier, so it leaks nothing), and enrollment refuses a
+    // caller with neither a session nor a signupId.
+    const opts = await api('POST', '/v1/auth/passkey/login/options', { body: {} });
+    assert(opts.status === 200 && opts.data?.challenge, `login options broken: ${opts.status} ${JSON.stringify(opts.data)}`);
+    assert(typeof opts.data.rpId === 'string' && opts.data.rpId.length > 0, `no rpId: ${JSON.stringify(opts.data)}`);
+    const anon = await api('POST', '/v1/auth/passkey/register/options', { body: {} });
+    assert(anon.status === 401, `anonymous passkey enrollment allowed: ${anon.status}`);
+    const junk = await api('POST', '/v1/auth/passkey/login/verify', { body: { response: { id: 'nope' } } });
+    assert(junk.status === 401, `junk assertion accepted: ${junk.status}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 
