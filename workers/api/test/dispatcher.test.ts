@@ -178,6 +178,36 @@ describe('§3 "not reached" is honest — only after EVERY channel failed', () =
   });
 });
 
+describe('§2 a LINE-only contact with NO phone number is VALID and reachable', () => {
+  /**
+   * Data-based channels reach devices that have no cell number at all: a kid's
+   * iPod, a WiFi-only iPhone, a numberless Apple-ID device. There is no way to SMS
+   * those, and no iMessage API exists — LINE IS the delivery path. So a contact
+   * with only a LINE endpoint is a COMPLETE contact, not a half-finished one, and
+   * the dispatcher must never reach for a phone number it was never given.
+   */
+  it('routes to LINE and attempts NO sms', async () => {
+    stubFetch([]);
+    const { env } = fakeEnv([{ channel: 'line', channelIdentifier: 'U123', priority: 1 }]);
+    const r = await dispatch(env, 'c1', message);
+    expect(r.delivered).toBe(true);
+    expect(r.channel).toBe('line');
+    // The whole point: no phone, so no SMS is tried, and that is not a failure.
+    expect(r.attempts.map((a) => a.channel)).toEqual(['line']);
+    expect(r.attempts.some((a) => a.channel === 'sms')).toBe(false);
+  });
+
+  it('a failing LINE-only contact is not reached — never "missing phone number"', async () => {
+    stubFetch(['line']);
+    const { env } = fakeEnv([{ channel: 'line', channelIdentifier: 'U123', priority: 1 }]);
+    const r = await dispatch(env, 'c1', message);
+    expect(r.delivered).toBe(false);
+    // The reason is LINE's real rejection, not a complaint about a phone number.
+    expect(r.attempts[0]!.channel).toBe('line');
+    expect(r.attempts[0]!.reason).toMatch(/line/i);
+  });
+});
+
 describe('§2 the WhatsApp seam is present but unbuilt', () => {
   it('whatsapp is a known channel that is NOT deliverable (stub, no rebuild needed)', () => {
     const { env } = fakeEnv([]);

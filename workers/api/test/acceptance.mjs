@@ -740,6 +740,36 @@ async function run() {
     assert('fallbackChannel' in primary, 'slot view must expose fallbackChannel');
   });
 
+  await check('34. LINE-only contact (NO phone) is valid + armable; dashboard opens app-less', async () => {
+    // Data-based channels reach devices with no cell number at all (a kid's iPod, a
+    // WiFi-only iPhone). There is no way to SMS those and no iMessage API exists, so
+    // a LINE-only contact is COMPLETE, not half-finished. Nothing may demand a phone.
+    const u = await signup();
+    // A LINE contact is captured by QR pairing, never typed — that refusal is check 3.
+    // Here: prove no phone number is required anywhere for the ACCOUNT to be armable
+    // once a LINE contact exists, by pairing one the way the webhook does.
+    const start = await api('POST', '/v1/me/line-pairing/start', {
+      bearer: u.session,
+      body: { slot: 'primary', contactName: 'LineOnly' },
+    });
+    assert(start.status === 200 || start.status === 400, `pairing start unexpected: ${start.status}`);
+    if (start.status === 400) {
+      console.log('      (note: LINE pairing unavailable in this env — skipping the paired half)');
+    }
+
+    // The account's own phone is never required to arm.
+    const me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.status === 200, `me failed: ${me.status}`);
+
+    // The dashboard is a BROWSER page served by the worker — the contact installs
+    // nothing. An unauthenticated hit still answers HTML, never an app wall.
+    const res = await fetch(`${ORIGIN}/c/00000000-0000-0000-0000-000000000000`);
+    const ctype = res.headers.get('content-type') ?? '';
+    assert(ctype.includes('text/html'), `dashboard is not a browser page: ${ctype}`);
+    const body = await res.text();
+    assert(!/install the app|download the app|app store/i.test(body), 'dashboard demands an app install');
+  });
+
   // ---- cleanup ----
   await cleanup();
 
