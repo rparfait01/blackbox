@@ -47,6 +47,61 @@ export function twilioConfig(env: Env): TwilioConfig | null {
   };
 }
 
+/**
+ * Low-level SMS send, decoupled from the alert-payload channel. Used for the
+ * consent confirmation flow (which is not an "alert" and carries no payload) and
+ * reused by TwilioSmsChannel below. Returns the outcome; NEVER throws — an SMS
+ * failure must never bubble into a contact-save or a webhook ack.
+ * Logging discipline: channel/status/latency only — never the number or the body.
+ */
+export async function sendSms(
+  env: Env,
+  toNumber: string,
+  body: string,
+  messageType = 'transactional',
+): Promise<{ ok: boolean; sid: string | null; status: number }> {
+  const config = twilioConfig(env);
+  if (!config) {
+    console.log(JSON.stringify({ channel: 'sms', messageType, status: 'not_configured' }));
+    return { ok: false, sid: null, status: 0 };
+  }
+  const start = Date.now();
+  const form = new URLSearchParams();
+  form.set('To', toNumber);
+  if (config.messagingServiceSid) {
+    form.set('MessagingServiceSid', config.messagingServiceSid);
+  } else if (config.fromNumber) {
+    form.set('From', config.fromNumber);
+  }
+  form.set('Body', body);
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${btoa(`${config.accountSid}:${config.authToken}`)}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: form.toString(),
+      },
+    );
+    const ok = response.status >= 200 && response.status < 300;
+    let sid: string | null = null;
+    try {
+      const data = (await response.json()) as { sid?: string };
+      sid = data.sid ?? null;
+    } catch {
+      sid = null;
+    }
+    console.log(JSON.stringify({ channel: 'sms', messageType, status: response.status, ms: Date.now() - start }));
+    return { ok, sid, status: response.status };
+  } catch (error) {
+    console.log(JSON.stringify({ channel: 'sms', messageType, status: 'fetch_error', detail: String(error) }));
+    return { ok: false, sid: null, status: 0 };
+  }
+}
+
 export class TwilioSmsChannel implements NotificationChannel {
   readonly channel = 'sms' as const;
   lastProviderMessageId: string | null = null;
@@ -84,48 +139,8 @@ export class TwilioSmsChannel implements NotificationChannel {
   }
 
   private async send(messageType: string, body: string): Promise<boolean> {
-    const config = twilioConfig(this.env);
-    if (!config) {
-      console.log(JSON.stringify({ channel: 'sms', messageType, status: 'not_configured' }));
-      return false;
-    }
-    const start = Date.now();
-    const form = new URLSearchParams();
-    form.set('To', this.toNumber);
-    if (config.messagingServiceSid) {
-      form.set('MessagingServiceSid', config.messagingServiceSid);
-    } else if (config.fromNumber) {
-      form.set('From', config.fromNumber);
-    }
-    form.set('Body', body);
-    try {
-      const response = await fetch(
-        `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${btoa(`${config.accountSid}:${config.authToken}`)}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: form.toString(),
-        },
-      );
-      const ok = response.status >= 200 && response.status < 300;
-      let sid: string | null = null;
-      try {
-        const data = (await response.json()) as { sid?: string };
-        sid = data.sid ?? null;
-      } catch {
-        sid = null;
-      }
-      this.lastProviderMessageId = sid;
-      console.log(
-        JSON.stringify({ channel: 'sms', messageType, status: response.status, ms: Date.now() - start }),
-      );
-      return ok;
-    } catch (error) {
-      console.log(JSON.stringify({ channel: 'sms', messageType, status: 'fetch_error', detail: String(error) }));
-      return false;
-    }
+    const res = await sendSms(this.env, this.toNumber, body, messageType);
+    this.lastProviderMessageId = res.sid;
+    return res.ok;
   }
 }

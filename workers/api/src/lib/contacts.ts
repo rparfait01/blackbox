@@ -5,6 +5,7 @@
  * pilot is 1:1), but that contact may now have multiple endpoints.
  */
 
+import { consentGateEnforced } from './consent';
 import type { ContactEndpointRow, ContactRow, Env } from '../types';
 
 export interface EndpointInput {
@@ -37,18 +38,38 @@ export async function getContactByUserId(env: Env, userId: string): Promise<Cont
   return row ?? null;
 }
 
-/** Resolve the contact for an event, preferring its userId, then legacy userHash. */
+/**
+ * Resolve the single contact for an event, preferring its userId, then legacy
+ * userHash. CONSENT-GATED (§4): only a `confirmed` contact is returned — this is a
+ * recipient resolver (escalation, legacy check-in), so an unconfirmed contact must
+ * never surface here. Contact creation uses getContactByUserId directly and is
+ * deliberately NOT gated.
+ */
 export async function getContactForEvent(
   env: Env,
   event: { userId: string | null; userHash: string | null },
 ): Promise<ContactRow | null> {
+  const gate = consentGateEnforced(env) ? "AND status = 'confirmed'" : '';
   if (event.userId) {
-    const byUser = await getContactByUserId(env, event.userId);
+    const byUser = await env.DB.prepare(
+      `SELECT id, userHash, displayName, createdAt FROM contacts WHERE userId = ? ${gate} ORDER BY CASE role WHEN 'guardian' THEN 1 ELSE 0 END, priority ASC LIMIT 1`,
+    )
+      .bind(event.userId)
+      .first<ContactRow>();
     if (byUser) {
       return byUser;
     }
   }
-  return event.userHash ? getContact(env, event.userHash) : null;
+  if (event.userHash) {
+    return (
+      (await env.DB.prepare(
+        `SELECT id, userHash, displayName, createdAt FROM contacts WHERE userHash = ? ${gate}`,
+      )
+        .bind(event.userHash)
+        .first<ContactRow>()) ?? null
+    );
+  }
+  return null;
 }
 
 /**
@@ -66,12 +87,21 @@ export async function listReachableContacts(
       .bind(event.userId)
       .first<{ guardianEnabled: number }>();
     const guardianEnabled = (user?.guardianEnabled ?? 1) === 1;
+    // CONSENT GATE (Contact Consent §4): once armed, only a `confirmed` contact is
+    // ever notified — trigger, escalation, closure ping, check-in, all of it. A
+    // pending/declined contact is excluded here, at the single point every alert
+    // path resolves its recipients, so no outbound route can leak past it. The
+    // guardian is gated with zero exception: notifying someone who never agreed to
+    // the role is the exact harm this brief closes. Behind the flag (infra first).
     const { results } = await env.DB.prepare(
-      "SELECT id, displayName, role FROM contacts WHERE userId = ? AND role IN ('contact','guardian') ORDER BY CASE role WHEN 'guardian' THEN 1 ELSE 0 END, priority ASC",
+      "SELECT id, displayName, role, status FROM contacts WHERE userId = ? AND role IN ('contact','guardian') ORDER BY CASE role WHEN 'guardian' THEN 1 ELSE 0 END, priority ASC",
     )
       .bind(event.userId)
-      .all<{ id: string; displayName: string; role: string | null }>();
-    const rows = (results ?? []).filter((r) => r.role !== 'guardian' || guardianEnabled);
+      .all<{ id: string; displayName: string; role: string | null; status: string | null }>();
+    const gate = consentGateEnforced(env);
+    const rows = (results ?? [])
+      .filter((r) => r.role !== 'guardian' || guardianEnabled)
+      .filter((r) => !gate || r.status === 'confirmed');
     if (rows.length > 0) {
       return rows.map((r) => ({ id: r.id, displayName: r.displayName }));
     }

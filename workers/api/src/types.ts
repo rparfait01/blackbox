@@ -18,6 +18,13 @@ export interface Env {
   /** Build stamp (git short SHA) injected at deploy via `--var WORKER_BUILD:<sha>`;
    *  served at GET /version for the deploy-currency pairing (Brief 21). */
   WORKER_BUILD?: string;
+  /** Contact Consent §4 gate switch. When 'true', ONLY confirmed contacts are
+   *  dispatched to and count toward Armed. Default OFF so the consent infrastructure
+   *  (status tracking, confirmation SMS, status UI) can ship as a strict no-op and
+   *  be verified live BEFORE the gate is armed — infra first, gate last. Flip via
+   *  `wrangler deploy --var CONSENT_GATE_ENFORCED:true` once the pilot is confirmed;
+   *  it is a reversible off-switch, not a redeploy. */
+  CONSENT_GATE_ENFORCED?: string;
   /** Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the
    *  family pilot this is the operator/founder. */
   SECURITY_CONTACT_EMAIL?: string;

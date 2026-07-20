@@ -37,6 +37,7 @@ import { renderCadSummary } from './dashboard/cad-summary';
 import { audioStream, locationStream } from './routes/contact-streams';
 import { dispatch } from './channels/router';
 import { handleLineWebhook } from './routes/line-webhook';
+import { handleTwilioWebhook } from './routes/twilio-webhook';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
@@ -584,6 +585,8 @@ app.get('/v1/admin/events/:id/deliveries', async (c) => {
 
 // --- LINE webhook (no HMAC auth; verifies its own x-line-signature) ---
 app.post('/v1/webhooks/line', handleLineWebhook);
+// Contact Consent §2: pending SMS contacts reply YES/NO/STOP here.
+app.post('/v1/webhooks/twilio', handleTwilioWebhook);
 
 // --- Contact magic-link view (no login; the signed token is the auth) ---
 async function requireMagicToken(c: AppContext): Promise<boolean> {

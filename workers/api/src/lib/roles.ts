@@ -12,6 +12,7 @@
 import { hasReachableRecipient } from '@blackbox/shared';
 
 import { isChannelDeliverable } from '../channels/router';
+import { consentGateEnforced } from './consent';
 import type { Env } from '../types';
 
 export type SlotRole = 'contact' | 'guardian' | 'emergency';
@@ -56,6 +57,9 @@ export interface SlotView {
    *  fails. Null when the contact has just one channel. */
   fallbackChannel: string | null;
   fallbackDestination: string | null;
+  /** Consent status (§0). Only a 'confirmed' contact is ever dispatched to. Null
+   *  for an empty slot. */
+  status: 'pending' | 'confirmed' | 'declined' | null;
 }
 
 interface ContactRowLite {
@@ -63,6 +67,7 @@ interface ContactRowLite {
   role: string | null;
   priority: number | null;
   contactName: string | null;
+  status: string | null;
 }
 
 function keyFor(role: string | null, priority: number | null): SlotKey | null {
@@ -81,18 +86,18 @@ function keyFor(role: string | null, priority: number | null): SlotKey | null {
 /** All four slots for a user (filled or empty), each with its primary endpoint. */
 export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
   const { results } = await env.DB.prepare(
-    'SELECT id, role, priority, contactName FROM contacts WHERE userId = ?',
+    'SELECT id, role, priority, contactName, status FROM contacts WHERE userId = ?',
   )
     .bind(userId)
     .all<ContactRowLite>();
   const rows = results ?? [];
 
   const slots: Record<SlotKey, SlotView> = {
-    primary: { slot: 'primary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
-    secondary: { slot: 'secondary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
-    tertiary: { slot: 'tertiary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
-    guardian: { slot: 'guardian', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
-    emergency: { slot: 'emergency', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null },
+    primary: { slot: 'primary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null, status: null },
+    secondary: { slot: 'secondary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null, status: null },
+    tertiary: { slot: 'tertiary', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null, status: null },
+    guardian: { slot: 'guardian', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null, status: null },
+    emergency: { slot: 'emergency', filled: false, id: null, contactName: null, channel: null, destination: null, fallbackChannel: null, fallbackDestination: null, status: null },
   };
 
   for (const row of rows) {
@@ -118,6 +123,7 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
       destination: preferred?.channelIdentifier ?? null,
       fallbackChannel: fallback?.channel ?? null,
       fallbackDestination: fallback?.channelIdentifier ?? null,
+      status: (row.status as SlotView['status']) ?? 'confirmed',
     };
   }
   return [slots.primary, slots.secondary, slots.tertiary, slots.guardian, slots.emergency];
@@ -133,6 +139,13 @@ export async function listSlots(env: Env, userId: string): Promise<SlotView[]> {
  * channel and the fallback path could never fire. The machinery existed with
  * nothing to feed it. A second endpoint at priority 2 is the whole fix.
  */
+export interface UpsertResult {
+  /** The consent status the contact was written with. */
+  status: 'pending' | 'confirmed';
+  /** True when a confirmation SMS must be sent (a new/changed SMS number). */
+  confirmationNeeded: boolean;
+}
+
 export async function upsertSlot(
   env: Env,
   userId: string,
@@ -141,16 +154,51 @@ export async function upsertSlot(
     contactName: string;
     userDisplayName: string;
     channel: string;
+    /** Already NORMALIZED by the route (E.164 for sms) before it reaches here. */
     destination: string;
     /** Optional second channel, tried only if the preferred one fails. */
     fallbackChannel?: string | null;
     fallbackDestination?: string | null;
   },
-): Promise<void> {
+): Promise<UpsertResult> {
   const addr = slotAddress(slot);
   if (!addr) {
-    return;
+    return { status: 'confirmed', confirmationNeeded: false };
   }
+  // Capture the prior status + prior preferred endpoint for this slot BEFORE the
+  // delete below, so consent survives an innocent edit but is re-sought on a real
+  // change. This function tears down and rebuilds the whole contact on every save,
+  // so without this a rename would silently reset a confirmed contact to pending.
+  const prior = await env.DB.prepare(
+    `SELECT c.status AS status,
+            (SELECT ep.channel FROM contact_endpoints ep WHERE ep.contactId = c.id ORDER BY ep.priority ASC LIMIT 1) AS chan,
+            (SELECT ep.channelIdentifier FROM contact_endpoints ep WHERE ep.contactId = c.id ORDER BY ep.priority ASC LIMIT 1) AS dest
+       FROM contacts c
+      WHERE c.userId = ? AND c.role = ? AND ((? IS NULL AND c.priority IS NULL) OR c.priority = ?)`,
+  )
+    .bind(userId, addr.role, addr.priority, addr.priority)
+    .first<{ status: string | null; chan: string | null; dest: string | null }>();
+
+  // CONSENT BY CHANNEL:
+  //  - SMS is the only channel with a live confirm flow. A brand-new number, or a
+  //    changed number, is pending and gets the confirmation SMS. The SAME number on
+  //    an already-confirmed contact keeps its consent (a rename is not a re-consent).
+  //  - Anything else (email — retiring, no confirm flow) is grandfathered confirmed,
+  //    matching the 0030 backfill. LINE never comes through here (it is confirmed at
+  //    QR pairing), but if it did, treat it as already-consented.
+  let status: 'pending' | 'confirmed' = 'confirmed';
+  let confirmationNeeded = false;
+  if (input.channel === 'sms') {
+    const sameNumber = prior?.chan === 'sms' && prior?.dest === input.destination;
+    if (sameNumber && prior?.status === 'confirmed') {
+      status = 'confirmed';
+    } else {
+      status = 'pending';
+      confirmationNeeded = true;
+    }
+  }
+  const now = Date.now();
+
   // Remove any existing row(s) for this slot first (keeps one per slot).
   const existing = await env.DB.prepare(
     'SELECT id FROM contacts WHERE userId = ? AND role = ? AND ((? IS NULL AND priority IS NULL) OR priority = ?)',
@@ -165,11 +213,11 @@ export async function upsertSlot(
   const contactId = crypto.randomUUID();
   statements.push(
     env.DB.prepare(
-      'INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, createdAt) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)',
-    ).bind(contactId, userId, input.userDisplayName, input.contactName, addr.role, addr.priority, Date.now()),
+      'INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, createdAt, status, statusUpdatedAt) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(contactId, userId, input.userDisplayName, input.contactName, addr.role, addr.priority, now, status, now),
     env.DB.prepare(
       'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, 1, ?, ?)',
-    ).bind(crypto.randomUUID(), contactId, input.channel, input.destination, Date.now(), Date.now()),
+    ).bind(crypto.randomUUID(), contactId, input.channel, input.destination, now, now),
   );
   // Priority 2 = the fallback. dispatch() tries priority 1 first and only reaches
   // this if that channel actually failed — so a contact with two channels is
@@ -191,6 +239,7 @@ export async function upsertSlot(
     );
   }
   await env.DB.batch(statements);
+  return { status, confirmationNeeded };
 }
 
 /**
@@ -249,15 +298,23 @@ export async function hasDeliverableRecipient(env: Env, userId: string): Promise
     .bind(userId)
     .first<{ guardianEnabled: number }>();
   const guardianEnabled = (user?.guardianEnabled ?? 1) === 1;
+  // ARMED requires a CONFIRMED recipient once the gate is armed (Contact Consent §3):
+  // a contact who is deliverable but has not agreed to the role does NOT make an
+  // account Armed — an alert that would fire at someone who never consented is the
+  // exact gap this brief closes. Behind the flag so armable and dispatch always
+  // agree: while the gate is off, this is unchanged reachability (no regression).
   const { results } = await env.DB.prepare(
-    "SELECT c.role AS role, ep.channel AS channel FROM contacts c JOIN contact_endpoints ep ON ep.contactId = c.id WHERE c.userId = ? AND c.role IN ('contact','guardian')",
+    "SELECT c.role AS role, ep.channel AS channel, c.status AS status FROM contacts c JOIN contact_endpoints ep ON ep.contactId = c.id WHERE c.userId = ? AND c.role IN ('contact','guardian')",
   )
     .bind(userId)
-    .all<{ role: string; channel: string }>();
-  const recipients = (results ?? []).map((r) => ({
-    role: r.role,
-    deliverable: isChannelDeliverable(env, r.channel),
-  }));
+    .all<{ role: string; channel: string; status: string | null }>();
+  const gate = consentGateEnforced(env);
+  const recipients = (results ?? [])
+    .filter((r) => !gate || r.status === 'confirmed')
+    .map((r) => ({
+      role: r.role,
+      deliverable: isChannelDeliverable(env, r.channel),
+    }));
   return hasReachableRecipient(recipients, guardianEnabled);
 }
 

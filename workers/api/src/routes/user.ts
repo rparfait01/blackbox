@@ -19,6 +19,8 @@ import {
 } from '../lib/roles';
 import { sendCheckin } from '../lib/checkin';
 import { isChannelDeliverable } from '../channels/router';
+import { sendConfirmationAsk } from '../lib/consent';
+import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -135,8 +137,15 @@ userRoutes.post('/region', async (c) => {
 });
 
 
-// --- Roles: 3 contacts + 1 guardian (Brief 9 / Brief 8 contact tabs) ---
-const VALID_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary', 'guardian', 'emergency'];
+// --- Roles: 1 contact + 1 guardian (Contact Consent brief §0) ---
+// The ceiling was reduced from 3 contacts to ONE (guardian + one additional
+// contact). People in these circumstances frequently have deliberately narrowed
+// networks — isolation from friends and family is a common coercive-control tactic
+// — so optimizing for more slots does not serve a survivor who realistically has
+// one or two people left to name. secondary/tertiary are retired from the addable
+// set; no pilot account has ever held more than one contact, so nothing is dropped.
+// 'emergency' stays: it is the §5 emergency-services target, not a personal contact.
+const VALID_SLOTS: SlotKey[] = ['primary', 'guardian', 'emergency'];
 
 userRoutes.get('/contacts', async (c) => {
   const userId = c.get('userId');
@@ -300,15 +309,28 @@ userRoutes.post('/contacts/:slot', async (c) => {
   }
 
   const user = await getUserById(c.env, c.get('userId'));
-  await upsertSlot(c.env, c.get('userId'), slot, {
+  const preferredDestination = normalizeDestination(channel, body.destination.trim());
+  const upsert = await upsertSlot(c.env, c.get('userId'), slot, {
     contactName: body.contactName.trim(),
     userDisplayName: user?.name ?? 'BLACK BOX user',
     channel,
-    destination: normalizeDestination(channel, body.destination.trim()),
+    destination: preferredDestination,
     fallbackChannel,
     fallbackDestination,
   });
-  return c.json({ ok: true }, 200);
+  // §1: a newly-pending SMS contact receives ONE confirmation ask — the only
+  // message they get until they reply. Off the response path (waitUntil): the save
+  // already succeeded, and an SMS hiccup must not fail it. The survivor sees the
+  // Pending state regardless of whether the send lands.
+  if (upsert.confirmationNeeded) {
+    const survivorName = user?.name ?? 'Someone';
+    c.executionCtx.waitUntil(
+      sendConfirmationAsk(c.env, preferredDestination, survivorName).then((sent) =>
+        audit(c.env, null, sent ? 'consent.ask_sent' : 'consent.ask_failed', c.get('userId'), { slot }),
+      ),
+    );
+  }
+  return c.json({ ok: true, status: upsert.status }, 200);
 });
 
 userRoutes.delete('/contacts/:slot', async (c) => {

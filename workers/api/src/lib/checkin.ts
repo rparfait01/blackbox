@@ -15,6 +15,7 @@ import { formatLocalClock } from '@blackbox/shared';
 import { dispatch } from '../channels/router';
 import { isChannelDeliverable } from '../channels/router';
 import { audit } from './audit';
+import { consentGateEnforced } from './consent';
 import { getUserById, type UserRow } from './users';
 import type { Env } from '../types';
 
@@ -33,9 +34,15 @@ async function contactDeliverable(env: Env, contactId: string): Promise<boolean>
  * if it can actually be reached. Returns the contact id or null.
  */
 async function resolveCheckinContact(env: Env, userId: string, user: UserRow | null): Promise<string | null> {
+  // CONSENT-GATED (§4, behind the flag): once armed, a check-in reaches a recipient
+  // only if that contact has CONFIRMED the role — same rule as an alert. A pending
+  // guardian/contact is not a silent success; the check-in resolves to null and the
+  // UI reflects "no confirmed recipient" rather than reporting a delivery that never
+  // happened.
+  const gate = consentGateEnforced(env) ? "AND status = 'confirmed'" : '';
   if (user?.checkinContactId) {
     const designated = await env.DB.prepare(
-      "SELECT id FROM contacts WHERE id = ? AND userId = ? AND role = 'contact'",
+      `SELECT id FROM contacts WHERE id = ? AND userId = ? AND role = 'contact' ${gate}`,
     )
       .bind(user.checkinContactId, userId)
       .first<{ id: string }>();
@@ -44,7 +51,7 @@ async function resolveCheckinContact(env: Env, userId: string, user: UserRow | n
     }
   }
   const primary = await env.DB.prepare(
-    "SELECT id FROM contacts WHERE userId = ? AND role = 'contact' AND priority = 1 LIMIT 1",
+    `SELECT id FROM contacts WHERE userId = ? AND role = 'contact' AND priority = 1 ${gate} LIMIT 1`,
   )
     .bind(userId)
     .first<{ id: string }>();
