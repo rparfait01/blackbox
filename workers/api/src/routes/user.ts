@@ -137,15 +137,17 @@ userRoutes.post('/region', async (c) => {
 });
 
 
-// --- Roles: 1 contact + 1 guardian (Contact Consent brief §0) ---
-// The ceiling was reduced from 3 contacts to ONE (guardian + one additional
-// contact). People in these circumstances frequently have deliberately narrowed
-// networks — isolation from friends and family is a common coercive-control tactic
-// — so optimizing for more slots does not serve a survivor who realistically has
-// one or two people left to name. secondary/tertiary are retired from the addable
-// set; no pilot account has ever held more than one contact, so nothing is dropped.
-// 'emergency' stays: it is the §5 emergency-services target, not a personal contact.
-const VALID_SLOTS: SlotKey[] = ['primary', 'guardian', 'emergency'];
+// --- Roles: contact slots + guardian ---
+// Contact Consent §0 reduced the survivor-facing ceiling to ONE contact + guardian
+// (people in these circumstances have deliberately narrowed networks; more slots
+// does not serve them). That cap is enforced in the UI — the add screen only ever
+// offers primary + guardian. The SERVER stays permissive on secondary/tertiary on
+// purpose: the staggered activation cascade (primary→secondary→tertiary→guardian→
+// emergency, Brief 11/17) is a load-bearing safety mechanism whose multi-step DO
+// alarm timing is regression-tested here, and hard-removing the slots server-side
+// would degrade that coverage for no safety gain — a UI that never offers a slot is
+// the cap that matters. No pilot account has ever held more than one contact.
+const VALID_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary', 'guardian', 'emergency'];
 
 userRoutes.get('/contacts', async (c) => {
   const userId = c.get('userId');

@@ -821,6 +821,54 @@ async function run() {
     assert(p.channel === 'sms' && p.destination === '+819012345678', `sms contact not stored E.164: ${JSON.stringify(p)}`);
   });
 
+  await check('36. consent: SMS add → pending; email/LINE → confirmed; status in slot view', async () => {
+    const u = await signup();
+    // An email contact is grandfathered confirmed (email is retiring, no confirm
+    // flow) — flag-independent, and no SMS is sent.
+    const em = await api('POST', '/v1/me/contacts/guardian', {
+      bearer: u.session,
+      body: { contactName: 'G', channel: 'email', destination: `smoke+g-${uniq()}@example.com` },
+    });
+    assert(em.status === 200, `email add failed: ${em.status} ${JSON.stringify(em.data)}`);
+    assert(em.data.status === 'confirmed', `email contact not confirmed: ${JSON.stringify(em.data)}`);
+
+    // An SMS contact is PENDING until it replies YES. Fiction number (555-01xx is
+    // reserved) so the fire-and-forget confirmation send reaches no real person.
+    const sms = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: { contactName: 'P', channel: 'sms', destination: '+15555550123' },
+    });
+    assert(sms.status === 200 && sms.data.status === 'pending', `SMS add not pending: ${sms.status} ${JSON.stringify(sms.data)}`);
+
+    // The status is visible in the slot model the UI reads.
+    const got = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    const primary = got.data.slots.find((s) => s.slot === 'primary');
+    const guardian = got.data.slots.find((s) => s.slot === 'guardian');
+    assert(primary.status === 'pending', `primary slot status wrong: ${JSON.stringify(primary)}`);
+    assert(guardian.status === 'confirmed', `guardian slot status wrong: ${JSON.stringify(guardian)}`);
+
+    // Editing the SMS contact's NAME (same number) must not reset consent... but it
+    // is pending here, so instead prove the inverse elsewhere: a same-number re-save
+    // stays pending (still not confirmed by a rename).
+    const rename = await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: { contactName: 'P renamed', channel: 'sms', destination: '+15555550123' },
+    });
+    assert(rename.data.status === 'pending', `rename changed consent unexpectedly: ${JSON.stringify(rename.data)}`);
+
+    // Armed reflects the gate. With only a pending contact + a confirmed guardian,
+    // armable is true (the guardian is confirmed). This holds in both flag states.
+    assert(got.data.armable === true, `guardian-confirmed account should be armable: ${JSON.stringify(got.data.armable)}`);
+  });
+
+  await check('37. consent webhook: unsigned inbound is refused (403)', async () => {
+    // The real YES/NO loop needs Twilio's signature (device sign-off). What is
+    // asserted on prod: the endpoint exists and rejects an unsigned/forged POST, so
+    // a status can never be flipped by an attacker curling the webhook.
+    const res = await api('POST', '/v1/webhooks/twilio', { body: { From: '+15555550123', Body: 'YES' } });
+    assert(res.status === 403, `unsigned webhook not refused: ${res.status} ${JSON.stringify(res.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 
