@@ -24,6 +24,8 @@ interface Slot {
   /** §2: the backup channel the dispatcher tries if the preferred one fails. */
   fallbackChannel: ContactChannel | null;
   fallbackDestination: string | null;
+  /** §0: consent status. Only a 'confirmed' contact is ever notified. */
+  status: 'pending' | 'confirmed' | 'declined' | null;
 }
 
 interface ContactsData {
@@ -39,7 +41,10 @@ interface ContactsData {
   deliverableChannels?: ContactChannel[];
 }
 
-const CONTACT_SLOTS: SlotKey[] = ['primary', 'secondary', 'tertiary'];
+// Contact Consent §0: the ceiling is now ONE contact + guardian (down from three).
+// secondary/tertiary are retired from the UI — survivors in these circumstances
+// typically have deliberately narrowed networks, and more slots does not serve them.
+const CONTACT_SLOTS: SlotKey[] = ['primary'];
 
 const SLOT_LABEL: Record<SlotKey, string> = {
   primary: 'Primary',
@@ -49,6 +54,13 @@ const SLOT_LABEL: Record<SlotKey, string> = {
   emergency: 'Emergency',
 };
 const CHANNEL_LABEL: Record<ContactChannel, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
+
+/** §1/§3: how a contact's consent status reads in the UI. Only 'confirmed' is live. */
+const STATUS_META: Record<'pending' | 'confirmed' | 'declined', { label: string; tone: string }> = {
+  confirmed: { label: 'Confirmed', tone: 'text-status-armed' },
+  pending: { label: 'Pending — awaiting reply', tone: 'text-med-warn' },
+  declined: { label: 'Declined', tone: 'text-med-warn' },
+};
 
 export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.Element {
   const [data, setData] = useState<ContactsData | null>(null);
@@ -133,10 +145,22 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
     }
   }
 
+  // §3: Armed requires at least one CONFIRMED contact. `armable` is server truth
+  // (behind the consent-gate flag it already means "has a confirmed recipient").
+  // Shown in Settings/Visible only — never in the covert facade (§0a).
+  const armed = data?.armable === true;
+
   return (
     <section className="mb-8">
-      <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/45">
-        Support roles
+      <div className="mb-3 flex items-center justify-between">
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/45">Support roles</span>
+        {data ? (
+          <span
+            className={`font-mono text-[11px] uppercase tracking-[0.12em] ${armed ? 'text-status-armed' : 'text-med-warn'}`}
+          >
+            {armed ? 'Armed' : 'Not ready'}
+          </span>
+        ) : null}
       </div>
 
       {/* §3 (+ Brief 23 §2): the standing zero-contact/unreachable warning. Settings
@@ -175,10 +199,14 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
         </div>
       ) : null}
 
-      <div className="mb-4 grid grid-cols-5 gap-1.5">
-        {(['primary', 'secondary', 'tertiary', 'guardian', 'emergency'] as SlotKey[]).map((key) => {
+      {/* §0: one contact + guardian (+ the emergency-services slot). secondary/
+          tertiary are retired. A filled slot shows a consent dot: green = confirmed,
+          amber = pending/declined (not yet live). */}
+      <div className="mb-4 grid grid-cols-3 gap-1.5">
+        {([...CONTACT_SLOTS, 'guardian', 'emergency'] as SlotKey[]).map((key) => {
           const s = data?.slots.find((x) => x.slot === key);
           const active = selected === key;
+          const st = s?.filled ? (s.status ?? 'confirmed') : null;
           return (
             <button
               key={key}
@@ -191,7 +219,15 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
                 active ? 'border-med-text/80 bg-med-text/10 text-med-text' : 'border-med-text/25 text-med-text/55'
               }`}
             >
-              {SLOT_LABEL[key]}
+              <span className="inline-flex items-center gap-1">
+                {SLOT_LABEL[key]}
+                {st ? (
+                  <span
+                    aria-hidden
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${st === 'confirmed' ? 'bg-status-armed' : 'bg-med-warn'}`}
+                  />
+                ) : null}
+              </span>
               <div className="mt-1 text-[11px] normal-case tracking-normal">
                 {s?.filled ? (s.contactName ?? '—') : <span className="text-med-text/40">+</span>}
               </div>
@@ -237,6 +273,18 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
                   {slot.channel ? CHANNEL_LABEL[slot.channel] : '—'} · {slot.destination ?? '—'}
                 </span>
               </div>
+              {/* §1: consent status, stated plainly. A pending contact is not yet a
+                  live recipient — no ambiguity about who would actually be reached. */}
+              {slot.status && slot.status !== 'confirmed' ? (
+                <p className={`mt-2 text-[12px] leading-relaxed ${STATUS_META[slot.status].tone}`}>
+                  {STATUS_META[slot.status].label}.{' '}
+                  {slot.status === 'pending'
+                    ? 'They’ve been texted to confirm — they won’t be notified until they reply YES.'
+                    : 'They opted out and will not be notified.'}
+                </p>
+              ) : slot.status === 'confirmed' ? (
+                <p className="mt-2 text-[12px] leading-relaxed text-status-armed">Confirmed — they’ll be notified if you trigger.</p>
+              ) : null}
               <div className="mt-3 flex gap-4">
                 <button onClick={() => setEditing(true)} className="text-sm text-med-text/70 underline">
                   Edit

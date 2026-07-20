@@ -236,6 +236,18 @@ export function ContactForm({
             </div>
           ) : null}
 
+          {/* §6 CTA (A2P Call-to-Action evidence): the add screen states, in plain
+              language, exactly what happens — the contact is asked to confirm by
+              text before they can ever be notified. For SMS this is literally true;
+              LINE contacts consent by connecting, so the copy adapts. This screen is
+              the artifact attached to the Twilio campaign resubmission. */}
+          {channel === 'sms' ? (
+            <p className="text-[12px] leading-relaxed text-med-text/55">
+              This person will receive a text asking them to confirm before they can be notified in an
+              emergency. They can reply STOP at any time to opt out. Msg &amp; data rates may apply.
+            </p>
+          ) : null}
+
           {error ? <p className="text-sm text-med-warn">{error}</p> : null}
 
           <button
