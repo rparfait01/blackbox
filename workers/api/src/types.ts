@@ -71,6 +71,62 @@ export interface Vars {
   eventSecret: string;
   /** Set by requireSession after a valid session token. */
   userId: string;
+  /** Brief 23: the org this account belongs to, looked up server-side from userId
+   *  (NEVER from the token — the session token shape is load-bearing and unextended).
+   *  NULL = individual account. Set by requireSession. */
+  orgId: string | null;
+  /** Brief 23: the account's STAFF role in its org, set by requireOrgRole on the
+   *  /v1/org/* portal routes. Absent for individuals and enrolled survivors. */
+  orgRole?: 'admin' | 'coordinator';
+}
+
+// --- Brief 23 org tenancy rows (see migration 0031_org_tenancy.sql) ---
+
+/** An organization. `lane` is a label only; `orgPubkey` is a reserved forward hook. */
+export interface OrganizationRow {
+  id: string;
+  name: string;
+  status: 'active' | 'suspended';
+  lane: 'zero_fee' | 'paid';
+  orgPubkey: string | null;
+  createdAt: number;
+}
+
+/** STAFF membership in an org (admin | coordinator). Enrolled survivors are NOT rows
+ *  here — they are tracked by users.orgId alone. */
+export interface OrgMemberRow {
+  id: string;
+  orgId: string;
+  userId: string;
+  role: 'admin' | 'coordinator';
+  status: 'active' | 'revoked';
+  createdAt: number;
+}
+
+/** An enrollment code binding an account to one org + role. A leaked code grants
+ *  membership only, never data access. */
+export interface EnrollmentCodeRow {
+  code: string;
+  orgId: string;
+  role: 'survivor' | 'coordinator' | 'admin';
+  expiresAt: number | null;
+  maxUses: number;
+  usedCount: number;
+  revoked: number;
+  createdBy: string | null;
+  createdAt: number;
+}
+
+/** A license RECORD (no payment processing). seatsUsed counts enrolled survivors. */
+export interface OrgLicenseRow {
+  id: string;
+  orgId: string;
+  seatsTotal: number;
+  seatsUsed: number;
+  termStart: number | null;
+  termEnd: number | null;
+  status: 'active' | 'expired';
+  createdAt: number;
 }
 
 /** A contact is a PERSON (NOT a user — no account, no app install). */
