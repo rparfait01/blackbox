@@ -169,6 +169,20 @@ export function ContactForm({
             />
           </label>
 
+          {/* §5 A2P opt-in consent line — carrier-mandated. The campaign was rejected
+              on opt-in information, so this consent affirmation is rendered ADJACENT to
+              the phone-number field, at the moment a number is entered — not buried in
+              Settings or behind a policy link. It is the screenshot attached to the
+              Twilio campaign resubmission and must read exactly as the carrier requires:
+              consent statement + message frequency + rates + STOP. Visible/Settings
+              only; the Hidden facade never renders this form (see consent-ui.guard). */}
+          {channel === 'sms' ? (
+            <p className="text-[12px] leading-relaxed text-med-text/55" data-testid="a2p-consent-line">
+              By adding this contact, you confirm they consent to receive BLACK BOX safety text messages.
+              Message frequency varies. Message and data rates may apply. Reply STOP to opt out.
+            </p>
+          ) : null}
+
           <label className="block">
             <span className="mb-1 block font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/50">Relationship</span>
             <input

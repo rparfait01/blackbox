@@ -51,6 +51,31 @@ describe('§6 the add screen carries the A2P Call-to-Action', () => {
   });
 });
 
+describe('§5 the add screen carries the A2P opt-in consent line at the point of entry', () => {
+  const form = read('./components/ContactForm.tsx');
+
+  // Carriers rejected the A2P campaign on opt-in information. The consent line must
+  // be the exact wording, adjacent to the phone-number field, screenshot-able. Each
+  // clause is a distinct carrier requirement, so each is pinned independently.
+  it('states the consent affirmation tied to adding the contact', () => {
+    expect(form).toMatch(/you confirm they consent to receive BLACK BOX safety text messages/i);
+  });
+
+  it('discloses message frequency (the clause the rejection cited)', () => {
+    expect(form).toMatch(/Message frequency varies/i);
+  });
+
+  it('discloses message & data rates and STOP-to-opt-out', () => {
+    expect(form).toMatch(/Message and data rates may apply/i);
+    expect(form).toMatch(/Reply STOP to opt out/i);
+  });
+
+  it('renders the consent line only for the SMS channel', () => {
+    // The clause lives inside a channel === 'sms' guard, not unconditionally.
+    expect(form).toMatch(/channel === 'sms'[\s\S]*consent to receive BLACK BOX safety text messages/i);
+  });
+});
+
 describe('§0/§1 consent status is surfaced in Settings, not invented client-side', () => {
   const tabs = read('./routes/settings/ContactTabs.tsx');
 
