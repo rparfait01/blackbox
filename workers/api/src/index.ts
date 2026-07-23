@@ -41,6 +41,7 @@ import { handleTwilioWebhook } from './routes/twilio-webhook';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
+import { orgRoutes } from './routes/org';
 import { createEnrollmentCode, createOrg, recordLicense } from './lib/org';
 import type { Env, Vars } from './types';
 
@@ -389,10 +390,13 @@ app.post('/v1/events', async (c) => {
   return c.json({ eventId, hmacSecret, createdAt }, 201);
 });
 
-// --- Mounted route groups (auth, guardians, user/settings) ---
+// --- Mounted route groups (auth, guardians, user/settings, org portal) ---
 app.route('/v1/auth', authRoutes);
 app.route('/v1/guardians', guardianRoutes);
 app.route('/v1/me', userRoutes);
+// Brief 23 — the org portal surface. Every route inside is session + org-role gated
+// and scoped to the caller's own org; individual accounts never reach it.
+app.route('/v1/org', orgRoutes);
 
 // --- Admin (pilot-only; Bearer ADMIN_TOKEN). Onboarding moves to W9. ---
 app.use('/v1/admin/*', async (c, next) => {

@@ -20,6 +20,7 @@ import {
 import { sendCheckin } from '../lib/checkin';
 import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
+import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -31,6 +32,34 @@ userRoutes.use('*', requireSession);
 async function lockedDuringAlert(c: { env: Env; get: (k: 'userId') => string }): Promise<boolean> {
   return hasActiveEvent(c.env, c.get('userId'));
 }
+
+// Brief 23 §3 — the SURVIVOR's own enrollment controls (their account stays theirs).
+// Redeeming a code is the explicit, consented individual→org migration path; leaving
+// is the reversal. Both are account changes, so both respect the live-alert lock like
+// contact edits and delete. Past events keep their stamped org — history preserved.
+userRoutes.post('/org/redeem', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const code = (body.code ?? '').trim();
+  if (!code) {
+    return c.json({ error: 'code_required' }, 400);
+  }
+  const res = await redeemCode(c.env, code, c.get('userId'));
+  if (!res.ok) {
+    return c.json({ error: res.reason }, 400);
+  }
+  return c.json({ ok: true, orgId: res.orgId, role: res.role }, 200);
+});
+
+userRoutes.post('/org/leave', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const res = await leaveOrg(c.env, c.get('userId'));
+  return c.json({ ok: true, left: res.left }, 200);
+});
 
 /**
  * §3 "Track" — what the account can see about ITSELF: how it is protected, who it
