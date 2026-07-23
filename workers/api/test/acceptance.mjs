@@ -928,17 +928,23 @@ async function run() {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
     const O = await bootstrapOrg('Org-D-' + uniq(), 'zero_fee', 2);
     const admin = await enrollWith(O.adminCode);
+    // An existing INDIVIDUAL account with history/state: a saved contact. (No active
+    // event — enrollment is an account change and is correctly live-alert-locked, so
+    // "history" here is durable account state, not an in-flight alert.)
     const indiv = await signup();
-    const evBefore = await trigger(indiv.session); // stamped orgId NULL (individual)
+    await api('POST', '/v1/me/contacts/guardian', { bearer: indiv.session, body: { contactName: 'Kin', channel: 'email', destination: `smoke+kin-${uniq()}@example.com` } });
     const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
     const red = await api('POST', '/v1/me/org/redeem', { bearer: indiv.session, body: { code: c.data.code } });
     assert(red.status === 200 && red.data.orgId === O.orgId, `migration failed: ${red.status} ${JSON.stringify(red.data)}`);
-    // History preserved: the pre-join event still exists and the account still works.
-    assert((await adminEvent(evBefore.eventId)).status === 'active', 'pre-join event lost after migration');
-    assert((await api('GET', '/v1/me', { bearer: indiv.session })).status === 200, 'account broke after migration');
-    // Reversible: leaving unsets the org and drops them from the org roster.
+    // History preserved: the pre-join contact is still there after joining.
+    const after = await api('GET', '/v1/me/contacts', { bearer: indiv.session });
+    const kept = after.data.slots.find((s) => s.slot === 'guardian');
+    assert(kept && kept.contactName === 'Kin', `history not preserved through migration: ${JSON.stringify(kept)}`);
+    // Reversible: leaving unsets the org, keeps the account+contact, drops the roster row.
     const left = await api('POST', '/v1/me/org/leave', { bearer: indiv.session });
     assert(left.status === 200 && left.data.left === true, `leave failed: ${JSON.stringify(left.data)}`);
+    const stillKin = (await api('GET', '/v1/me/contacts', { bearer: indiv.session })).data.slots.find((s) => s.slot === 'guardian');
+    assert(stillKin && stillKin.contactName === 'Kin', 'contact lost on leave — history not preserved');
     const list = await api('GET', '/v1/org/survivors', { bearer: admin.acc.session });
     assert(!list.data.survivors.some((s) => s.userId === indiv.userId), 'left account still on the org roster');
   });
