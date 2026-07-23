@@ -1000,6 +1000,53 @@ async function run() {
     assert((await api('GET', `/v1/c/${vEvent.eventId}/state`)).status === 401, 'capture stream reachable without an event token');
   });
 
+  // ===== Brief 25 — anonymous incident tally (severed; no capture/event data) =====
+  await check('44. tally: four closed answers accepted (201); per-account rate limit is honest (429), never silent', async () => {
+    const u = await signup();
+    const body = { kind: 'domestic_violence', roughlyWhen: 'past_year', regionId: 'jp', reportedOfficial: 'no' };
+    for (let i = 0; i < 3; i += 1) {
+      const r = await api('POST', '/v1/me/tally', { bearer: u.session, body });
+      assert(r.status === 201 && r.data.ok, `tally submit ${i + 1} failed: ${r.status} ${JSON.stringify(r.data)}`);
+    }
+    // 4th in the same month is over the limit → refused HONESTLY (not a silent 201).
+    const over = await api('POST', '/v1/me/tally', { bearer: u.session, body });
+    assert(over.status === 429 && over.data.error === 'rate_limited', `rate limit not honest: ${over.status} ${JSON.stringify(over.data)}`);
+    assert(over.data.limit === 3, `limit not surfaced: ${JSON.stringify(over.data)}`);
+  });
+
+  await check('45. tally: unreachable during an active alert (calm act, never under duress §7)', async () => {
+    const u = await signup();
+    const ev = await trigger(u.session);
+    const locked = await api('POST', '/v1/me/tally', { bearer: u.session, body: { kind: 'other' } });
+    assert(locked.status === 423, `tally reachable during active alert: ${locked.status} ${JSON.stringify(locked.data)}`);
+    if (ADMIN) await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN, body: { reason: 'tally lock test' } });
+  });
+
+  await check('46. tally: public aggregate needs no auth, exposes only aggregate cells, suppresses a rare (<10) combo', async () => {
+    // Submit ONE deliberately-rare combination, then confirm it does NOT appear in the
+    // published aggregate (a single row is below the suppression threshold).
+    const u = await signup();
+    const rare = { kind: 'other', roughlyWhen: 'longer_ago', regionId: 'jp-47', reportedOfficial: 'prefer_not_to_say' };
+    const sub = await api('POST', '/v1/me/tally', { bearer: u.session, body: rare });
+    assert(sub.status === 201, `rare tally submit failed: ${sub.status}`);
+    // The stats endpoint is PUBLIC (no bearer) — open public-good data.
+    const stats = await api('GET', '/v1/tally/stats');
+    assert(stats.status === 200 && Array.isArray(stats.data.cells), `stats not public/aggregate: ${stats.status} ${JSON.stringify(stats.data)}`);
+    assert(stats.data.suppressionThreshold >= 10, `suppression threshold too low: ${stats.data.suppressionThreshold}`);
+    // The just-submitted single-row combo must be SUPPRESSED (count 1 < threshold).
+    const leaked = stats.data.cells.find(
+      (c) => c.regionId === 'jp-47' && c.kind === 'other' && c.roughlyWhen === 'longer_ago' && c.reportedOfficial === 'prefer_not_to_say',
+    );
+    assert(!leaked || leaked.count >= 10, `a rare (<10) combination was published, not suppressed: ${JSON.stringify(leaked)}`);
+    // Aggregate rows carry ONLY coarse fields + a count — no identity ever.
+    const allowed = ['submissionMonth', 'regionId', 'kind', 'roughlyWhen', 'reportedOfficial', 'count'];
+    for (const cell of stats.data.cells) {
+      for (const k of Object.keys(cell)) {
+        assert(allowed.includes(k), `aggregate cell leaked a field: ${k}`);
+      }
+    }
+  });
+
   // ---- cleanup ----
   await cleanup();
 

@@ -118,7 +118,7 @@ describe('§6 publication — suppressed aggregates, threshold is the default', 
     expect(SUPPRESSION_THRESHOLD).toBeGreaterThanOrEqual(10);
     expect(lib).toMatch(/HAVING COUNT\(\*\) >= \?/);
   });
-  it('publishes grouped counts, never individual rows (GROUP BY the four coarse fields)', () => {
-    expect(lib).toMatch(/GROUP BY submissionMonth, regionId, kind, reportedOfficial/);
+  it('publishes grouped counts, never individual rows (GROUP BY the coarse fields)', () => {
+    expect(lib).toMatch(/GROUP BY submissionMonth, regionId, kind, roughlyWhen, reportedOfficial/);
   });
 });

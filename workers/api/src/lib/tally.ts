@@ -130,22 +130,25 @@ export interface AggregateCell {
   submissionMonth: string;
   regionId: string | null;
   kind: string | null;
+  roughlyWhen: string | null;
   reportedOfficial: string | null;
   count: number;
 }
 
 /**
- * Published aggregate (§6): grouped counts with small-count suppression. Any cell with
+ * Published aggregate (§6): the full coarse cross-tab (submission month × region ×
+ * kind × roughly-when × reported-official) with small-count suppression. Any cell with
  * fewer than SUPPRESSION_THRESHOLD rows is dropped entirely — in a small region a
- * single rare combination can still point at a person even with four coarse fields, so
- * suppression is the default. Returns only cells at or above the threshold; the caller
- * needs no auth (open public-good data).
+ * single rare combination can still point at a person even with these coarse fields, so
+ * suppression is the default, and grouping on all four answers makes each cell more
+ * sparse (hence more protected), not less. Returns only cells at or above the
+ * threshold; the caller needs no auth (open public-good data).
  */
 export async function tallyAggregate(env: Env): Promise<AggregateCell[]> {
   const { results } = await env.DB.prepare(
-    `SELECT submissionMonth, regionId, kind, reportedOfficial, COUNT(*) AS count
+    `SELECT submissionMonth, regionId, kind, roughlyWhen, reportedOfficial, COUNT(*) AS count
        FROM incident_tally
-       GROUP BY submissionMonth, regionId, kind, reportedOfficial
+       GROUP BY submissionMonth, regionId, kind, roughlyWhen, reportedOfficial
        HAVING COUNT(*) >= ?
        ORDER BY submissionMonth DESC`,
   )
