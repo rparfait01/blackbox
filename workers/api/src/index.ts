@@ -41,6 +41,7 @@ import { handleTwilioWebhook } from './routes/twilio-webhook';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
+import { createEnrollmentCode, createOrg, recordLicense } from './lib/org';
 import type { Env, Vars } from './types';
 
 /**
@@ -451,6 +452,42 @@ app.post('/v1/admin/contacts', async (c) => {
 
 app.get('/v1/admin/contacts', async (c) => {
   return c.json({ contacts: await listContacts(c.env) }, 200);
+});
+
+// Brief 23 §4 — operator bootstrap for an org: create the organization + a license
+// RECORD (no payment processing — the seat count/term is recorded, not charged) +
+// an initial single-use ADMIN enrollment code. The operator hands that code to the
+// org's admin, who redeems it (§3) to become the first staff member and can then
+// issue coordinator/survivor codes. Sponsorship/third-party funding is out of scope:
+// there is no funder entity and no seat-gifting path.
+app.post('/v1/admin/orgs', async (c) => {
+  const body = await c.req
+    .json<{ name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }>()
+    .catch(() => ({}) as { name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number });
+  const name = (body.name ?? '').trim();
+  const lane = body.lane === 'paid' ? 'paid' : body.lane === 'zero_fee' ? 'zero_fee' : null;
+  if (!name || !lane) {
+    return c.json({ error: 'name and lane (zero_fee|paid) are required' }, 400);
+  }
+  const seatsTotal = typeof body.seatsTotal === 'number' && body.seatsTotal >= 0 ? body.seatsTotal : 0;
+  const org = await createOrg(c.env, { name, lane });
+  const license = await recordLicense(c.env, {
+    orgId: org.id,
+    seatsTotal,
+    termStart: typeof body.termStart === 'number' ? body.termStart : null,
+    termEnd: typeof body.termEnd === 'number' ? body.termEnd : null,
+  });
+  const adminCode = await createEnrollmentCode(c.env, {
+    orgId: org.id,
+    role: 'admin',
+    maxUses: 1,
+    createdBy: null,
+  });
+  await audit(c.env, null, 'admin.org_create', null, { orgId: org.id, lane, seatsTotal });
+  return c.json(
+    { orgId: org.id, name: org.name, lane: org.lane, licenseId: license.id, seatsTotal, adminCode: adminCode.code },
+    201,
+  );
 });
 
 app.get('/v1/admin/line-follows', async (c) => {
