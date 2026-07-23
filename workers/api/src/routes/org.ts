@@ -20,6 +20,18 @@ export const orgRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 // role gate. A survivor with no staff membership hits 403 (not_an_org_member).
 orgRoutes.use('*', requireSession);
 
+// Who is the caller in the org world? Session-only (NO role gate) so the portal can
+// distinguish "signed in but not staff" from coordinator/admin. Returns the active
+// staff membership or null — never anyone else's.
+orgRoutes.get('/me', async (c) => {
+  const member = await c.env.DB.prepare(
+    "SELECT m.orgId, m.role, o.name AS orgName, o.lane FROM org_members m JOIN organizations o ON o.id = m.orgId WHERE m.userId = ? AND m.status = 'active' LIMIT 1",
+  )
+    .bind(c.get('userId'))
+    .first<{ orgId: string; role: 'admin' | 'coordinator'; orgName: string; lane: string }>();
+  return c.json({ member: member ?? null }, 200);
+});
+
 // §3 — issue an enrollment code, scoped to the issuer's OWN org (orgId from the
 // membership, never the client). A coordinator may mint SURVIVOR codes; minting a
 // staff (coordinator/admin) code is an admin action — least privilege.
