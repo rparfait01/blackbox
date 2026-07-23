@@ -115,6 +115,19 @@ async function claimCoordinator(eventId) {
   return { token, cookie };
 }
 
+// Brief 23 — operator bootstrap: create an org + license record + admin code.
+async function bootstrapOrg(name, lane = 'zero_fee', seatsTotal = 3) {
+  const r = await api('POST', '/v1/admin/orgs', { bearer: ADMIN, body: { name, lane, seatsTotal } });
+  if (!r.data?.orgId || !r.data?.adminCode) throw new Error('org bootstrap failed: ' + JSON.stringify(r.data));
+  return { orgId: r.data.orgId, adminCode: r.data.adminCode, seatsTotal };
+}
+// A fresh throwaway account that redeems a code → { acc, red } (red = redeem result).
+async function enrollWith(code, mode = 'direct') {
+  const acc = await signup(mode);
+  const red = await api('POST', '/v1/me/org/redeem', { bearer: acc.session, body: { code } });
+  return { acc, red };
+}
+
 // ---- assertion framework ----
 const results = [];
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
@@ -867,6 +880,118 @@ async function run() {
     // a status can never be flipped by an attacker curling the webhook.
     const res = await api('POST', '/v1/webhooks/twilio', { body: { From: '+15555550123', Body: 'YES' } });
     assert(res.status === 403, `unsigned webhook not refused: ${res.status} ${JSON.stringify(res.data)}`);
+  });
+
+  // ===== Brief 23 — org tenancy (§2 isolation is the paramount property) =====
+  // All gated on ADMIN (org bootstrap is an operator action). Skip-with-note if the
+  // token is absent, like the other admin-only rows.
+  await check('38. tenancy: cross-org isolation — a coordinator reaches ONLY their own org', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const A = await bootstrapOrg('Org-A-' + uniq());
+    const B = await bootstrapOrg('Org-B-' + uniq());
+    const adminA = await enrollWith(A.adminCode);
+    const adminB = await enrollWith(B.adminCode);
+    assert(adminA.red.data?.role === 'admin', `A admin not enrolled: ${JSON.stringify(adminA.red.data)}`);
+    const codeA = await api('POST', '/v1/org/codes', { bearer: adminA.acc.session, body: { role: 'survivor' } });
+    const survA = await enrollWith(codeA.data.code);
+    const evA = await trigger(survA.acc.session);
+    // A sees its own survivor + event…
+    const listA = await api('GET', '/v1/org/survivors', { bearer: adminA.acc.session });
+    assert(listA.data.survivors.some((s) => s.userId === survA.acc.userId), 'A cannot see its own survivor');
+    const evsA = await api('GET', '/v1/org/events', { bearer: adminA.acc.session });
+    assert(evsA.data.events.some((e) => e.id === evA.eventId), 'A cannot see its own event');
+    // …B sees NEITHER, by any route (the isolation boundary).
+    const listB = await api('GET', '/v1/org/survivors', { bearer: adminB.acc.session });
+    assert(!listB.data.survivors.some((s) => s.userId === survA.acc.userId), 'ISOLATION BREACH: B sees A survivor');
+    const evsB = await api('GET', '/v1/org/events', { bearer: adminB.acc.session });
+    assert(!evsB.data.events.some((e) => e.id === evA.eventId), 'ISOLATION BREACH: B sees A event');
+    const detailB = await api('GET', `/v1/org/events/${evA.eventId}`, { bearer: adminB.acc.session });
+    assert(detailB.status === 404, `ISOLATION BREACH: B read A's event detail: ${detailB.status}`);
+  });
+
+  await check('39. enrollment: valid code enrolls; exhausted + revoked refused (expired: unit-covered)', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-C-' + uniq(), 'zero_fee', 5);
+    const admin = await enrollWith(O.adminCode);
+    const c1 = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor', maxUses: 1 } });
+    const s1 = await enrollWith(c1.data.code);
+    assert(s1.red.status === 200 && s1.red.data.role === 'survivor', `valid enroll failed: ${JSON.stringify(s1.red.data)}`);
+    const s2 = await enrollWith(c1.data.code);
+    assert(s2.red.status === 400, `exhausted (maxUses 1) code accepted a 2nd redeem: ${s2.red.status}`);
+    const c2 = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
+    await api('POST', `/v1/org/codes/${c2.data.code}/revoke`, { bearer: admin.acc.session });
+    const s3 = await enrollWith(c2.data.code);
+    assert(s3.red.status === 400, `revoked code was accepted: ${s3.red.status} ${JSON.stringify(s3.red.data)}`);
+  });
+
+  await check('40. migration: an individual account joins an org (history preserved) and can leave', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-D-' + uniq(), 'zero_fee', 2);
+    const admin = await enrollWith(O.adminCode);
+    const indiv = await signup();
+    const evBefore = await trigger(indiv.session); // stamped orgId NULL (individual)
+    const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
+    const red = await api('POST', '/v1/me/org/redeem', { bearer: indiv.session, body: { code: c.data.code } });
+    assert(red.status === 200 && red.data.orgId === O.orgId, `migration failed: ${red.status} ${JSON.stringify(red.data)}`);
+    // History preserved: the pre-join event still exists and the account still works.
+    assert((await adminEvent(evBefore.eventId)).status === 'active', 'pre-join event lost after migration');
+    assert((await api('GET', '/v1/me', { bearer: indiv.session })).status === 200, 'account broke after migration');
+    // Reversible: leaving unsets the org and drops them from the org roster.
+    const left = await api('POST', '/v1/me/org/leave', { bearer: indiv.session });
+    assert(left.status === 200 && left.data.left === true, `leave failed: ${JSON.stringify(left.data)}`);
+    const list = await api('GET', '/v1/org/survivors', { bearer: admin.acc.session });
+    assert(!list.data.survivors.some((s) => s.userId === indiv.userId), 'left account still on the org roster');
+  });
+
+  await check('41. assisted setup: an enrolled survivor reaches Armed; coordinator sees setup complete', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-E-' + uniq(), 'zero_fee', 2);
+    const admin = await enrollWith(O.adminCode);
+    const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
+    const surv = await enrollWith(c.data.code);
+    await api('POST', '/v1/me/contacts/guardian', { bearer: surv.acc.session, body: { contactName: 'G', channel: 'email', destination: `smoke+g-${uniq()}@example.com` } });
+    const me = await api('GET', '/v1/me/contacts', { bearer: surv.acc.session });
+    assert(me.data.armable === true, `enrolled survivor not armable after setup: ${JSON.stringify(me.data.armable)}`);
+    const list = await api('GET', '/v1/org/survivors', { bearer: admin.acc.session });
+    const row = list.data.survivors.find((s) => s.userId === surv.acc.userId);
+    assert(row && row.setupComplete === true, `coordinator doesn't see setup complete: ${JSON.stringify(row)}`);
+  });
+
+  await check('42. seats: ceiling refuses over-limit enroll; admin remove frees the seat + revokes', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-F-' + uniq(), 'zero_fee', 1); // ONE seat
+    const admin = await enrollWith(O.adminCode); // staff — consumes no survivor seat
+    const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor', maxUses: 5 } });
+    const s1 = await enrollWith(c.data.code);
+    assert(s1.red.status === 200, `first survivor rejected on a 1-seat org: ${JSON.stringify(s1.red.data)}`);
+    const s2 = await enrollWith(c.data.code);
+    assert(s2.red.status === 400 && s2.red.data.error === 'seats_full', `seat ceiling not enforced: ${s2.red.status} ${JSON.stringify(s2.red.data)}`);
+    const rem = await api('POST', `/v1/org/survivors/${s1.acc.userId}/remove`, { bearer: admin.acc.session });
+    assert(rem.status === 200, `remove-seat failed: ${JSON.stringify(rem.data)}`);
+    assert(!(await api('GET', '/v1/org/survivors', { bearer: admin.acc.session })).data.survivors.some((s) => s.userId === s1.acc.userId), 'removed survivor still on roster');
+    const s3 = await enrollWith(c.data.code);
+    assert(s3.red.status === 200, `seat not freed after remove (ceiling still full): ${JSON.stringify(s3.red.data)}`);
+  });
+
+  await check('43. a leaked/valid code grants MEMBERSHIP ONLY — never read access to survivor data', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-G-' + uniq(), 'zero_fee', 3);
+    const admin = await enrollWith(O.adminCode);
+    // A real enrolled survivor with data (an event).
+    const cs = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor', maxUses: 5 } });
+    const victim = await enrollWith(cs.data.code);
+    const vEvent = await trigger(victim.acc.session);
+    // An attacker who obtained the survivor code redeems it → they ARE enrolled…
+    const attacker = await enrollWith(cs.data.code);
+    assert(attacker.red.status === 200 && attacker.red.data.role === 'survivor', `attacker not enrolled: ${JSON.stringify(attacker.red.data)}`);
+    // …but a survivor membership is NOT staff, so EVERY org read is refused (403):
+    // no roster, no events, no other survivor's event — membership, not data access.
+    assert((await api('GET', '/v1/org/survivors', { bearer: attacker.acc.session })).status === 403, 'MEMBERSHIP LEAK: survivor-code holder read the org roster');
+    assert((await api('GET', '/v1/org/events', { bearer: attacker.acc.session })).status === 403, 'MEMBERSHIP LEAK: survivor-code holder read org events');
+    assert((await api('GET', `/v1/org/events/${vEvent.eventId}`, { bearer: attacker.acc.session })).status === 403, "MEMBERSHIP LEAK: survivor-code holder read a victim's event");
+    // Nor the victim's private capture stream — that needs the per-event token, which
+    // an account session is not, so it is unauthorized entirely.
+    assert((await api('GET', `/v1/c/${vEvent.eventId}/state`)).status === 401, 'capture stream reachable without an event token');
   });
 
   // ---- cleanup ----
