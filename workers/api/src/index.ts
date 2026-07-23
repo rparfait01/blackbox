@@ -296,6 +296,18 @@ app.post('/v1/events', async (c) => {
   const session = secret && token ? await verifySession(secret, token) : null;
   const userId = session?.userId ?? null;
 
+  // Brief 23: STAMP the owning account's org onto the event, frozen at activation
+  // (like event_origin). Account-less events (userId NULL — covert/tokenless) stay
+  // orgId NULL = un-tenanted/individual. Reading a local column keeps every capture/
+  // dashboard query join-free and keeps the org attribution immutable if the owner
+  // is later deleted.
+  const owner = userId
+    ? await c.env.DB.prepare('SELECT orgId FROM users WHERE id = ?')
+        .bind(userId)
+        .first<{ orgId: string | null }>()
+    : null;
+  const orgId = owner?.orgId ?? null;
+
   // ONE OPEN EVENT PER ACCOUNT (Brief 15: data-layer guarantee + resolution).
   // Resolve the account's single canonical active event — matched by userId when a
   // token resolves one, else by userHash — collapsing any orphaned duplicates.
@@ -329,7 +341,7 @@ app.post('/v1/events', async (c) => {
   // flagged "dark" before the first heartbeat lands.
   try {
     await c.env.DB.prepare(
-      'INSERT INTO events (id, createdAt, status, userHash, userId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (id, createdAt, status, userHash, userId, orgId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
       .bind(
         eventId,
@@ -337,6 +349,7 @@ app.post('/v1/events', async (c) => {
         'active',
         userHash,
         userId,
+        orgId,
         hmacSecret,
         body.source ?? null,
         body.locale ?? null,

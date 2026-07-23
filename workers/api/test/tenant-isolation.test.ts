@@ -1,0 +1,63 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+import { roleSatisfies } from '../src/lib/org';
+
+/**
+ * Brief 23 §2 — tenant isolation machinery (the paramount property). Org A must
+ * NEVER reach org B by any route. The full cross-tenant proof is the live acceptance
+ * suite; these guards pin the SOURCE-level invariants so a future edit can't quietly
+ * unscope the org surface: scope is resolved server-side from the account, never the
+ * client; a revoked membership loses access immediately; least privilege holds.
+ */
+
+const SRC = dirname(fileURLToPath(import.meta.url));
+const read = (p: string): string => readFileSync(join(SRC, '..', p), 'utf8');
+
+describe('§2 least-privilege role rule (pure)', () => {
+  it('admin satisfies both admin- and coordinator-level requirements', () => {
+    expect(roleSatisfies('admin', 'admin')).toBe(true);
+    expect(roleSatisfies('coordinator', 'admin')).toBe(true);
+  });
+  it('coordinator satisfies coordinator-level only, never admin-level', () => {
+    expect(roleSatisfies('coordinator', 'coordinator')).toBe(true);
+    expect(roleSatisfies('admin', 'coordinator')).toBe(false);
+  });
+});
+
+describe('§2 requireSession resolves orgId server-side from the account', () => {
+  const auth = read('src/auth.ts');
+
+  it('orgId is looked up from the users row, never read from the token', () => {
+    // The session token stays the unextended userId.issuedAt HMAC; org comes from DB.
+    expect(auth).toMatch(/SELECT sessionsValidFrom, orgId FROM users WHERE id = \?/);
+    expect(auth).toMatch(/c\.set\('orgId', u\?\.orgId \?\? null\)/);
+  });
+});
+
+describe('§2 requireOrgRole gates /v1/org/* by active membership, not the client', () => {
+  const auth = read('src/auth.ts');
+
+  it('requires an ACTIVE org_members row (a revoked member loses access immediately)', () => {
+    expect(auth).toMatch(/FROM org_members WHERE userId = \? AND status = 'active'/);
+  });
+
+  it('sets orgId + orgRole from the membership row, never from request input', () => {
+    expect(auth).toMatch(/c\.set\('orgId', member\.orgId\)/);
+    expect(auth).toMatch(/c\.set\('orgRole', member\.role\)/);
+    // The role check is the pure rule, and a non-member is refused 403.
+    expect(auth).toMatch(/roleSatisfies\(required, member\.role\)/);
+    expect(auth).toMatch(/not_an_org_member/);
+  });
+});
+
+describe('§2 events are stamped with the owner org at creation (frozen, join-free)', () => {
+  const index = read('src/index.ts');
+
+  it('POST /v1/events resolves the owner orgId and stores it on the event row', () => {
+    expect(index).toMatch(/SELECT orgId FROM users WHERE id = \?/);
+    expect(index).toMatch(/INSERT INTO events \([^)]*\borgId\b/);
+  });
+});
