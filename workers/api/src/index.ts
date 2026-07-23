@@ -676,8 +676,12 @@ app.post('/v1/c/:id/claim-coordinator', async (c) => {
     return c.json({ error: 'unauthorized' }, 401);
   }
   const newKey = randomHex(16);
+  // Brief 0B §3 race safety: only an ACTIVE, unclaimed event can be claimed. If a
+  // solo survivor closed it a moment earlier, the claim matches zero rows and is
+  // reported already-claimed/closed — no window where a solo close and a claim both
+  // succeed on the same event.
   const claim = await c.env.DB.prepare(
-    'UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ? WHERE id = ? AND coordinatorClaimedAt IS NULL',
+    "UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ? WHERE id = ? AND coordinatorClaimedAt IS NULL AND status = 'active'",
   )
     .bind(Date.now(), newKey, eventId)
     .run();

@@ -74,7 +74,13 @@ export function Settings(): JSX.Element {
   // session (fast) and server truth (me.activeEvent) — so a device that lost its
   // local session still cannot open settings while an event is open on the server.
   if (alertActive || me?.activeEvent) {
-    return <Navigate to={getDisplayMode() === 'direct' ? '/blackbox' : '/'} replace />;
+    // Brief 0B §5: say WHY, don't silently load-then-bounce. But only in VISIBLE —
+    // §0a: in the Hidden facade an "active alert" notice would be a tell in front of
+    // an aggressor, so covert still bounces silently back to the breathing screen.
+    if (getDisplayMode() === 'direct') {
+      return <ActiveAlertLock />;
+    }
+    return <Navigate to="/" replace />;
   }
 
   const flash = (msg: string): void => {
@@ -355,6 +361,32 @@ export function Settings(): JSX.Element {
           {toast}
         </div>
       ) : null}
+    </main>
+  );
+}
+
+/**
+ * Brief 0B §5 — the live-alert lock, made honest. When Settings is opened during an
+ * active alert we no longer load-then-silently-revert; we say plainly that it is
+ * unavailable and offer the way back to the live screen. VISIBLE-only: this notice
+ * names an active alert, so it must never render in the Hidden facade (§0a) — the
+ * covert path bounces straight back to the breathing screen instead.
+ */
+function ActiveAlertLock(): JSX.Element {
+  const navigate = useNavigate();
+  return (
+    <main className="stillpoint-bg flex min-h-full w-full flex-col items-center justify-center px-8 text-center text-med-text">
+      <h1 className="font-serif text-2xl font-light tracking-[0.04em]">Unavailable during an active alert</h1>
+      <p className="mt-3 max-w-xs text-[13px] leading-relaxed text-med-text/60">
+        Settings are locked while an alert is open. Close the alert to make changes.
+      </p>
+      <button
+        type="button"
+        onClick={() => navigate('/blackbox', { replace: true })}
+        className="mt-8 rounded-full border border-med-text/40 px-6 py-3 text-sm font-medium text-med-text"
+      >
+        Back to the alert
+      </button>
     </main>
   );
 }
