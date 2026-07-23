@@ -21,6 +21,7 @@ import { sendCheckin } from '../lib/checkin';
 import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
+import { normalizeSubmission, submitTally } from '../lib/tally';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -59,6 +60,37 @@ userRoutes.post('/org/leave', async (c) => {
   }
   const res = await leaveOrg(c.env, c.get('userId'));
   return c.json({ ok: true, left: res.left }, 200);
+});
+
+// Brief 25 — Anonymous Incident Tally. The session authenticates the SENDER (for the
+// per-account rate limit ONLY); the survivor's identity is NEVER written to the stored
+// record (see lib/tally.ts). Live-alert-locked (§7): a calm, deliberate act, never
+// taken under duress. The submission NEVER reads or derives from capture/event data —
+// only the four closed-vocabulary answers reach the severed store.
+userRoutes.post('/tally', async (c) => {
+  if (await lockedDuringAlert(c)) {
+    return c.json({ error: 'locked_during_active_alert' }, 423);
+  }
+  const body = await c.req
+    .json<{ kind?: unknown; roughlyWhen?: unknown; regionId?: unknown; reportedOfficial?: unknown }>()
+    .catch(() => ({}) as Record<string, unknown>);
+  const closed = normalizeSubmission(body);
+  // regionId is a jurisdiction label: accept ONLY a known region id (never a finer or
+  // arbitrary string), else null. Coarse-by-construction.
+  let regionId: string | null = null;
+  if (typeof body.regionId === 'string' && body.regionId) {
+    const known = await c.env.DB.prepare('SELECT id FROM regions WHERE id = ?')
+      .bind(body.regionId)
+      .first<{ id: string }>();
+    regionId = known?.id ?? null;
+  }
+  const res = await submitTally(c.env, c.get('userId'), { ...closed, regionId }, Date.now());
+  if (!res.ok) {
+    // Honest status (§4): never a silent discard — the survivor must never believe
+    // something was counted when it wasn't.
+    return c.json({ error: 'rate_limited', used: res.used, limit: res.limit }, 429);
+  }
+  return c.json({ ok: true }, 201);
 });
 
 /**

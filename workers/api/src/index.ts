@@ -43,6 +43,7 @@ import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
 import { orgRoutes } from './routes/org';
 import { createEnrollmentCode, createOrg, recordLicense } from './lib/org';
+import { SUPPRESSION_THRESHOLD, tallyAggregate } from './lib/tally';
 import type { Env, Vars } from './types';
 
 /**
@@ -123,6 +124,16 @@ app.onError((error, c) => {
 // Lets the deploy script print the LIVE worker build alongside the PWA build so a
 // server-newer-than-client split is visible immediately, not two weeks later. ---
 app.get('/version', (c) => c.json({ version: c.env.WORKER_BUILD ?? 'dev' }, 200));
+
+// --- Anonymous Incident Tally: published aggregate (Brief 25 §6). PUBLIC and
+// unauthenticated by design — this is open public-good data (agencies, researchers,
+// coalitions), independent of any BLACK BOX account. Returns only grouped counts with
+// small-count suppression (cells below the threshold are dropped); never individual
+// rows, and there is no identity in the store to recover. Read-only. ---
+app.get('/v1/tally/stats', async (c) => {
+  const cells = await tallyAggregate(c.env);
+  return c.json({ suppressionThreshold: SUPPRESSION_THRESHOLD, cells }, 200);
+});
 
 // --- Health (no auth) ---
 app.get('/v1/health', async (c) => {
