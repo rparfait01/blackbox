@@ -2,17 +2,21 @@
 /**
  * Brief 21 §1 — production PWA deploy with a currency assertion.
  *
- * Deploys the built dist to the PRODUCTION branch (never Preview), then asserts the
- * LIVE production build hash equals the one just built. A mismatch means the deploy
- * did NOT reach production (stale cache, or it landed as a Preview) — the exact
- * failure that let production run a 2-week-old client. On mismatch this exits
- * non-zero and prints the diff, so it can never pass silently. Also prints the live
- * PWA + Worker builds so a server-newer-than-client split is visible immediately.
+ * Deploys the built dist to the PRODUCTION branch (never Preview), then asserts
+ * that BOTH the live PWA and the live Worker report the build just shipped. A PWA
+ * mismatch means the deploy did NOT reach production (stale cache, or it landed as
+ * a Preview) — the exact failure that let production run a 2-week-old client. A
+ * Worker mismatch means a server/client SPLIT. Brief 0 hardened both halves: either
+ * one failing — including an unreachable or erroring Worker /version, which fails
+ * CLOSED, never 'unknown' — exits non-zero, and the success line prints only after
+ * both verify. Currency lives in assert-currency.mjs.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+
+import { assertDeployCurrencyOrExit } from './assert-currency.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'apps/pwa/dist');
@@ -39,43 +43,9 @@ execFileSync(
   { cwd: ROOT, stdio: 'inherit', shell: true },
 );
 
-async function liveJson(url) {
-  const res = await fetch(`${url}?ts=${Date.now()}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
-  return res.json();
-}
-
-// Poll for edge propagation, then assert.
-let live = null;
-for (let i = 0; i < 12; i += 1) {
-  try {
-    live = (await liveJson(`${PROD_URL}/version.json`)).build;
-    if (live === expected) break;
-  } catch {
-    /* still propagating */
-  }
-  await new Promise((r) => setTimeout(r, 3000));
-}
-
-let worker = 'unknown';
-try {
-  worker = (await liveJson(`${WORKER_URL}/version`)).version;
-} catch {
-  /* an older worker without /version */
-}
-
-console.log('\n──────────── deploy currency ────────────');
-console.log(`PWA  committed : ${expected}`);
-console.log(`PWA  live      : ${live ?? '(unreachable)'}`);
-console.log(`Worker live    : ${worker}`);
-console.log('─────────────────────────────────────────');
-
-if (live !== expected) {
-  console.error(`\n✗ CURRENCY MISMATCH: production PWA is '${live}', expected '${expected}'.`);
-  console.error('  The deploy did NOT reach production (stale cache or wrong target). Failing loud.');
-  process.exit(1);
-}
-if (worker !== 'unknown' && worker !== expected) {
-  console.warn(`\n⚠ Worker (${worker}) and PWA (${expected}) builds differ — a server/client split. Redeploy the lagging side.`);
-}
-console.log('\n✓ production PWA matches the committed build.');
+// Poll BOTH live endpoints for edge propagation, then assert. Both halves must
+// prove the expected build against the LIVE endpoints, and an unreachable/stale/
+// erroring worker fails CLOSED — the success line prints only if both verify.
+// (Brief 0 — deploy hardening. Logic lives in assert-currency.mjs so its failure
+// paths are provable without a real deploy: scripts/verify-hardening.mjs.)
+await assertDeployCurrencyOrExit({ expected, prodUrl: PROD_URL, workerUrl: WORKER_URL });

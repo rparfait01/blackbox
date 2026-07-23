@@ -17,6 +17,7 @@ const read = (p: string): string => readFileSync(p, 'utf8');
 
 describe('§1 deploy currency', () => {
   const deployPages = read(join(ROOT, 'scripts/deploy-pages.mjs'));
+  const assertCurrency = read(join(ROOT, 'scripts/assert-currency.mjs'));
   const pwaPkg = JSON.parse(read(join(PWA, 'package.json')));
   const vite = read(join(PWA, 'vite.config.ts'));
 
@@ -30,10 +31,40 @@ describe('§1 deploy currency', () => {
     expect(deployPages).toMatch(/PROD_BRANCH\s*=\s*'master'/);
   });
 
-  it('asserts live production build == committed build, and fails loud (non-zero) on mismatch', () => {
-    expect(deployPages).toMatch(/live !== expected/);
-    expect(deployPages).toContain('process.exit(1)');
-    expect(deployPages).toMatch(/version\.json/);
+  it('delegates currency to the hardened guard — no soft/inline worker path', () => {
+    expect(deployPages).toMatch(/assertDeployCurrencyOrExit/);
+    // The old warn-only, worker-skipping path must never come back (the defect was
+    // `let worker = 'unknown'` + a console.warn; match the code form, not prose).
+    expect(deployPages).not.toMatch(/console\.warn/);
+    expect(deployPages).not.toMatch(/=\s*'unknown'/);
+  });
+
+  // Brief 0 — BOTH halves hard-fail; an unreachable worker fails CLOSED.
+  it('fails loud (non-zero); the worker half is not a warn and not a skip', () => {
+    expect(assertCurrency).toContain('process.exit(1)');
+    expect(assertCurrency).not.toMatch(/console\.warn/); // no soft worker warning
+    expect(assertCurrency).not.toMatch(/=\s*'unknown'/); // no 'unknown' fallback/skip
+  });
+
+  it('an unreachable/erroring endpoint fails closed (ok:false), never swallowed to success', () => {
+    expect(assertCurrency).toMatch(/catch[\s\S]*?seen =/); // errors are recorded, not ignored
+    expect(assertCurrency).toMatch(/return \{ ok: false/); // and yield a hard failure
+  });
+
+  it('verifies BOTH halves against the LIVE endpoints, cache-busted', () => {
+    expect(assertCurrency).toMatch(/version\.json/); // PWA live endpoint
+    expect(assertCurrency).toMatch(/'build'/); // PWA field
+    expect(assertCurrency).toMatch(/'version'/); // worker field
+    expect(assertCurrency).toMatch(/cache: 'no-store'/);
+    expect(assertCurrency).toMatch(/\?ts=/);
+  });
+
+  it('prints success ONLY after both halves verify (the exit gate precedes it)', () => {
+    const successIdx = assertCurrency.indexOf('both match the committed build');
+    const exitIdx = assertCurrency.indexOf('process.exit(1)');
+    expect(successIdx).toBeGreaterThan(-1);
+    expect(exitIdx).toBeGreaterThan(-1);
+    expect(successIdx).toBeGreaterThan(exitIdx);
   });
 
   it('emits version.json at build time so the live build is fetchable', () => {
