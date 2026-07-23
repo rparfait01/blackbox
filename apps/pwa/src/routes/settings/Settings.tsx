@@ -14,6 +14,7 @@ import { REGIONS } from '@/lib/regions';
 import { useActiveAlert } from '@/lib/active-alert';
 import { enrollPasskey, passkeySupported } from '@/lib/passkey';
 import { ContactTabs } from './ContactTabs';
+import { AnonymousTally } from './AnonymousTally';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean };
@@ -60,6 +61,9 @@ export function Settings(): JSX.Element {
   const [selectedMode, setSelectedMode] = useState<DisplayMode | null>(getDisplayMode());
   // §1: enrolling a passkey from Settings — the upgrade path off the email link.
   const [enrolling, setEnrolling] = useState(false);
+  // Brief 25: the anonymous incident tally overlay. Reachable only here (Settings is
+  // Visible + unreachable during an active alert), so it is never surfaced under duress.
+  const [tallyOpen, setTallyOpen] = useState(false);
 
   const load = (): void => {
     void api<MeData>('/v1/me').then((r) => r.ok && r.data && setMe(r.data));
@@ -338,6 +342,22 @@ export function Settings(): JSX.Element {
 
         <ContactTabs flash={flash} />
 
+        {/* Brief 25 — anonymous incident tally. A calm, deliberate acknowledgment that
+            something happened, severed from identity. Settings-only (never the Hidden
+            facade) and unreachable during an active alert. */}
+        <Group label="Something happened">
+          <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
+            Acknowledge anonymously that an incident occurred — four taps, nothing about what happened or about
+            you. It’s counted toward statistics on violence that usually goes unreported.
+          </p>
+          <button
+            onClick={() => setTallyOpen(true)}
+            className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
+          >
+            Report anonymously
+          </button>
+        </Group>
+
         <button onClick={() => void signOut()} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
         </button>
@@ -361,6 +381,8 @@ export function Settings(): JSX.Element {
           {toast}
         </div>
       ) : null}
+
+      {tallyOpen ? <AnonymousTally onClose={() => setTallyOpen(false)} /> : null}
     </main>
   );
 }
