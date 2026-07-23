@@ -61,3 +61,27 @@ describe('§2 events are stamped with the owner org at creation (frozen, join-fr
     expect(index).toMatch(/INSERT INTO events \([^)]*\borgId\b/);
   });
 });
+
+describe('§5 every /v1/org read is scoped by the caller org — no cross-tenant path', () => {
+  const org = read('src/routes/org.ts');
+
+  it('Track lists only this org (WHERE u.orgId = ?, bound to the session orgId)', () => {
+    expect(org).toMatch(/FROM users u WHERE u\.orgId = \?/);
+    expect(org).toMatch(/const orgId = c\.get\('orgId'\)!/);
+  });
+
+  it('Correlate list + detail filter by the stamped events.orgId', () => {
+    expect(org).toMatch(/WHERE e\.orgId = \? AND e\.status = 'active'/);
+    // Detail: the AND e.orgId = ? predicate is the isolation boundary (else 404).
+    expect(org).toMatch(/WHERE e\.id = \? AND e\.orgId = \?/);
+  });
+
+  it('remove-seat only touches an account in the caller org (target.orgId === orgId)', () => {
+    expect(org).toMatch(/target\.orgId !== orgId/);
+  });
+
+  it('there is no org read that binds a client-supplied org id', () => {
+    // orgId always comes from c.get('orgId') (membership), never req body/param/query.
+    expect(org).not.toMatch(/orgId\s*=\s*(body|c\.req\.(param|query))/);
+  });
+});
