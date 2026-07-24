@@ -15,6 +15,7 @@ import { useActiveAlert } from '@/lib/active-alert';
 import { enrollPasskey, passkeySupported } from '@/lib/passkey';
 import { ContactTabs } from './ContactTabs';
 import { AnonymousTally } from './AnonymousTally';
+import { GuidedIntake } from './GuidedIntake';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean };
@@ -64,6 +65,9 @@ export function Settings(): JSX.Element {
   // Brief 25: the anonymous incident tally overlay. Reachable only here (Settings is
   // Visible + unreachable during an active alert), so it is never surfaced under duress.
   const [tallyOpen, setTallyOpen] = useState(false);
+  // Brief 27: the guided intake (structured case file). Settings-only; filing is
+  // fail-closed (blocked unless zero-knowledge storage is armed).
+  const [intakeOpen, setIntakeOpen] = useState(false);
 
   const load = (): void => {
     void api<MeData>('/v1/me').then((r) => r.ok && r.data && setMe(r.data));
@@ -358,6 +362,21 @@ export function Settings(): JSX.Element {
           </button>
         </Group>
 
+        {/* Brief 27 — guided intake producing a structured, encrypted case file the survivor
+            owns. Settings-only; filing is fail-closed (blocked unless ZK storage is armed). */}
+        <Group label="Make a report">
+          <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
+            A private, guided space to record what happened, in your own words and at your own pace. Your report is
+            encrypted under your own key — only you can open it — and you can export it to legal aid or counsel.
+          </p>
+          <button
+            onClick={() => setIntakeOpen(true)}
+            className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
+          >
+            Start a report
+          </button>
+        </Group>
+
         <button onClick={() => void signOut()} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
         </button>
@@ -383,6 +402,7 @@ export function Settings(): JSX.Element {
       ) : null}
 
       {tallyOpen ? <AnonymousTally onClose={() => setTallyOpen(false)} /> : null}
+      {intakeOpen ? <GuidedIntake onClose={() => setIntakeOpen(false)} /> : null}
     </main>
   );
 }

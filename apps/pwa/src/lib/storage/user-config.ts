@@ -62,3 +62,11 @@ export const setStoredEnvelopeKeypair = (value: StoredEnvelopeKeypair): Promise<
   putConfig(ENVELOPE_KEY, value);
 export const getStoredEnvelopeKeypair = (): Promise<StoredEnvelopeKeypair | null> =>
   getConfig<StoredEnvelopeKeypair>(ENVELOPE_KEY);
+
+/** Brief 27 — a resumable intake DRAFT, stored ONLY as a sealed blob (Sealed to the
+ *  survivor's own key, never plaintext). A partial disclosure gets the same fail-closed
+ *  protection as a filed one; a draft is never discarded and never stored in the clear. */
+const INTAKE_DRAFT_KEY = 'intakeDraft';
+export const setStoredIntakeDraft = (sealed: string): Promise<void> => putConfig(INTAKE_DRAFT_KEY, sealed);
+export const getStoredIntakeDraft = (): Promise<string | null> => getConfig<string>(INTAKE_DRAFT_KEY);
+export const clearStoredIntakeDraft = (): Promise<void> => putConfig(INTAKE_DRAFT_KEY, '');
