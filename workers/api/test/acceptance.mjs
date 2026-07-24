@@ -181,7 +181,10 @@ async function run() {
     const got = await api('GET', '/v1/me/contacts', { bearer: u.session });
     const p = got.data.slots.find((s) => s.slot === 'primary');
     assert(p?.filled && p.contactName === 'Persisted' && p.channel === 'email', 'primary not persisted');
-    assert(got.data.armable === true, 'not armable with an email contact');
+    // Brief 28 §2: armable now also requires entitlement, so a fresh (unactivated)
+    // account asserts the RECIPIENT precondition specifically (that an email contact is
+    // deliverable) via armReasons — the entitlement half is proven in the §28 checks.
+    assert(got.data.armReasons?.hasDeliverableRecipient === true, 'email contact not deliverable');
   });
 
   await check('3. QR-LINE: manual save refused; pairing start+status work (no id typed)', async () => {
@@ -893,9 +896,11 @@ async function run() {
     });
     assert(rename.data.status === 'pending', `rename changed consent unexpectedly: ${JSON.stringify(rename.data)}`);
 
-    // Armed reflects the gate. With only a pending contact + a confirmed guardian,
-    // armable is true (the guardian is confirmed). This holds in both flag states.
-    assert(got.data.armable === true, `guardian-confirmed account should be armable: ${JSON.stringify(got.data.armable)}`);
+    // Armed reflects the gate. With only a pending contact + a confirmed guardian, the
+    // RECIPIENT precondition is met (the guardian is confirmed). This holds in both flag
+    // states. Brief 28 §2 folded entitlement into armable, so assert the recipient half
+    // via armReasons here (the entitlement half is proven in the §28 checks).
+    assert(got.data.armReasons?.hasDeliverableRecipient === true, `guardian-confirmed account should be deliverable: ${JSON.stringify(got.data.armReasons)}`);
   });
 
   await check('37. consent webhook: unsigned inbound is refused (403)', async () => {
@@ -1284,6 +1289,112 @@ async function run() {
     for (let i = 0; i < 4; i += 1) await api('POST', '/v1/me/intake-stats', { bearer: u.session, body: rare });
     const over = await api('POST', '/v1/me/intake-stats', { bearer: u.session, body: rare });
     assert(over.status === 429 && over.data.error === 'rate_limited', `intake-stats rate limit not enforced: ${over.status} ${JSON.stringify(over.data)}`);
+  });
+
+  await check('61. §28 gate at ARM, never the trigger: an unactivated account cannot arm but STILL fires; operator grant arms it', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P'); // a deliverable recipient
+    let got = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    assert(got.data.armReasons?.hasDeliverableRecipient === true, 'recipient precondition not met');
+    assert(got.data.armReasons?.entitled === false, 'a fresh account must be unactivated');
+    assert(got.data.armable === false, 'unactivated account must NOT be armable — the gate is at ARM');
+    // THE BUTTON ALWAYS FIRES: the paywall never gates the trigger (§0).
+    const ev = await trigger(u.session, 'acc-unactivated');
+    assert(ev?.eventId, 'an unactivated trigger did NOT fire — the paywall gated the trigger!');
+    await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN }).catch(() => {});
+    // Operator grant activates → armable true.
+    const grant = await api('POST', '/v1/admin/entitlement/grant', { bearer: ADMIN, body: { email: u.email, reason: 'acc-suite' } });
+    assert(grant.status === 200 && grant.data.activated === true, `operator grant failed: ${JSON.stringify(grant.data)}`);
+    got = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    assert(got.data.armable === true && got.data.armReasons.entitled === true, 'not armable after operator grant');
+    const me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.data.user.entitlement === 'activated' && me.data.user.entitlementSource === 'operator_grant', `/me entitlement wrong: ${JSON.stringify(me.data.user)}`);
+  });
+
+  await check('62. §28 web sale is SERVER-VERIFIED: unsigned webhook → 401; confirm without a receipt never client-grants; signed → activated', async () => {
+    // Unsigned (and, while the prod secret is unset, ANY) call is refused — never activates.
+    const unsigned = await api('POST', '/v1/activation/webhook', { body: { providerEventId: 'acc-' + uniq(), email: 'x@example.com' } });
+    assert(unsigned.status === 401, `unsigned activation webhook not refused: ${unsigned.status}`);
+    // A signed-in account with NO verified receipt cannot self-activate (no client-granted entitlement).
+    const u = await signup();
+    const confirm = await api('POST', '/v1/me/activation/confirm', { bearer: u.session, body: {} });
+    assert(confirm.status === 200 && confirm.data.entitlement === 'unactivated', `confirm client-granted entitlement: ${JSON.stringify(confirm.data)}`);
+    const me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.data.user.entitlement === 'unactivated', 'account activated with no verified payment!');
+    // If the webhook secret is configured for this run (matching prod), a correctly-signed
+    // call activates the matching account with source purchase_web.
+    const SECRET = process.env.BBX_ACTIVATION_WEBHOOK_SECRET;
+    if (SECRET) {
+      const buyer = await signup();
+      const raw = JSON.stringify({ providerEventId: 'acc-' + uniq(), provider: 'manual', email: buyer.email, amountCents: 3499 });
+      const sig = hmacHex(SECRET, raw);
+      const res = await fetch(ORIGIN + '/v1/activation/webhook', { method: 'POST', headers: { 'content-type': 'application/json', 'x-activation-signature': sig }, body: raw });
+      assert(res.status === 200, `a correctly-signed webhook was not accepted: ${res.status}`);
+      const bme = await api('GET', '/v1/me', { bearer: buyer.session });
+      assert(bme.data.user.entitlement === 'activated' && bme.data.user.entitlementSource === 'purchase_web', `signed purchase did not activate: ${JSON.stringify(bme.data.user)}`);
+    } else {
+      console.log('        (note: BBX_ACTIVATION_WEBHOOK_SECRET unset — signed-path half skipped)');
+    }
+  });
+
+  await check('63. §28 codes: a readable code redeems however it is typed (case/dashes); redemption is rate-limited (429), not brute-forceable', async () => {
+    if (!ADMIN || !MAGIC) { console.log('        (note: needs ADMIN + MAGIC — skipped)'); return; }
+    const O = await bootstrapOrgWithTwoAdmins('Org-N-' + uniq(), 'zero_fee', 3);
+    const c = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
+    const code = c.data.code;
+    assert(typeof code === 'string' && !/[ILOU01]/.test(code), `issued code is not the readable alphabet: ${code}`);
+    // A survivor types it lower-case, dash-grouped → still redeems (normalization).
+    const messy = code.toLowerCase().replace(/(.{4})/g, '$1-').replace(/-$/, '');
+    const surv = await signup();
+    const red = await api('POST', '/v1/me/org/redeem', { bearer: surv.session, body: { code: messy } });
+    assert(red.status === 200 && red.data.ok, `a messily-typed readable code did not redeem: ${JSON.stringify(red.data)}`);
+    // Rate limit: a fresh account hammering bogus codes is 429'd past the ceiling.
+    const attacker = await signup();
+    let got429 = false;
+    for (let i = 0; i < 12; i += 1) {
+      const r = await api('POST', '/v1/me/org/redeem', { bearer: attacker.session, body: { code: `ZZZZ${i}ZZZZ` } });
+      if (r.status === 429) { got429 = true; break; }
+    }
+    assert(got429, 'redemption is not rate-limited — a short code would be brute-forceable');
+  });
+
+  await check('64. §28 operator entitlement: grant is idempotent + sourced; the ONE revoke path needs a reason + deactivates; both are ADMIN-only', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const u = await signup();
+    const g = await api('POST', '/v1/admin/entitlement/grant', { bearer: ADMIN, body: { email: u.email, reason: 'acc' } });
+    assert(g.status === 200 && g.data.activated === true, `grant failed: ${JSON.stringify(g.data)}`);
+    let me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.data.user.entitlement === 'activated' && me.data.user.entitlementSource === 'operator_grant', 'grant did not set the source');
+    // Idempotent — a second grant is a no-op, not a double-activate or an error.
+    const g2 = await api('POST', '/v1/admin/entitlement/grant', { bearer: ADMIN, body: { email: u.email } });
+    assert(g2.status === 200 && g2.data.alreadyActive === true, 'grant is not idempotent');
+    // Revoke REQUIRES a reason (privileged, logged) and is the ONLY way back to unactivated.
+    const noReason = await api('POST', '/v1/admin/entitlement/revoke', { bearer: ADMIN, body: { email: u.email } });
+    assert(noReason.status === 400, 'revoke without a reason was not refused');
+    const rev = await api('POST', '/v1/admin/entitlement/revoke', { bearer: ADMIN, body: { email: u.email, reason: 'fraud-test' } });
+    assert(rev.status === 200 && rev.data.changed === true, `revoke failed: ${JSON.stringify(rev.data)}`);
+    me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.data.user.entitlement === 'unactivated', 'revoke did not deactivate');
+    // Neither is reachable without the ADMIN token.
+    const unauth = await api('POST', '/v1/admin/entitlement/grant', { body: { email: u.email } });
+    assert(unauth.status === 401, 'admin grant is reachable without the ADMIN token');
+  });
+
+  await check('65. §28/§0: an activated survivor stays activated after the org tie ends — entitlement lives on the account, not the license', async () => {
+    if (!ADMIN || !MAGIC) { console.log('        (note: needs ADMIN + MAGIC — skipped)'); return; }
+    const O = await bootstrapOrgWithTwoAdmins('Org-L-' + uniq(), 'zero_fee', 3);
+    const c = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
+    const surv = await enrollWith(c.data.code);
+    assert(surv.red.data?.ok, `enroll failed: ${JSON.stringify(surv.red.data)}`);
+    let me = await api('GET', '/v1/me', { bearer: surv.acc.session });
+    assert(me.data.user.entitlement === 'activated' && me.data.user.entitlementSource === 'org_code', `enrolment did not activate: ${JSON.stringify(me.data.user)}`);
+    // The survivor leaves the org (seat freed). Entitlement must NOT be revoked — an org
+    // relationship ending never deactivates an already-activated survivor.
+    const left = await api('POST', '/v1/me/org/leave', { bearer: surv.acc.session });
+    assert(left.data?.ok, `leave failed: ${JSON.stringify(left.data)}`);
+    me = await api('GET', '/v1/me', { bearer: surv.acc.session });
+    assert(me.data.user.entitlement === 'activated', 'leaving the org deactivated the survivor — §0 violated');
   });
 
   // ---- cleanup ----
