@@ -33,7 +33,7 @@ current (working) plaintext upload** rather than dropping the capture. See ENVEL
 |---|---|---|---|
 | A1 | **The survivor's capture availability** | Evidence of an incident; often the only record. Losing it is irreversible harm. | Plaintext chunks in R2 `MEDIA`, uploaded via a resilient IndexedDB queue (`upload-manager.ts`). Works today. |
 | A2 | **Capture confidentiality** (audio/video content) | Content is the survivor's, never a BLACK BOX asset. "Storage access = blobs I cannot open." | **NOT protected today** — chunks are plaintext in R2; the operator can open them. This brief closes that. |
-| A3 | **Chain-of-custody integrity** | Evidence must be provably un-tampered for the courts lane. | Already protected: append-only Ed25519-signed hash chain (`integrity.ts`), content-agnostic (hashes ciphertext identically). |
+| A3 | **Chain-of-custody integrity** | Evidence must be provably un-tampered for the courts lane. | Append-only Ed25519-signed hash chain (`integrity.ts`), content-agnostic. **Review correction:** the chain must also commit to a **signed pre-encryption plaintext hash** per chunk — hashing only the ciphertext authenticates the wrong artifact under FRE 901 (see §4a of the design). |
 | A4 | **Location confidentiality** | Reveals where the survivor is/was. | Plaintext in D1 `locations_index`, **read and processed by the server** for the live dashboard. §4B: wrap to org (design choice with real latency cost — see below). |
 | A5 | **Contact-graph confidentiality** | Who the survivor's people are. | Plaintext in D1. §4B: wrap. Out of Phase 1. |
 | A6 | **Private keys** (survivor, org) | Compromise = decrypt everything they can reach. | Do not exist yet. Must be **client-custodied, never server-readable.** |
@@ -108,8 +108,16 @@ not claim crypto stops an authorized insider — it bounds and traces them.
 is a **re-encryption to the named recipient's key**, recorded as a logged key-provisioning
 event (reusing `exportPackage` + `custody_transfers` + the Ed25519 manifest), never a
 download-and-forward. No standing copy is created; each recipient's access is a distinct,
-logged grant. **Legal gate owns the question of whether this is court-admissible** — perfect
-crypto ≠ admissible evidence.
+logged grant. **The signed pre-encryption plaintext commitment (A3, design §4a) is what
+preserves chain of custody across re-encryption** — re-encryption then changes only the
+container, and a later decryption is checkable against a capture-time commitment. Legal gate
+owns admissibility — perfect crypto ≠ admissible evidence.
+
+**T8 — Harvest-now-decrypt-later (AD1, long horizon).** Captures may need confidentiality for
+years; a stored ciphertext copy could be broken by future cryptanalysis (incl. quantum).
+*Mitigation (roadmap, not pilot):* the per-wrap algorithm identifier reserves the seam for a
+hybrid ECDH + ML-KEM wrap. Flagged for the reviewer as a roadmap decision, not a pilot
+blocker.
 
 **T6 — Abuser with the survivor's device (AD5).** *Partially out of scope of crypto* — a
 key on an unlocked device is reachable. *Mitigation is existing:* the covert facade (§0a)
@@ -171,25 +179,32 @@ release-blocking regression regardless of its encryption benefit.
 
 ---
 
-## 8. What the reviewer must decide (handoff to the crypto + legal gates)
+## 8. Review status — resolved vs. still open
 
-These are explicitly **not** settled by this document — they are the gate's job:
+The crypto + legal review has answered (input to gates 2 & 3, not a substitute for formal
+sign-off).
 
-1. **Primitive ratification** — the ENVELOPE_DESIGN proposes WebCrypto ECDH (P-256) +
-   AES-256-GCM (with libsodium X25519 sealed-box as the alternative). The crypto reviewer
-   ratifies or overrides. **No custom crypto.**
-2. **Org-key rotation mechanism** — re-wrap of prior DEKs on offboarding: who performs the
-   re-wrap (it needs a party that can unwrap the old DEKs — an active seat's client), and
-   how it is made tamper-evident.
-3. **Key-loss / recovery** — whether org-mediated re-provision is acceptable ZK-wise, and
-   the exact individual-survivor recovery-code custody.
-4. **Legal (separate reviewer)** — is re-encrypted evidence admissible? Does per-instance
-   re-encryption preserve chain of custody? Wiretap/consent law on encrypted capture; DPA
-   alignment.
-5. **Metadata boundary sign-off** — confirm timing/state-readable is disclosed accurately
-   and location-wrapped-to-org's latency cost on the live dashboard is acceptable.
+**Resolved by the review** (now in the design):
+1. **Primitives ratified** — P-256 ECDH + HKDF-SHA256 + AES-256-GCM (ECIES); libsodium/WASM
+   rejected; per-wrap algorithm identifier for a later X25519/PQ migration. **No custom
+   crypto.**
+2. **Org-key delivery** — per-seat wrapping of the org private key (N wrapped copies, never
+   plaintext); seat-key custody via the WebAuthn PRF extension.
+3. **Rotation is tamper-evident** — a remaining seat re-wraps client-side and the rotation is
+   signed into the chain (not forgeable, not silently omissible).
+4. **Correctness fixes required** — counter-based IV; AAD binds `captureId ‖ chunkIndex ‖
+   finalFlag`; the chain records the expected chunk count (anti-truncation); a **signed
+   pre-encryption plaintext commitment** (admissibility).
+5. **Disclosure honesty** — the copy must state the **org can read content** (BLACK BOX
+   cannot), not only that the operator cannot.
+
+**Still open** (for the reviewers to close, before/during Phase 1): epoch-key hierarchy vs
+full re-wrap on rotation (scale vs a departed seat retaining tenure-era access); PRF
+salt-handling + no-PRF fallback; post-quantum hybrid on the roadmap; legal confirmation that
+a signed plaintext commitment satisfies authentication and that per-instance re-encryption
+preserves custody; DPA scoped to **metadata** (ZK narrows scope, does not eliminate it).
 
 ---
 
-*Companion document: [ENVELOPE_DESIGN.md](./ENVELOPE_DESIGN.md) — architecture, primitive
-proposal, the nine-state operations, and the phased, flag-gated build plan.*
+*Companion document: [ENVELOPE_DESIGN.md](./ENVELOPE_DESIGN.md) — the ratified primitive
+stack, per-chunk framing, the nine-state operations, and the phased, flag-gated build plan.*
