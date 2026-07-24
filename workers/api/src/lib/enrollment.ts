@@ -14,10 +14,63 @@
 import { audit } from './audit';
 import { grantEntitlement } from './entitlement';
 import { adminRemovalBlocked, getActiveLicense, seatIssuanceLocked } from './org';
+import { normalizeCode } from './readable-code';
 import type { Env, EnrollmentCodeRow } from '../types';
 
 export type RedeemFailure = 'not_found' | 'revoked' | 'expired' | 'exhausted';
 export type BindFailure = 'already_in_org' | 'seats_full' | 'no_license' | 'needs_two_admins';
+
+/** Brief 28 §4 — per-account redemption rate limit (brute-force guard on readable
+ *  codes). A short rolling window; a successful redeem ends the attack anyway. */
+export const REDEEM_WINDOW_MS = 3_600_000; // 1 hour
+export const REDEEM_MAX_ATTEMPTS = 10;
+
+export type RedeemRateVerdict =
+  | { allowed: true; windowStart: number; attempts: number }
+  | { allowed: false };
+
+/**
+ * Pure rate rule for code redemption: given the account's stored window + attempt count
+ * and the current time, decide whether another attempt is allowed. A lapsed window
+ * resets the count. Decoupled from D1 so every branch is unit-testable.
+ */
+export function redeemRateDecision(
+  stored: { redeemWindowStart: number | null; redeemAttempts: number },
+  nowMs: number,
+): RedeemRateVerdict {
+  const inWindow =
+    stored.redeemWindowStart != null && nowMs - stored.redeemWindowStart < REDEEM_WINDOW_MS;
+  const used = inWindow ? stored.redeemAttempts : 0;
+  if (used >= REDEEM_MAX_ATTEMPTS) return { allowed: false };
+  return {
+    allowed: true,
+    windowStart: inWindow ? stored.redeemWindowStart! : nowMs,
+    attempts: used + 1,
+  };
+}
+
+/**
+ * Read the account's redemption counter, decide, and (when allowed) advance it. Returns
+ * whether this attempt may proceed. Count every attempt — the guard is against guessing.
+ */
+export async function checkRedeemRate(
+  env: Env,
+  userId: string,
+  nowMs: number,
+): Promise<boolean> {
+  const acct = await env.DB.prepare('SELECT redeemWindowStart, redeemAttempts FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ redeemWindowStart: number | null; redeemAttempts: number }>();
+  const verdict = redeemRateDecision(
+    { redeemWindowStart: acct?.redeemWindowStart ?? null, redeemAttempts: acct?.redeemAttempts ?? 0 },
+    nowMs,
+  );
+  if (!verdict.allowed) return false;
+  await env.DB.prepare('UPDATE users SET redeemWindowStart = ?, redeemAttempts = ? WHERE id = ?')
+    .bind(verdict.windowStart, verdict.attempts, userId)
+    .run();
+  return true;
+}
 
 /**
  * Pure redeemability rule for a code at a given instant. Decoupled from D1 so every
@@ -35,13 +88,21 @@ export function codeRedeemable(
   return { ok: true };
 }
 
-/** Load a code row verbatim. */
+/**
+ * Resolve a code row from user input. Tries an EXACT match first (legacy hex codes,
+ * issued before Brief 28 §4, are stored verbatim) then a NORMALIZED match (new readable
+ * codes are stored normalized, so a survivor may type them lower-case / with dashes).
+ * Returns the row with its actual stored `code`, which the caller uses for the atomic
+ * consume — never the raw input.
+ */
 async function loadCode(env: Env, code: string): Promise<EnrollmentCodeRow | null> {
-  return env.DB.prepare(
-    'SELECT code, orgId, role, expiresAt, maxUses, usedCount, revoked, createdBy, createdAt FROM enrollment_codes WHERE code = ?',
-  )
-    .bind(code)
-    .first<EnrollmentCodeRow>();
+  const cols =
+    'SELECT code, orgId, role, expiresAt, maxUses, usedCount, revoked, createdBy, createdAt FROM enrollment_codes WHERE code = ?';
+  const exact = await env.DB.prepare(cols).bind(code).first<EnrollmentCodeRow>();
+  if (exact) return exact;
+  const normalized = normalizeCode(code);
+  if (normalized === code) return null; // no second form to try
+  return env.DB.prepare(cols).bind(normalized).first<EnrollmentCodeRow>();
 }
 
 /**
@@ -135,12 +196,15 @@ export async function redeemCode(
   const row = await loadCode(env, code);
   const verdict = codeRedeemable(row, now);
   if (!verdict.ok) return { ok: false, reason: verdict.reason };
+  // Use the RESOLVED stored code for every write — the user's raw input may differ in
+  // case/dashes from the normalized stored form (Brief 28 §4).
+  const storedCode = row!.code;
   // Consume one use atomically — re-checks every condition so a concurrent redeem
   // can't push usedCount past maxUses.
   const consumed = await env.DB.prepare(
     'UPDATE enrollment_codes SET usedCount = usedCount + 1 WHERE code = ? AND revoked = 0 AND usedCount < maxUses AND (expiresAt IS NULL OR expiresAt > ?)',
   )
-    .bind(code, now)
+    .bind(storedCode, now)
     .run();
   if (consumed.meta.changes !== 1) return { ok: false, reason: 'exhausted' };
 
@@ -149,7 +213,7 @@ export async function redeemCode(
     // Give the use back — the bind was refused (seats full / already in another org),
     // so this redemption did not actually enroll anyone.
     await env.DB.prepare('UPDATE enrollment_codes SET usedCount = usedCount - 1 WHERE code = ?')
-      .bind(code)
+      .bind(storedCode)
       .run();
     return { ok: false, reason: bind.reason };
   }

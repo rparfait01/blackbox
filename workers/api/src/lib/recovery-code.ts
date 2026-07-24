@@ -18,34 +18,19 @@
  */
 
 import { hashSecret, verifySecret } from './crypto';
+import { generateReadableCode, groupCode, normalizeCode } from './readable-code';
 import type { Env } from '../types';
+
+// The readable-code generator is now shared (Brief 28 §4) — recovery + org codes use
+// ONE implementation. Recovery codes keep their 12-character length, grouped 4-4-4 for
+// legibility, e.g. "K4M9-XR2T-8PBW".
+export { normalizeCode };
 
 /** How many codes are minted per account. */
 const CODE_COUNT = 1;
 
-/**
- * Crockford-style base32 without I/L/O/U — no character an anxious person can
- * misread, and nothing that can form a word. Grouped for legibility when written
- * down, e.g. "K4M9-XR2T-8PBW".
- */
-const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const GROUPS = 3;
-const GROUP_LEN = 4;
-
 function generateCode(): string {
-  const bytes = new Uint8Array(GROUPS * GROUP_LEN);
-  crypto.getRandomValues(bytes);
-  const chars = Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]);
-  const out: string[] = [];
-  for (let g = 0; g < GROUPS; g += 1) {
-    out.push(chars.slice(g * GROUP_LEN, (g + 1) * GROUP_LEN).join(''));
-  }
-  return out.join('-');
-}
-
-/** Normalize user entry: case-insensitive, dashes/spaces optional. */
-export function normalizeCode(input: string): string {
-  return input.trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return groupCode(generateReadableCode(12), 4);
 }
 
 /**

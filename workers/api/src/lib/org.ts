@@ -5,7 +5,7 @@
  * pure authorization rules (testable in isolation) plus the small D1 helpers the
  * portal routes and enrollment share.
  */
-import { randomHex } from '@blackbox/shared';
+import { generateReadableCode } from './readable-code';
 
 import type { Env, EnrollmentCodeRow, OrgLicenseRow, OrganizationRow } from '../types';
 
@@ -97,7 +97,10 @@ export async function createEnrollmentCode(
   },
 ): Promise<EnrollmentCodeRow> {
   const row: EnrollmentCodeRow = {
-    code: randomHex(16), // 128 bits — unguessable
+    // Brief 28 §4 — readable Crockford code (no 0/O/1/I/L confusables), stored
+    // normalized. Redeemed after normalization, so dashes/case on entry don't matter;
+    // legacy hex codes still redeem by exact match. Rate-limited at redemption.
+    code: generateReadableCode(10),
     orgId: input.orgId,
     role: input.role,
     expiresAt: input.expiresAt ?? null,

@@ -9,11 +9,10 @@
  * live in their own table and are consumed by a DIFFERENT ceremony (creating the first
  * admin account), never the survivor/coordinator enrollment path.
  */
-import { randomHex } from '@blackbox/shared';
-
 import { audit } from './audit';
 import { bindAccountToOrg } from './enrollment';
 import { getOrg } from './org';
+import { generateReadableCode, normalizeCode } from './readable-code';
 import type { AdminRegistrationCodeRow, Env } from '../types';
 
 /** Default registration-code lifetime — short; a registration code is never standing. */
@@ -44,11 +43,14 @@ export function registrationCodeRedeemable(
 }
 
 async function loadCode(env: Env, code: string): Promise<AdminRegistrationCodeRow | null> {
-  return env.DB.prepare(
-    'SELECT code, orgId, expiresAt, revoked, redeemedAt, redeemedByUserId, attemptCount, lastAttemptAt, reissueReason, createdBy, createdAt FROM admin_registration_codes WHERE code = ?',
-  )
-    .bind(code)
-    .first<AdminRegistrationCodeRow>();
+  const cols =
+    'SELECT code, orgId, expiresAt, revoked, redeemedAt, redeemedByUserId, attemptCount, lastAttemptAt, reissueReason, createdBy, createdAt FROM admin_registration_codes WHERE code = ?';
+  // Exact match first (legacy hex codes) then normalized (new readable codes — Brief 28 §4).
+  const exact = await env.DB.prepare(cols).bind(code).first<AdminRegistrationCodeRow>();
+  if (exact) return exact;
+  const normalized = normalizeCode(code);
+  if (normalized === code) return null;
+  return env.DB.prepare(cols).bind(normalized).first<AdminRegistrationCodeRow>();
 }
 
 /** Mint a single-use admin registration code bound to a pre-created org. */
@@ -58,7 +60,9 @@ export async function createAdminRegistrationCode(
 ): Promise<AdminRegistrationCodeRow> {
   const now = Date.now();
   const row: AdminRegistrationCodeRow = {
-    code: randomHex(16), // 128 bits — unguessable, delivered separately from the link
+    // Brief 28 §4 — readable Crockford code, stored normalized, delivered separately
+    // from the link. Redeemed after normalization; legacy hex codes still exact-match.
+    code: generateReadableCode(10),
     orgId: input.orgId,
     expiresAt: now + (input.ttlDays ?? DEFAULT_TTL_DAYS) * 86_400_000,
     revoked: 0,
@@ -134,12 +138,15 @@ export async function completeAdminRegistration(
 ): Promise<{ ok: true; orgId: string } | { ok: false; reason: CompleteFailure }> {
   const now = Date.now();
   const row = await loadCode(env, input.code);
+  // Use the RESOLVED stored code for every write — the user's raw input may differ in
+  // case/dashes from the normalized stored form (Brief 28 §4).
+  const storedCode = row?.code ?? input.code;
   // Always record the attempt (rate-limit signal), even on a doomed try.
   if (row) {
     await env.DB.prepare(
       'UPDATE admin_registration_codes SET attemptCount = attemptCount + 1, lastAttemptAt = ? WHERE code = ?',
     )
-      .bind(now, input.code)
+      .bind(now, storedCode)
       .run();
   }
   const verdict = registrationCodeRedeemable(row, now);
@@ -148,7 +155,7 @@ export async function completeAdminRegistration(
   const claimed = await env.DB.prepare(
     'UPDATE admin_registration_codes SET redeemedAt = ?, redeemedByUserId = ? WHERE code = ? AND redeemedAt IS NULL AND revoked = 0',
   )
-    .bind(now, input.userId, input.code)
+    .bind(now, input.userId, storedCode)
     .run();
   if (claimed.meta.changes !== 1) return { ok: false, reason: 'redeemed' };
 
@@ -156,7 +163,7 @@ export async function completeAdminRegistration(
   if (!bind.ok) {
     // Give the code back — the admin bind failed, so no one registered.
     await env.DB.prepare('UPDATE admin_registration_codes SET redeemedAt = NULL, redeemedByUserId = NULL WHERE code = ?')
-      .bind(input.code)
+      .bind(storedCode)
       .run();
     return { ok: false, reason: 'bind_failed' };
   }

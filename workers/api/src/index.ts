@@ -46,6 +46,8 @@ import { orgRoutes } from './routes/org';
 import { orgRegisterRoutes } from './routes/org-register';
 import { createOrg, recordLicense } from './lib/org';
 import { createAdminRegistrationCode, reissueRegistrationCode, revokeRegistrationCode } from './lib/org-registration';
+import { grantEntitlement, operatorRevokeEntitlement } from './lib/entitlement';
+import { getUserByEmail } from './lib/users';
 import { SUPPRESSION_THRESHOLD, tallyAggregate } from './lib/tally';
 import { intakeStatsAggregate } from './lib/intake-stats';
 import type { Env, Vars } from './types';
@@ -550,6 +552,42 @@ app.post('/v1/admin/orgs/:orgId/registration-code/revoke', async (c) => {
     return c.json({ error: 'code_not_found_or_already_redeemed' }, 404);
   }
   return c.json({ revoked: true }, 200);
+});
+
+// Brief 28 §4 — operator entitlement grant (source operator_grant). Entitlement ONLY:
+// it never touches org membership or seats (those are the enrollment/registration
+// paths). Idempotent + logged. For the account bought out-of-band, comped, or recovered
+// from an orphaned web receipt. Target by email or userId.
+app.post('/v1/admin/entitlement/grant', async (c) => {
+  const body = await c.req
+    .json<{ email?: string; userId?: string; reason?: string }>()
+    .catch(() => ({}) as { email?: string; userId?: string; reason?: string });
+  const userId = body.userId?.trim() || (body.email ? (await getUserByEmail(c.env, body.email))?.id : undefined);
+  if (!userId) {
+    return c.json({ error: 'account_not_found' }, 404);
+  }
+  const result = await grantEntitlement(c.env, userId, 'operator_grant');
+  await audit(c.env, null, 'admin.entitlement_grant', null, { targetUserId: userId, reason: (body.reason ?? '').trim() || null });
+  return c.json({ ok: true, userId, activated: result.activated, alreadyActive: result.alreadyActive }, 200);
+});
+
+// Brief 28 §4 — the ONE revoke path (manual, fraud-only, logged). No automatic revoke
+// exists anywhere: no chargeback hook, no license-expiry sweep. A reason is REQUIRED
+// (this deactivates a survivor's arm affordance — a privileged, audited action).
+app.post('/v1/admin/entitlement/revoke', async (c) => {
+  const body = await c.req
+    .json<{ email?: string; userId?: string; reason?: string }>()
+    .catch(() => ({}) as { email?: string; userId?: string; reason?: string });
+  const reason = (body.reason ?? '').trim();
+  if (!reason) {
+    return c.json({ error: 'reason required (this is a logged privileged action)' }, 400);
+  }
+  const userId = body.userId?.trim() || (body.email ? (await getUserByEmail(c.env, body.email))?.id : undefined);
+  if (!userId) {
+    return c.json({ error: 'account_not_found' }, 404);
+  }
+  const changed = await operatorRevokeEntitlement(c.env, userId, reason, null);
+  return c.json({ ok: true, userId, changed }, 200);
 });
 
 app.get('/v1/admin/line-follows', async (c) => {

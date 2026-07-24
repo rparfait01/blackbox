@@ -77,6 +77,40 @@ orgRoutes.post('/codes', requireOrgRole('coordinator'), async (c) => {
   return c.json({ code: codeRow.code, role: requested, maxUses, expiresAt }, 201);
 });
 
+// Brief 28 §4 — a coordinator sees their org's issued enrolment codes with a derived
+// status (active / expired / exhausted / revoked), scoped to their OWN org (orgId from
+// the membership, never the client). The raw code is shown so it can be re-read to an
+// enrollee; a leaked code grants membership/entitlement ONLY, never data (isolation is
+// enforced separately). Ordered newest first.
+orgRoutes.get('/codes', requireOrgRole('coordinator'), async (c) => {
+  const orgId = c.get('orgId')!;
+  const now = Date.now();
+  const { results } = await c.env.DB.prepare(
+    'SELECT code, role, expiresAt, maxUses, usedCount, revoked, createdAt FROM enrollment_codes WHERE orgId = ? ORDER BY createdAt DESC LIMIT 200',
+  )
+    .bind(orgId)
+    .all<{ code: string; role: string; expiresAt: number | null; maxUses: number; usedCount: number; revoked: number; createdAt: number }>();
+  const codes = (results ?? []).map((r) => {
+    const status = r.revoked
+      ? 'revoked'
+      : r.expiresAt != null && r.expiresAt <= now
+        ? 'expired'
+        : r.usedCount >= r.maxUses
+          ? 'exhausted'
+          : 'active';
+    return {
+      code: r.code,
+      role: r.role,
+      status,
+      usesLeft: Math.max(0, r.maxUses - r.usedCount),
+      maxUses: r.maxUses,
+      expiresAt: r.expiresAt,
+      createdAt: r.createdAt,
+    };
+  });
+  return c.json({ codes }, 200);
+});
+
 // Brief 24 §5 — invite admin #2+ FROM INSIDE by an existing admin. Issues a single-use
 // admin REGISTRATION code bound to the caller's own org (createdBy = the inviting
 // admin, so it is self-service, no operator involvement). The invitee registers via the
@@ -198,8 +232,25 @@ orgRoutes.get('/events/:id', requireOrgRole('coordinator'), async (c) => {
 orgRoutes.get('/license', requireOrgRole('admin'), async (c) => {
   const orgId = c.get('orgId')!;
   const [org, license] = await Promise.all([getOrg(c.env, orgId), getActiveLicense(c.env, orgId)]);
+  // Brief 28 §4 — seat visibility: surface remaining seats and a low-seats warning
+  // BEFORE exhaustion, so an admin tops up before enrolment starts refusing. (The seat
+  // ceiling itself is enforced atomically at bind time; this is the heads-up.)
+  const seatsRemaining = license ? Math.max(0, license.seatsTotal - license.seatsUsed) : 0;
+  const lowSeatThreshold = license ? Math.max(2, Math.ceil(license.seatsTotal * 0.1)) : 0;
   return c.json(
-    { org: org ? { name: org.name, lane: org.lane, status: org.status } : null, license },
+    {
+      org: org ? { name: org.name, lane: org.lane, status: org.status } : null,
+      license,
+      seats: license
+        ? {
+            total: license.seatsTotal,
+            used: license.seatsUsed,
+            remaining: seatsRemaining,
+            lowSeats: seatsRemaining <= lowSeatThreshold,
+            exhausted: seatsRemaining === 0,
+          }
+        : null,
+    },
     200,
   );
 });

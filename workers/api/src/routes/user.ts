@@ -20,7 +20,7 @@ import {
 import { sendCheckin } from '../lib/checkin';
 import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
-import { leaveOrg, redeemCode } from '../lib/enrollment';
+import { checkRedeemRate, leaveOrg, redeemCode } from '../lib/enrollment';
 import { isEntitled } from '../lib/entitlement';
 import { confirmActivation } from './activation';
 import { normalizeSubmission, submitTally } from '../lib/tally';
@@ -51,6 +51,11 @@ userRoutes.post('/org/redeem', async (c) => {
   const code = (body.code ?? '').trim();
   if (!code) {
     return c.json({ error: 'code_required' }, 400);
+  }
+  // Brief 28 §4 — per-account brute-force guard: readable codes are shorter, so cap
+  // redemption attempts. 429 past the ceiling (counts every attempt, before lookup).
+  if (!(await checkRedeemRate(c.env, c.get('userId'), Date.now()))) {
+    return c.json({ error: 'rate_limited' }, 429);
   }
   const res = await redeemCode(c.env, code, c.get('userId'));
   if (!res.ok) {

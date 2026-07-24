@@ -49,6 +49,29 @@ export async function grantEntitlement(
   return { activated, alreadyActive: !activated };
 }
 
+/**
+ * The ONE manual revoke path (Brief 28 §4) — operator-only, fraud-only, always logged.
+ * This is deliberately the sole way an account returns to 'unactivated': there is NO
+ * automatic revoke (no chargeback hook, no license-expiry sweep), because §0 forbids
+ * anything reaching back to deactivate a survivor except an explicit operator action.
+ * Returns whether a row was actually changed.
+ */
+export async function operatorRevokeEntitlement(
+  env: Env,
+  userId: string,
+  reason: string,
+  by: string | null,
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    "UPDATE users SET entitlement = 'unactivated', entitlement_source = NULL, activatedAt = NULL, updatedAt = ? WHERE id = ? AND entitlement = 'activated'",
+  )
+    .bind(Date.now(), userId)
+    .run();
+  const changed = res.meta.changes === 1;
+  await audit(env, null, 'entitlement.revoke', by, { targetUserId: userId, reason, changed });
+  return changed;
+}
+
 /** True if the account may ARM (has activated entitlement). Read for the affordance
  *  ONLY — never call this anywhere in the trigger/capture/dispatch path. */
 export async function isEntitled(env: Env, userId: string): Promise<boolean> {
