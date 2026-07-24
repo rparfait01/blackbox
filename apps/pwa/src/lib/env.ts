@@ -33,3 +33,13 @@ export const ACTIVATION_HOLD_MS = resolveHoldMs();
  */
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
 export const uploadsEnabled = API_BASE_URL.length > 0;
+
+/**
+ * Zero-knowledge capture envelope (Brief 26). Default OFF: unless `VITE_ENVELOPE_ENC`
+ * is exactly "true" at build time, the capture pipeline is byte-identical to today —
+ * no encryption, no key generation, no change on any path. Arming this is a deliberate,
+ * test-accounts-first step, and even when armed the send path FAILS OPEN to a plaintext
+ * upload rather than ever dropping a survivor's capture (capture availability is
+ * paramount; see docs/brief26).
+ */
+export const envelopeEncryptionEnabled = (import.meta.env.VITE_ENVELOPE_ENC ?? '') === 'true';

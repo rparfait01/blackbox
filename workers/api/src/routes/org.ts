@@ -12,6 +12,7 @@ import { requireOrgRole, requireSession } from '../auth';
 import { countActiveAdmins, createEnrollmentCode, getActiveLicense, getOrg, seatIssuanceLocked } from '../lib/org';
 import { leaveOrg } from '../lib/enrollment';
 import { createAdminRegistrationCode } from '../lib/org-registration';
+import { getOrgGrant, setOrgKeys } from '../lib/zk-custody';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -86,6 +87,41 @@ orgRoutes.post('/admins/invite', requireOrgRole('admin'), async (c) => {
   const reg = await createAdminRegistrationCode(c.env, { orgId, createdBy: c.get('userId') });
   await audit(c.env, null, 'org.admin_invite', c.get('userId'), { orgId });
   return c.json({ registrationCode: reg.code, registrationExpiresAt: reg.expiresAt }, 201);
+});
+
+// Brief 26 — org key material (dormant until the flag is armed). An admin publishes the
+// org PUBLIC key + rotation generation, and the per-seat wrapped copies of the org
+// PRIVATE key (§5 — each sealed to a seat's public key; the server stores N and opens
+// none). Full re-wrap on rotation (operator decision): a new generation carries a grant
+// for every remaining seat.
+orgRoutes.post('/keys', requireOrgRole('admin'), async (c) => {
+  const orgId = c.get('orgId')!;
+  const body = await c.req
+    .json<{ orgPubkey?: string; generation?: number; grants?: Array<{ seatUserId?: string; algId?: string; wrappedOrgPrivKey?: string }> }>()
+    .catch(() => ({}) as { orgPubkey?: string; generation?: number; grants?: unknown });
+  const orgPubkey = (body.orgPubkey ?? '').trim();
+  if (!orgPubkey) {
+    return c.json({ error: 'orgPubkey_required' }, 400);
+  }
+  const generation = typeof body.generation === 'number' && body.generation >= 0 ? Math.floor(body.generation) : 0;
+  const grants = Array.isArray(body.grants)
+    ? body.grants
+        .filter((g) => g && g.seatUserId && g.algId && g.wrappedOrgPrivKey)
+        .map((g) => ({ seatUserId: g.seatUserId as string, algId: g.algId as string, wrappedOrgPrivKey: g.wrappedOrgPrivKey as string }))
+    : [];
+  await setOrgKeys(c.env, orgId, { orgPubkey, generation, grants });
+  await audit(c.env, null, 'org.keys_set', c.get('userId'), { orgId, generation, grantCount: grants.length });
+  return c.json({ ok: true, generation, grantCount: grants.length }, 200);
+});
+
+// The calling seat's wrapped org-private-key grant at the current generation — what it
+// unwraps with its own key to operate. Any active org member (staff) may fetch their own.
+orgRoutes.get('/keys/grant', requireOrgRole('coordinator'), async (c) => {
+  const grant = await getOrgGrant(c.env, c.get('orgId')!, c.get('userId'));
+  if (!grant) {
+    return c.json({ grant: null }, 200);
+  }
+  return c.json({ grant: { algId: grant.algId, wrappedOrgPrivKey: grant.wrappedOrgPrivKey, keyGeneration: grant.keyGeneration } }, 200);
 });
 
 // §3 — revoke a code, but ONLY one belonging to the coordinator's own org (the

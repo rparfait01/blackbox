@@ -1147,6 +1147,49 @@ async function run() {
     assert(noReason.status === 400, `reissue without a reason was allowed: ${noReason.status}`);
   });
 
+  // ===== Brief 26 Phase 1 — zero-knowledge custody (DORMANT storage; flag off) =====
+  await check('53. zk custody: a survivor publishes ONLY a public key; it round-trips', async () => {
+    const u = await signup();
+    // A realistic SPKI-shaped base64 (opaque to the server — it stores it verbatim).
+    const pub = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE' + 'A'.repeat(52);
+    const put = await api('POST', '/v1/me/pubkey', { bearer: u.session, body: { pubkey: pub } });
+    assert(put.status === 200 && put.data.ok, `pubkey store failed: ${put.status} ${JSON.stringify(put.data)}`);
+    const keys = await api('GET', '/v1/me/keys', { bearer: u.session });
+    assert(keys.status === 200 && keys.data.pubkey === pub, `pubkey did not round-trip: ${JSON.stringify(keys.data)}`);
+    // An individual account has no org key context.
+    assert(keys.data.org === null, `individual account should have no org key: ${JSON.stringify(keys.data.org)}`);
+    // An empty pubkey is refused (honest 400).
+    const bad = await api('POST', '/v1/me/pubkey', { bearer: u.session, body: {} });
+    assert(bad.status === 400, `empty pubkey not refused: ${bad.status}`);
+  });
+
+  await check('54. zk custody: org key material stores; a seat fetches its own grant, another does not', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrgWithTwoAdmins('Org-ZK-' + uniq(), 'zero_fee', 3);
+    const orgPub = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE' + 'B'.repeat(52);
+    // Admin publishes the org public key + a per-seat wrapped org-private-key grant.
+    const set = await api('POST', '/v1/org/keys', {
+      bearer: O.admin.session,
+      body: {
+        orgPubkey: orgPub,
+        generation: 0,
+        grants: [{ seatUserId: O.admin.userId, algId: 'p256-hkdf-sha256-aes256gcm/v1', wrappedOrgPrivKey: 'sealed-envelope-json-opaque' }],
+      },
+    });
+    assert(set.status === 200 && set.data.grantCount === 1, `org keys set failed: ${set.status} ${JSON.stringify(set.data)}`);
+    // The org pubkey now surfaces to an enrolled account's key context.
+    const cCode = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
+    const surv = await enrollWith(cCode.data.code);
+    const survKeys = await api('GET', '/v1/me/keys', { bearer: surv.acc.session });
+    assert(survKeys.data.org && survKeys.data.org.orgPubkey === orgPub, `enrolled account missing org pubkey: ${JSON.stringify(survKeys.data.org)}`);
+    // The admin (a seat with a grant) fetches its own wrapped org key…
+    const mine = await api('GET', '/v1/org/keys/grant', { bearer: O.admin.session });
+    assert(mine.data.grant && mine.data.grant.wrappedOrgPrivKey === 'sealed-envelope-json-opaque', `admin grant not returned: ${JSON.stringify(mine.data)}`);
+    // …admin #2 (no grant issued to them) gets null — no operating access without a grant.
+    const other = await api('GET', '/v1/org/keys/grant', { bearer: O.admin2.session });
+    assert(other.data.grant === null, `a seat with no grant should get null: ${JSON.stringify(other.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

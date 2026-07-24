@@ -25,6 +25,14 @@ export interface Env {
    *  `wrangler deploy --var CONSENT_GATE_ENFORCED:true` once the pilot is confirmed;
    *  it is a reversible off-switch, not a redeploy. */
   CONSENT_GATE_ENFORCED?: string;
+  /** Brief 26 zero-knowledge custody gate. When 'true', the server ACCEPTS and requires
+   *  the envelope fields (wrapped keys, plaintext commitments) on the capture path and
+   *  the key-management endpoints enforce their invariants. Default OFF so the schema +
+   *  endpoints ship dormant and are verified before the client is ever armed. Reversible
+   *  off-switch via `wrangler deploy --var ENVELOPE_ENCRYPTION_ENABLED:true`. Even armed,
+   *  the client fails open — the server never rejects a plaintext capture for lacking an
+   *  envelope while migration is in flight. */
+  ENVELOPE_ENCRYPTION_ENABLED?: string;
   /** Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the
    *  family pilot this is the operator/founder. */
   SECURITY_CONTACT_EMAIL?: string;
@@ -95,6 +103,43 @@ export interface OrganizationRow {
   licenseAcceptedAt: number | null;
   licenseVersion: string | null;
   licenseAcceptancePath: 'click_through' | 'out_of_band' | null;
+  // Brief 26 — org key rotation generation (state 8). Dormant until the flag arms.
+  orgPubkeyGeneration?: number;
+}
+
+// --- Brief 26 zero-knowledge custody rows (see migration 0034_zk_custody.sql) ---
+
+/** A per-chunk wrapped data key. The wrappedDek is a sealed envelope (itself ciphertext
+ *  under a public key) — the server can store it and open nothing. */
+export interface WrappedKeyRow {
+  id: string;
+  eventId: string;
+  sequence: number;
+  recipientType: 'survivor' | 'org' | 'recipient';
+  recipientRef: string | null;
+  keyGeneration: number;
+  algId: string;
+  wrappedDek: string;
+  createdAt: number;
+}
+
+/** A per-seat wrapped copy of the org private key (§5). */
+export interface OrgKeyGrantRow {
+  id: string;
+  orgId: string;
+  seatUserId: string;
+  keyGeneration: number;
+  algId: string;
+  wrappedOrgPrivKey: string;
+  createdAt: number;
+}
+
+/** A signed pre-encryption plaintext commitment (change #1, admissibility). */
+export interface PlaintextCommitmentRow {
+  eventId: string;
+  sequence: number;
+  plaintextHash: string;
+  createdAt: number;
 }
 
 /** A single-use, admin-only registration code bound to one pre-created org (Brief 24).

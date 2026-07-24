@@ -22,6 +22,7 @@ import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { normalizeSubmission, submitTally } from '../lib/tally';
+import { getAccountKeys, setUserPubkey } from '../lib/zk-custody';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -64,6 +65,23 @@ userRoutes.post('/org/leave', async (c) => {
     return c.json({ error: res.reason, message: 'Your organisation must keep at least two admins. Add another admin before leaving.' }, 409);
   }
   return c.json({ ok: true, left: res.left }, 200);
+});
+
+// Brief 26 — zero-knowledge custody key material (dormant until the flag is armed). The
+// survivor publishes ONLY their public key; the private half never leaves the device.
+// A capture client fetches the keys it must wrap a data key to (its own + the org's).
+userRoutes.post('/pubkey', async (c) => {
+  const body = await c.req.json<{ pubkey?: string }>().catch(() => ({}) as { pubkey?: string });
+  const pubkey = (body.pubkey ?? '').trim();
+  if (!pubkey) {
+    return c.json({ error: 'pubkey_required' }, 400);
+  }
+  await setUserPubkey(c.env, c.get('userId'), pubkey);
+  return c.json({ ok: true }, 200);
+});
+
+userRoutes.get('/keys', async (c) => {
+  return c.json(await getAccountKeys(c.env, c.get('userId')), 200);
 });
 
 // Brief 25 — Anonymous Incident Tally. The session authenticates the SENDER (for the
