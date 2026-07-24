@@ -77,6 +77,12 @@ function Badge({ tone, children }: { tone: 'ok' | 'warn' | 'muted'; children: Re
 export function OrgPortal({ member, onSignOut }: { member: OrgMember; onSignOut: () => void }): JSX.Element {
   const isAdmin = member.role === 'admin';
   const [tab, setTab] = useState<Tab>('track');
+  // Brief 24 §5 — until the org has two admins, seat issuance is locked and admin #1 is
+  // prompted to invite admin #2 before anything else.
+  const [seatsLocked, setSeatsLocked] = useState(false);
+  useEffect(() => {
+    void api<{ seatsLocked?: boolean }>('/v1/org/me').then((r) => setSeatsLocked(!!r.data?.seatsLocked));
+  }, []);
   const tabs: Array<{ key: Tab; label: string; admin?: boolean }> = [
     { key: 'track', label: 'Track' },
     { key: 'correlate', label: 'Correlate' },
@@ -99,6 +105,9 @@ export function OrgPortal({ member, onSignOut }: { member: OrgMember; onSignOut:
           </button>
         </div>
 
+        {/* §5 — invite admin #2 before anything else; seats stay locked until 2 admins. */}
+        {seatsLocked && isAdmin ? <InviteSecondAdmin /> : null}
+
         <div className="mb-6 flex gap-2 border-b border-med-text/15 pb-3">
           {tabs
             .filter((t) => !t.admin || isAdmin)
@@ -117,7 +126,7 @@ export function OrgPortal({ member, onSignOut }: { member: OrgMember; onSignOut:
 
         {tab === 'track' ? <TrackView /> : null}
         {tab === 'correlate' ? <CorrelateView /> : null}
-        {tab === 'enroll' ? <EnrollView isAdmin={isAdmin} /> : null}
+        {tab === 'enroll' ? <EnrollView isAdmin={isAdmin} seatsLocked={seatsLocked} /> : null}
         {tab === 'seats' && isAdmin ? <SeatsView /> : null}
       </div>
     </main>
@@ -177,7 +186,45 @@ function CorrelateView(): JSX.Element {
   );
 }
 
-function EnrollView({ isAdmin }: { isAdmin: boolean }): JSX.Element {
+// §5 — admin #1 is prompted to invite admin #2 before anything else. Issues a
+// single-use admin registration link the invitee opens to register.
+function InviteSecondAdmin(): JSX.Element {
+  const [code, setCode] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function invite(): Promise<void> {
+    setBusy(true);
+    const res = await api<{ registrationCode: string }>('/v1/org/admins/invite', { body: {} });
+    setBusy(false);
+    if (res.data?.registrationCode) setCode(res.data.registrationCode);
+  }
+  const link = typeof window !== 'undefined' ? `${window.location.origin}/org/register` : '/org/register';
+  return (
+    <div className="mb-6 rounded-lg border border-med-warn/40 bg-med-warn/5 p-4">
+      <p className="mb-1 text-[13px] font-medium text-med-text">Invite your second admin first</p>
+      <p className="mb-3 text-[12px] leading-relaxed text-med-text/65">
+        Your organisation needs two admins before you can enrol anyone. Send this one-time code and the
+        registration link to your co-admin — separately.
+      </p>
+      {code ? (
+        <div className="rounded-lg border border-med-text/20 bg-black/25 p-3 text-center">
+          <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-med-text/45">Admin code (one use)</p>
+          <p className="select-all break-all font-mono text-base tracking-[0.08em] text-med-text">{code}</p>
+          <p className="mt-2 font-mono text-[11px] text-med-text/50">Link: {link}</p>
+        </div>
+      ) : (
+        <button
+          onClick={() => void invite()}
+          disabled={busy}
+          className="w-full rounded-full bg-med-text/90 py-3 font-sans text-sm font-medium text-[#071416] disabled:opacity-40"
+        >
+          {busy ? 'Generating…' : 'Generate an admin invite'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EnrollView({ isAdmin, seatsLocked }: { isAdmin: boolean; seatsLocked: boolean }): JSX.Element {
   const [role, setRole] = useState<'survivor' | 'coordinator'>('survivor');
   const [code, setCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -190,10 +237,36 @@ function EnrollView({ isAdmin }: { isAdmin: boolean }): JSX.Element {
     const res = await api<{ code: string }>('/v1/org/codes', { body: { role, maxUses: 1 } });
     setBusy(false);
     if (!res.ok || !res.data?.code) {
-      setError(res.status === 403 ? 'Only an admin can issue staff codes.' : 'Could not issue a code. Try again.');
+      setError(
+        res.status === 409
+          ? 'Add a second admin before enrolling survivors.'
+          : res.status === 403
+            ? 'Only an admin can issue staff codes.'
+            : 'Could not issue a code. Try again.',
+      );
       return;
     }
     setCode(res.data.code);
+  }
+
+  // §5 — survivor enrollment is locked until the org has two admins.
+  if (seatsLocked && role === 'survivor') {
+    return (
+      <div className="rounded-lg border border-med-text/20 bg-black/20 p-4">
+        <p className="text-[13px] leading-relaxed text-med-text/70">
+          Enrolling survivors is locked until your organisation has <span className="text-med-text">two admins</span>.
+          Invite a second admin first (see the notice above).
+        </p>
+        {isAdmin ? (
+          <button
+            onClick={() => setRole('coordinator')}
+            className="mt-3 text-[12px] text-med-text/60 underline"
+          >
+            Issue a coordinator code instead
+          </button>
+        ) : null}
+      </div>
+    );
   }
 
   return (

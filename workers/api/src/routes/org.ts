@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 
 import { requireOrgRole, requireSession } from '../auth';
-import { createEnrollmentCode, getActiveLicense, getOrg, seatIssuanceLocked } from '../lib/org';
+import { countActiveAdmins, createEnrollmentCode, getActiveLicense, getOrg, seatIssuanceLocked } from '../lib/org';
 import { leaveOrg } from '../lib/enrollment';
 import { createAdminRegistrationCode } from '../lib/org-registration';
 import { audit } from '../lib/audit';
@@ -30,7 +30,13 @@ orgRoutes.get('/me', async (c) => {
   )
     .bind(c.get('userId'))
     .first<{ orgId: string; role: 'admin' | 'coordinator'; orgName: string; lane: string }>();
-  return c.json({ member: member ?? null }, 200);
+  if (!member) {
+    return c.json({ member: null }, 200);
+  }
+  // Brief 24 §5 — the portal shows the "invite admin #2" prompt and the seat lock based
+  // on the current admin count.
+  const admins = await countActiveAdmins(c.env, member.orgId);
+  return c.json({ member, adminCount: admins, seatsLocked: admins < 2 }, 200);
 });
 
 // §3 — issue an enrollment code, scoped to the issuer's OWN org (orgId from the

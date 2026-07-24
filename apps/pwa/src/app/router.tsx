@@ -7,6 +7,7 @@ import { Onboarding } from '@/routes/onboarding/Onboarding';
 import { SignIn } from '@/routes/signin/SignIn';
 import { MagicLink } from '@/routes/signin/MagicLink';
 import { OrgSignIn } from '@/routes/org/OrgSignIn';
+import { OrgRegister } from '@/routes/org/OrgRegister';
 import { GuardianAccept } from '@/routes/guardian/GuardianAccept';
 import { ClosurePinGate } from '@/components/ClosurePinGate';
 import { RootGate } from './RootGate';
@@ -24,6 +25,10 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
   // owns the portal, seats, and enrollment. Registered explicitly because the
   // catch-all below would otherwise swallow it into RootGate.
   { path: '/org', element: <OrgSignIn />, errorElement: <MeditationHome /> },
+  // Brief 24: org admin registration, reached only by the operator's approval link.
+  // The code is entered manually on the page (never in the URL) and consumed only on
+  // explicit submit. Registered before the catch-all, like /org.
+  { path: '/org/register', element: <OrgRegister />, errorElement: <MeditationHome /> },
   {
     path: '/blackbox',
     element: (
