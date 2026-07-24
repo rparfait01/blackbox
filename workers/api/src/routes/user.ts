@@ -23,6 +23,7 @@ import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { normalizeSubmission, submitTally } from '../lib/tally';
 import { getAccountKeys, getRecoveryKey, getSurvivorCaptureEnvelope, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
+import { envelopeEnabled, getCaseFileSealed, listCaseFiles, storeCaseFile } from '../lib/case-files';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -113,6 +114,43 @@ userRoutes.get('/events/:id/envelope', async (c) => {
   }
   await audit(c.env, eventId, 'decrypt_review', c.get('userId'), { via: 'survivor' });
   return c.json({ envelope }, 200);
+});
+
+// Brief 27 §2 — file a case file. THE SECOND FAIL-CLOSED GATE: the server refuses to store
+// a case file unless zero-knowledge custody is armed, so no path — client or server — ever
+// persists an unencrypted disclosure. The body carries ONLY the sealed envelope; a plaintext
+// case file has no column to land in and no endpoint to reach.
+userRoutes.post('/case-files', async (c) => {
+  if (!envelopeEnabled(c.env)) {
+    // Fail-closed: secure storage is off, so nothing is written. Honest, specific refusal.
+    return c.json({ error: 'envelope_disabled', message: 'Secure storage is not enabled — a report cannot be filed yet.' }, 409);
+  }
+  const body = await c.req
+    .json<{ sealedCaseFile?: string; taxonomyVersion?: string }>()
+    .catch(() => ({}) as { sealedCaseFile?: string; taxonomyVersion?: string });
+  const sealedCaseFile = (body.sealedCaseFile ?? '').trim();
+  const taxonomyVersion = (body.taxonomyVersion ?? '').trim();
+  if (!sealedCaseFile || !taxonomyVersion) {
+    return c.json({ error: 'sealed_case_file_required' }, 400);
+  }
+  const row = await storeCaseFile(c.env, { userId: c.get('userId'), sealedCaseFile, taxonomyVersion });
+  await audit(c.env, null, 'case_file_filed', c.get('userId'), { caseFileId: row.id, taxonomyVersion });
+  return c.json({ ok: true, id: row.id, createdAt: row.createdAt }, 201);
+});
+
+// The owner's case files (metadata list, then the sealed blob per file for client-side
+// review-decrypt). Owner-scoped; a non-owner can reach neither.
+userRoutes.get('/case-files', async (c) => {
+  return c.json({ caseFiles: await listCaseFiles(c.env, c.get('userId')) }, 200);
+});
+
+userRoutes.get('/case-files/:id', async (c) => {
+  const sealed = await getCaseFileSealed(c.env, c.get('userId'), c.req.param('id'));
+  if (!sealed) {
+    return c.json({ sealedCaseFile: null }, 200);
+  }
+  await audit(c.env, null, 'case_file_read', c.get('userId'), { caseFileId: c.req.param('id') });
+  return c.json({ sealedCaseFile: sealed }, 200);
 });
 
 // Brief 25 — Anonymous Incident Tally. The session authenticates the SENDER (for the

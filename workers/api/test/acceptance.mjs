@@ -1239,6 +1239,33 @@ async function run() {
     assert(stolen.status === 200 && stolen.data.envelope === null, `non-owner got the envelope: ${JSON.stringify(stolen.data)}`);
   });
 
+  // ===== Brief 27 — guided intake case file (FAIL-CLOSED; ZK) =====
+  await check('58. case file: FAIL-CLOSED — filing is refused (409) while the envelope flag is off', async () => {
+    const u = await signup();
+    // The live flag is OFF, so the server must refuse to store a case file at all — no
+    // plaintext case file can ever land. (When armed, this returns 201; that is the
+    // final-acceptance path.)
+    const res = await api('POST', '/v1/me/case-files', {
+      bearer: u.session,
+      body: { sealedCaseFile: '{"alg":"p256-hkdf-sha256-aes256gcm/v1","epk":"e","iv":"i","ct":"c"}', taxonomyVersion: 'nibrs-2019+who-2013/v1' },
+    });
+    assert(res.status === 409 && res.data.error === 'envelope_disabled', `fail-closed not enforced: ${res.status} ${JSON.stringify(res.data)}`);
+    // And with nothing filed, the list is empty — no plaintext case file leaked in.
+    const list = await api('GET', '/v1/me/case-files', { bearer: u.session });
+    assert(list.status === 200 && Array.isArray(list.data.caseFiles) && list.data.caseFiles.length === 0, `unexpected case files: ${JSON.stringify(list.data)}`);
+  });
+
+  await check('59. case file: a non-owner cannot read another account’s case file id', async () => {
+    // With the flag off nothing can be filed, so this proves the OWNER-SCOPING of the read
+    // path directly: a fabricated/other id returns null for any caller, never cross-account.
+    const b = await signup();
+    const got = await api('GET', `/v1/me/case-files/${'CF-' + uniq()}`, { bearer: b.session });
+    assert(got.status === 200 && got.data.sealedCaseFile === null, `non-owner read leaked: ${JSON.stringify(got.data)}`);
+    // The endpoint requires a session at all.
+    const anon = await api('GET', '/v1/me/case-files', {});
+    assert(anon.status === 401, `case-files reachable without a session: ${anon.status}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

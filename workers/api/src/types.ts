@@ -142,6 +142,16 @@ export interface PlaintextCommitmentRow {
   createdAt: number;
 }
 
+/** A survivor-sealed case file (Brief 27). sealedCaseFile is ciphertext under the
+ *  survivor's own public key — no plaintext column exists. */
+export interface CaseFileRow {
+  id: string;
+  userId: string;
+  sealedCaseFile: string;
+  taxonomyVersion: string;
+  createdAt: number;
+}
+
 /** A single-use, admin-only registration code bound to one pre-created org (Brief 24).
  *  Distinct from EnrollmentCodeRow — this can only ever create admin #1, never a seat. */
 export interface AdminRegistrationCodeRow {
