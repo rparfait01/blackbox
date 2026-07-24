@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
 import { enrollPasskey } from '@/lib/passkey';
+import { provisionSurvivorKey } from '@/lib/crypto/key-provisioning';
 import { osFixHint } from '@/lib/readiness';
 import { InstallHint } from '@/components/InstallHint';
 import { ContactForm, type ContactValues } from '@/components/ContactForm';
@@ -185,6 +186,11 @@ export function Onboarding(): JSX.Element {
     setBusy(false);
     if (res.ok && res.data?.sessionToken) {
       setSession(res.data.sessionToken, displayMode, { name: name.trim(), email: email.trim() });
+      // Brief 26 — provision the survivor's envelope key in the BACKGROUND. Fire-and-forget
+      // and flag-gated: it never blocks reaching Armed and is a no-op unless encryption is
+      // armed. If it fails or hangs, captures simply stay plaintext (same fail-open rule as
+      // the send path). The recovery-wrapped copy is added when the code is shown, below.
+      provisionSurvivorKey();
       // Step 3 (once the retired email-OTP step) is now the CREDENTIAL step: the
       // session exists from here, so the passkey and recovery code can be created
       // against it. It sits before contacts so the account is never left with no
@@ -220,6 +226,9 @@ export function Onboarding(): JSX.Element {
     const res = await api<{ codes: string[] }>('/v1/auth/recovery/issue', { body: {} });
     if (res.ok && res.data?.codes?.length) {
       setRecoveryCodes(res.data.codes);
+      // Brief 26 decision A — add the recovery-code-wrapped private key so a new device can
+      // restore it. Background + fail-open; never blocks showing the code or reaching Armed.
+      provisionSurvivorKey(res.data.codes[0]);
     }
   }
 

@@ -22,7 +22,7 @@ import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { normalizeSubmission, submitTally } from '../lib/tally';
-import { getAccountKeys, setUserPubkey } from '../lib/zk-custody';
+import { getAccountKeys, getRecoveryKey, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -82,6 +82,23 @@ userRoutes.post('/pubkey', async (c) => {
 
 userRoutes.get('/keys', async (c) => {
   return c.json(await getAccountKeys(c.env, c.get('userId')), 200);
+});
+
+// Decision A — the survivor's recovery-wrapped private key (opaque to the server). Stored
+// so a new device + the recovery code can restore it; the server never sees the code or
+// the private key in clear.
+userRoutes.post('/recovery-key', async (c) => {
+  const body = await c.req.json<{ wrapped?: string }>().catch(() => ({}) as { wrapped?: string });
+  const wrapped = (body.wrapped ?? '').trim();
+  if (!wrapped) {
+    return c.json({ error: 'wrapped_required' }, 400);
+  }
+  await setRecoveryKey(c.env, c.get('userId'), wrapped);
+  return c.json({ ok: true }, 200);
+});
+
+userRoutes.get('/recovery-key', async (c) => {
+  return c.json({ wrapped: await getRecoveryKey(c.env, c.get('userId')) }, 200);
 });
 
 // Brief 25 — Anonymous Incident Tally. The session authenticates the SENDER (for the

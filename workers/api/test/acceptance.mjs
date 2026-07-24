@@ -1207,6 +1207,21 @@ async function run() {
     assert(forged.status === 401, `unsigned wrapped-keys not refused: ${forged.status}`);
   });
 
+  await check('56. zk custody: survivor recovery-wrapped private key round-trips (decision A, opaque)', async () => {
+    const u = await signup();
+    // None yet.
+    const empty = await api('GET', '/v1/me/recovery-key', { bearer: u.session });
+    assert(empty.status === 200 && empty.data.wrapped === null, `expected no recovery key: ${JSON.stringify(empty.data)}`);
+    // The client stores the code-wrapped private key (server holds it, cannot open it).
+    const blob = JSON.stringify({ salt: 'c2FsdA==', box: { iv: 'aXY=', ct: 'Y3Q=' } });
+    const put = await api('POST', '/v1/me/recovery-key', { bearer: u.session, body: { wrapped: blob } });
+    assert(put.status === 200 && put.data.ok, `recovery-key store failed: ${put.status} ${JSON.stringify(put.data)}`);
+    const got = await api('GET', '/v1/me/recovery-key', { bearer: u.session });
+    assert(got.data.wrapped === blob, `recovery key did not round-trip: ${JSON.stringify(got.data)}`);
+    const bad = await api('POST', '/v1/me/recovery-key', { bearer: u.session, body: {} });
+    assert(bad.status === 400, `empty recovery-key not refused: ${bad.status}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

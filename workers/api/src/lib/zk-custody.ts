@@ -16,6 +16,20 @@ export async function setUserPubkey(env: Env, userId: string, pubkey: string): P
     .run();
 }
 
+/** Store the survivor's recovery-wrapped private key (decision A) — opaque to the
+ *  server (code-derived key never reaches it). Enables new-device restore with the code. */
+export async function setRecoveryKey(env: Env, userId: string, wrapped: string): Promise<void> {
+  await env.DB.prepare('UPDATE users SET recoveryWrappedKey = ?, updatedAt = ? WHERE id = ?')
+    .bind(wrapped, Date.now(), userId)
+    .run();
+}
+export async function getRecoveryKey(env: Env, userId: string): Promise<string | null> {
+  const row = await env.DB.prepare('SELECT recoveryWrappedKey FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ recoveryWrappedKey: string | null }>();
+  return row?.recoveryWrappedKey ?? null;
+}
+
 export interface AccountKeys {
   pubkey: string | null;
   org: { orgPubkey: string; generation: number } | null;

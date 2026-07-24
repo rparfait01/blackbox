@@ -49,3 +49,16 @@ export const setStoredClosurePin = (value: ClosurePin): Promise<void> =>
   putConfig(CLOSURE_PIN_KEY, value);
 export const getStoredClosurePin = (): Promise<ClosurePin | null> =>
   getConfig<ClosurePin>(CLOSURE_PIN_KEY);
+
+/** Brief 26 — the survivor's envelope keypair, device-custodied on-device (the private
+ *  key never leaves except as the recovery-code-wrapped blob). Fail-open: putConfig
+ *  swallows storage errors, so a custody hiccup never blocks onboarding. */
+const ENVELOPE_KEY = 'envelopeKeypair';
+export interface StoredEnvelopeKeypair {
+  publicKey: string;
+  privateKey: string;
+}
+export const setStoredEnvelopeKeypair = (value: StoredEnvelopeKeypair): Promise<void> =>
+  putConfig(ENVELOPE_KEY, value);
+export const getStoredEnvelopeKeypair = (): Promise<StoredEnvelopeKeypair | null> =>
+  getConfig<StoredEnvelopeKeypair>(ENVELOPE_KEY);
