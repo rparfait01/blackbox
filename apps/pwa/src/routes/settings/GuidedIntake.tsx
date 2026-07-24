@@ -82,6 +82,9 @@ export function GuidedIntake({ onClose }: { onClose: () => void }): JSX.Element 
   const [step, setStep] = useState<Step>('intro');
   const [a, setA] = useState<Answers>(EMPTY);
   const [reviewed, setReviewed] = useState(false);
+  // §5 Destination 1 — an explicit PER-SUBMISSION opt-in to contribute anonymized stats.
+  // Default OFF; never blanket. Structured fields only, never the narrative.
+  const [optInStats, setOptInStats] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // On open, offer to resume a sealed draft if one exists (armed only).
@@ -147,6 +150,20 @@ export function GuidedIntake({ onClose }: { onClose: () => void }): JSX.Element 
       body: { sealedCaseFile: sealed.sealed, taxonomyVersion: sealed.taxonomyVersion },
     });
     if (res.ok && res.data?.id) {
+      // §5 Dest-1 — if (and only if) the survivor opted in this submission, contribute the
+      // COARSE STRUCTURED fields to the severed anonymized store — NEVER the narrative. A
+      // separate, fire-and-forget request; a failure here never affects the filed case file.
+      if (optInStats) {
+        void api('/v1/me/intake-stats', {
+          body: {
+            incidentTypeId: a.incidentTypeId,
+            whenRange: a.whenRange,
+            regionId: a.regionId,
+            relationshipId: a.relationshipId,
+            reportedToAuthorities: a.reportedToAuthorities,
+          },
+        });
+      }
       await clearDraft();
       setStep('done');
     } else if (res.status === 409) {
@@ -336,6 +353,16 @@ export function GuidedIntake({ onClose }: { onClose: () => void }): JSX.Element 
               </div>
             ) : null}
 
+            {/* §5 Dest-1 — per-submission opt-in, default OFF, structured-only, severed. */}
+            <button
+              type="button"
+              onClick={() => setOptInStats(!optInStats)}
+              className={`mb-3 flex w-full items-start gap-3 rounded-lg border p-3 text-left text-[12px] leading-relaxed transition-colors ${optInStats ? 'border-med-text/50 text-med-text/90' : 'border-med-text/20 text-med-text/55'}`}
+            >
+              <span aria-hidden className="font-mono">{optInStats ? '✓' : '○'}</span>
+              Also contribute anonymized statistics — only the categories above, never your words. Published as
+              aggregate counts that can't be traced back to you. Optional, and separate from your report.
+            </button>
             <button
               type="button"
               onClick={() => setReviewed(!reviewed)}

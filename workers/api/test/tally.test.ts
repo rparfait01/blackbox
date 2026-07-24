@@ -112,13 +112,17 @@ describe('§1 NO derivation — the module never reads or joins capture/event da
   });
 });
 
-describe('§6 publication — suppressed aggregates, threshold is the default', () => {
+describe('§6 publication — suppressed aggregates via the SHARED suppression logic', () => {
   const lib = read('src/lib/tally.ts');
-  it('suppresses cells below the threshold via HAVING COUNT(*) >= threshold', () => {
+  const suppression = read('src/lib/suppression.ts');
+  it('suppression is one shared implementation (HAVING COUNT(*) >= threshold lives there)', () => {
     expect(SUPPRESSION_THRESHOLD).toBeGreaterThanOrEqual(10);
-    expect(lib).toMatch(/HAVING COUNT\(\*\) >= \?/);
+    expect(suppression).toMatch(/HAVING COUNT\(\*\) >= \?/);
+    // tally re-uses it rather than reimplementing the query.
+    expect(lib).toMatch(/suppressedAggregate\(env, 'incident_tally'/);
+    expect(lib).not.toMatch(/HAVING COUNT/);
   });
   it('publishes grouped counts, never individual rows (GROUP BY the coarse fields)', () => {
-    expect(lib).toMatch(/GROUP BY submissionMonth, regionId, kind, roughlyWhen, reportedOfficial/);
+    expect(lib).toMatch(/'submissionMonth',[\s\S]*'regionId',[\s\S]*'kind',[\s\S]*'roughlyWhen',[\s\S]*'reportedOfficial'/);
   });
 });

@@ -64,6 +64,22 @@ describe('§4 mandatory review gate + fail-closed filing', () => {
   });
 });
 
+describe('§5 anonymized opt-in is per-submission, default OFF, structured-only', () => {
+  it('the opt-in defaults OFF and is a deliberate toggle', () => {
+    expect(intake).toMatch(/const \[optInStats, setOptInStats\] = useState\(false\)/);
+    expect(intake).toMatch(/onClick=\{\(\) => setOptInStats\(!optInStats\)\}/);
+  });
+  it('the anonymized POST sends only structured fields — NEVER the narrative', () => {
+    const body = intake.slice(intake.indexOf("'/v1/me/intake-stats'"), intake.indexOf('await clearDraft', intake.indexOf("'/v1/me/intake-stats'")));
+    expect(body).toMatch(/incidentTypeId:/);
+    expect(body).toMatch(/reportedToAuthorities:/);
+    expect(body).not.toMatch(/narrative/);
+  });
+  it('it only fires when the survivor opted in this submission', () => {
+    expect(intake).toMatch(/if \(optInStats\)[\s\S]*?'\/v1\/me\/intake-stats'/);
+  });
+});
+
 describe('§0a the Hidden facade shows no intake', () => {
   const facades = ['./routes/meditation/MeditationHome.tsx', './routes/meditation/BreathingCircles.tsx', './routes/meditation/HoldProgressRing.tsx'];
   it('no facade surface imports or mentions the intake', () => {

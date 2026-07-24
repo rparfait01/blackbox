@@ -46,6 +46,7 @@ import { orgRegisterRoutes } from './routes/org-register';
 import { createOrg, recordLicense } from './lib/org';
 import { createAdminRegistrationCode, reissueRegistrationCode, revokeRegistrationCode } from './lib/org-registration';
 import { SUPPRESSION_THRESHOLD, tallyAggregate } from './lib/tally';
+import { intakeStatsAggregate } from './lib/intake-stats';
 import type { Env, Vars } from './types';
 
 /**
@@ -134,6 +135,14 @@ app.get('/version', (c) => c.json({ version: c.env.WORKER_BUILD ?? 'dev' }, 200)
 // rows, and there is no identity in the store to recover. Read-only. ---
 app.get('/v1/tally/stats', async (c) => {
   const cells = await tallyAggregate(c.env);
+  return c.json({ suppressionThreshold: SUPPRESSION_THRESHOLD, cells }, 200);
+});
+
+// Brief 27 §5 Destination 1 — the published anonymized INTAKE aggregate. PUBLIC open data,
+// same shared k-anonymity suppression as the tally; a SEVERED store with no path back to a
+// case file or an account.
+app.get('/v1/intake-stats/stats', async (c) => {
+  const cells = await intakeStatsAggregate(c.env);
   return c.json({ suppressionThreshold: SUPPRESSION_THRESHOLD, cells }, 200);
 });
 

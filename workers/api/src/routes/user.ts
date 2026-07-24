@@ -22,6 +22,7 @@ import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { normalizeSubmission, submitTally } from '../lib/tally';
+import { normalizeIntakeStat, submitIntakeStat } from '../lib/intake-stats';
 import { getAccountKeys, getRecoveryKey, getSurvivorCaptureEnvelope, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
 import { envelopeEnabled, getCaseFileSealed, listCaseFiles, storeCaseFile } from '../lib/case-files';
 import { audit } from '../lib/audit';
@@ -151,6 +152,21 @@ userRoutes.get('/case-files/:id', async (c) => {
   }
   await audit(c.env, null, 'case_file_read', c.get('userId'), { caseFileId: c.req.param('id') });
   return c.json({ sealedCaseFile: sealed }, 200);
+});
+
+// Brief 27 §5 Destination 1 — the survivor's per-submission OPT-IN to contribute anonymized
+// structured fields. SEVERED: the session authenticates the send (spam floor + rate limit)
+// but is NEVER written to the record; the row carries no userId/caseFileId and only the
+// submission MONTH — never the filing instant, which would correlate it with the case file.
+// DELIBERATELY NOT audited (an audit row would carry a correlatable timestamp + account).
+userRoutes.post('/intake-stats', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+  const fields = normalizeIntakeStat(body);
+  const res = await submitIntakeStat(c.env, c.get('userId'), fields, Date.now());
+  if (!res.ok) {
+    return c.json({ error: 'rate_limited', used: res.used, limit: res.limit }, 429);
+  }
+  return c.json({ ok: true }, 201);
 });
 
 // Brief 25 — Anonymous Incident Tally. The session authenticates the SENDER (for the

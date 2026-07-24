@@ -1266,6 +1266,26 @@ async function run() {
     assert(anon.status === 401, `case-files reachable without a session: ${anon.status}`);
   });
 
+  await check('60. intake stats (Dest-1): opt-in stores a severed row; public aggregate suppresses a rare combo', async () => {
+    const u = await signup();
+    const rare = { incidentTypeId: 'stalking', whenRange: 'longer_ago', regionId: 'jp-47', relationshipId: 'stranger', reportedToAuthorities: 'prefer_not_to_say' };
+    const sub = await api('POST', '/v1/me/intake-stats', { bearer: u.session, body: rare });
+    assert(sub.status === 201 && sub.data.ok, `intake-stats submit failed: ${sub.status} ${JSON.stringify(sub.data)}`);
+    // Public, no auth — the SAME shared suppression as the tally.
+    const stats = await api('GET', '/v1/intake-stats/stats');
+    assert(stats.status === 200 && Array.isArray(stats.data.cells) && stats.data.suppressionThreshold >= 10, `intake stats not public/suppressed: ${JSON.stringify(stats.data)}`);
+    // The just-submitted single-row combo is suppressed (count 1 < threshold).
+    const leaked = stats.data.cells.find((c) => c.regionId === 'jp-47' && c.incidentTypeId === 'stalking' && c.relationshipId === 'stranger');
+    assert(!leaked || leaked.count >= 10, `a rare intake combo was published: ${JSON.stringify(leaked)}`);
+    // Cells carry ONLY coarse fields + count — no identity, no case-file id.
+    const allowed = ['submissionMonth', 'regionId', 'incidentTypeId', 'whenRange', 'relationshipId', 'reportedToAuthorities', 'count'];
+    for (const cell of stats.data.cells) for (const k of Object.keys(cell)) assert(allowed.includes(k), `intake aggregate leaked a field: ${k}`);
+    // Rate-limited per account (5/month) — the 6th is refused honestly.
+    for (let i = 0; i < 4; i += 1) await api('POST', '/v1/me/intake-stats', { bearer: u.session, body: rare });
+    const over = await api('POST', '/v1/me/intake-stats', { bearer: u.session, body: rare });
+    assert(over.status === 429 && over.data.error === 'rate_limited', `intake-stats rate limit not enforced: ${over.status} ${JSON.stringify(over.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

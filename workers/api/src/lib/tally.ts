@@ -8,15 +8,15 @@
  * condition). It touches exactly two tables: incident_tally (the severed store) and
  * users (the rate-limit counter columns only).
  */
+import { SUPPRESSION_THRESHOLD, suppressedAggregate } from './suppression';
 import type { Env } from '../types';
 
 /** How many tallies one account may submit per calendar month (§4 — small number). */
 export const TALLY_MONTHLY_LIMIT = 3;
 
-/** Cells with fewer than this many rows are suppressed from publication (§6). In a
- *  small region a single rare row can still point at a person, so this is the
- *  default, not an option. */
-export const SUPPRESSION_THRESHOLD = 10;
+/** Re-exported so callers importing it from here keep working — the suppression THRESHOLD
+ *  and logic are shared with every other anonymized aggregate (see lib/suppression.ts). */
+export { SUPPRESSION_THRESHOLD };
 
 /** The four questions. Every value is optional; a skipped question is null. There is
  *  deliberately NO free-text field anywhere in this type — free text is re-identifying. */
@@ -73,9 +73,10 @@ export type RateVerdict =
 export function rateDecision(
   stored: { tallyMonth: string | null; tallyCount: number },
   month: string,
+  limit: number = TALLY_MONTHLY_LIMIT,
 ): RateVerdict {
   const used = stored.tallyMonth === month ? stored.tallyCount : 0;
-  if (used >= TALLY_MONTHLY_LIMIT) return { allowed: false, used, limit: TALLY_MONTHLY_LIMIT };
+  if (used >= limit) return { allowed: false, used, limit };
   return { allowed: true, nextCount: used + 1 };
 }
 
@@ -145,14 +146,14 @@ export interface AggregateCell {
  * threshold; the caller needs no auth (open public-good data).
  */
 export async function tallyAggregate(env: Env): Promise<AggregateCell[]> {
-  const { results } = await env.DB.prepare(
-    `SELECT submissionMonth, regionId, kind, roughlyWhen, reportedOfficial, COUNT(*) AS count
-       FROM incident_tally
-       GROUP BY submissionMonth, regionId, kind, roughlyWhen, reportedOfficial
-       HAVING COUNT(*) >= ?
-       ORDER BY submissionMonth DESC`,
-  )
-    .bind(SUPPRESSION_THRESHOLD)
-    .all<AggregateCell>();
-  return results;
+  // Shared k-anonymity suppression (lib/suppression.ts) — one implementation for every
+  // anonymized aggregate. The coarse cross-tab keeps cells sparse (hence more protected).
+  const cells = await suppressedAggregate(env, 'incident_tally', [
+    'submissionMonth',
+    'regionId',
+    'kind',
+    'roughlyWhen',
+    'reportedOfficial',
+  ]);
+  return cells as unknown as AggregateCell[];
 }
