@@ -12,6 +12,7 @@
  *                           row. Staff do NOT consume a survivor seat.
  */
 import { audit } from './audit';
+import { grantEntitlement } from './entitlement';
 import { adminRemovalBlocked, getActiveLicense, seatIssuanceLocked } from './org';
 import type { Env, EnrollmentCodeRow } from '../types';
 
@@ -106,6 +107,13 @@ export async function bindAccountToOrg(
         .run();
     }
   }
+  // Brief 28 §2 — org enrollment activates entitlement (source org_code). Idempotent
+  // and never-downgrading: if this account was already activated (e.g. an earlier web
+  // purchase, or a prior re-redeem) its original source is preserved. The §0 promise
+  // holds here — this grant is permanent, so if the org's license later lapses the
+  // survivor stays armed; leaving the org (leaveOrg) frees the seat but likewise never
+  // reaches in to re-lock the survivor.
+  await grantEntitlement(env, userId, 'org_code');
   await audit(env, null, 'org.enroll', userId, { orgId, role });
   return { ok: true };
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { api } from '@/lib/api';
-import { setSession, type DisplayMode } from '@/lib/auth';
+import { cacheEntitlement, setSession, type DisplayMode } from '@/lib/auth';
 import { loginWithPasskey, passkeySupported } from '@/lib/passkey';
 
 /**
@@ -57,12 +57,20 @@ export function SignIn(): JSX.Element {
   /** Land a completed sign-in: persist, then correct displayMode from server truth. */
   async function land(sessionToken: string, displayMode: DisplayMode, fallbackEmail: string): Promise<void> {
     setSession(sessionToken, displayMode, { name: '', email: fallbackEmail });
-    const me = await api<{ user: { name: string | null; email: string | null; displayMode: string | null } }>('/v1/me');
+    const me = await api<{ user: { name: string | null; email: string | null; displayMode: string | null; entitlement?: string; entitlementSource?: string | null } }>('/v1/me');
     const mode = (me.data?.user.displayMode as DisplayMode | undefined) ?? displayMode;
     setSession(sessionToken, mode, {
       name: me.data?.user.name ?? '',
       email: me.data?.user.email ?? fallbackEmail,
     });
+    // Brief 28 §2 — seed the offline entitlement cache at sign-in so the arm
+    // affordance is correct on the first home render, network or not.
+    if (me.data?.user.entitlement) {
+      cacheEntitlement({
+        status: me.data.user.entitlement === 'activated' ? 'activated' : 'unactivated',
+        source: me.data.user.entitlementSource ?? null,
+      });
+    }
     navigate(mode === 'direct' ? '/blackbox' : '/', { replace: true });
   }
 

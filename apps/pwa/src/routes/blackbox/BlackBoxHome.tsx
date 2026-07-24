@@ -3,7 +3,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { Gear } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
-import { isSetupComplete } from '@/lib/auth';
+import { cacheEntitlement, getCachedEntitlement, isSetupComplete } from '@/lib/auth';
 import { triggerAlert } from '@/lib/activation';
 import { useDoubleTap } from '@/lib/use-double-tap';
 import { activeStatusLine, useActiveAlert, useActiveAlertStart, useDeliveryStatus } from '@/lib/active-alert';
@@ -27,8 +27,12 @@ interface SlotView {
 }
 interface ContactsResponse {
   slots: SlotView[];
-  /** True only when a recipient could actually be reached on activation. */
+  /** True only when the account is ENTITLED and a recipient could actually be
+   *  reached. Drives the arm affordance only — never the tap. */
   armable: boolean;
+  /** Which arm precondition is (un)met, so the UI shows the right prompt without
+   *  conflating "not activated" with "no contact" (Brief 28 §2). */
+  armReasons?: { entitled: boolean; hasDeliverableRecipient: boolean };
 }
 const CHANNEL_LABEL: Record<string, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
 
@@ -36,13 +40,19 @@ export function BlackBoxHome(): JSX.Element {
   // Read the SAME slot model Settings + the cascade use (single source of truth),
   // so a contact added at signup shows here with no re-add.
   const [support, setSupport] = useState<{ name: string; channel: string | null; role: string } | null>(null);
-  // Armable = someone could actually be reached. It drives the §3 WARNING only —
-  // it has never gated the tap, and since §0 the server does not gate either: the
-  // button always fires. Defaults true so a transient fetch failure doesn't cry
-  // wolf with "no one will be notified" at a user who does have contacts; we
-  // simply say nothing until we know. The active-alert status line (§1) tells the
-  // truth from the server at the moment it actually matters.
-  const [armable, setArmable] = useState(true);
+  // The two arm preconditions, tracked separately so the UI shows the right prompt
+  // (activate vs add-a-contact) and never conflates them. NEITHER gates the tap —
+  // since §0 the trigger always fires (server + client), and Brief 28 §0 extends that:
+  // entitlement gates the ARM AFFORDANCE, never the trigger.
+  //   entitled     — Brief 28 §2. Seeded from the OFFLINE cache so an activated
+  //                  device shows "Armed" on first render with no network, and a
+  //                  transient failure never strips the affordance.
+  //   hasRecipient — someone could actually be reached. Defaults true so a transient
+  //                  fetch failure doesn't cry "no one will be notified" at a user who
+  //                  does have contacts; we simply say nothing until we know.
+  const [entitled, setEntitled] = useState(() => getCachedEntitlement().status === 'activated');
+  const [hasRecipient, setHasRecipient] = useState(true);
+  const armable = entitled && hasRecipient;
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
   // §1: the server's real delivery result — ONE poll drives both the honest status
@@ -99,7 +109,18 @@ export function BlackBoxHome(): JSX.Element {
         setSupport(
           filled ? { name: filled.contactName ?? 'Contact', channel: filled.channel, role: filled.slot } : null,
         );
-        setArmable(res.data.armable);
+        // Split the arm preconditions. Fall back to the combined armable if an older
+        // server hasn't sent armReasons yet.
+        const reasons = res.data.armReasons;
+        setHasRecipient(reasons ? reasons.hasDeliverableRecipient : res.data.armable);
+        if (reasons) {
+          setEntitled(reasons.entitled);
+          // Refresh the offline cache from server truth (monotonic: never re-locks).
+          cacheEntitlement({
+            status: reasons.entitled ? 'activated' : 'unactivated',
+            source: getCachedEntitlement().source,
+          });
+        }
       }
     });
   }, []);
@@ -194,7 +215,9 @@ export function BlackBoxHome(): JSX.Element {
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-status-active" />
               Alert active · Recording
             </>
-          ) : !armable ? (
+          ) : !entitled ? (
+            'Not activated'
+          ) : !hasRecipient ? (
             'Armed · No contact to reach yet'
           ) : notReady ? (
             <>
@@ -269,11 +292,29 @@ export function BlackBoxHome(): JSX.Element {
             <div className="font-mono text-sm font-medium uppercase tracking-[0.18em] text-bb-text">
               Tap to activate
             </div>
-            {/* §3: standing zero-contact warning — persistent and unmissable while
-                the account has no one to reach. NON-BLOCKING by design (Brief 22 §1):
-                the tap still fires, because someone in danger is in danger whether or
-                not their contact list is populated. This informs; it never gates. */}
-            {!armable ? (
+            {/* Brief 28 §2: the ARM gate, surfaced as a prompt — NEVER a block. The
+                paywall gates arming, not the trigger: even here the disc above still
+                fires (§0), so this reassures rather than locks. Shown only while the
+                account is unactivated; an activated OR org-sourced account never sees
+                it (and never sees a price). */}
+            {!entitled ? (
+              <Link
+                to="/activate"
+                className="mx-auto mt-4 block max-w-xs rounded-lg border border-status-armed/50 bg-status-armed/10 p-3 text-left"
+              >
+                <p className="font-sans text-[12px] font-medium normal-case leading-relaxed tracking-normal text-status-armed">
+                  Activate to arm this device.
+                </p>
+                <p className="mt-1 font-sans text-[11px] normal-case leading-relaxed tracking-normal text-bb-text-secondary">
+                  Enter a code or complete your one-time setup. If you trigger before
+                  activating, your alert still sends and records — safety is never blocked.
+                </p>
+              </Link>
+            ) : /* §3: standing zero-contact warning — persistent and unmissable while
+                  the account has no one to reach. NON-BLOCKING by design (Brief 22 §1):
+                  the tap still fires, because someone in danger is in danger whether or
+                  not their contact list is populated. This informs; it never gates. */
+            !hasRecipient ? (
               <Link
                 to="/settings"
                 className="mx-auto mt-4 block max-w-xs rounded-lg border border-status-armed/50 bg-status-armed/10 p-3 text-left"

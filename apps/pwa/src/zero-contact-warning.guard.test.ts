@@ -25,8 +25,10 @@ describe('§3 the warning is surfaced where it can be seen', () => {
   it('Visible main screen warns when no one is reachable', () => {
     const home = read('./routes/blackbox/BlackBoxHome.tsx');
     expect(home).toMatch(WARNING);
-    // Conditional on the recipient state — not permanently pinned on-screen.
-    expect(home).toContain('{!armable ? (');
+    // Conditional on the recipient state — not permanently pinned on-screen. Brief 28
+    // §2 split the arm preconditions, so the recipient warning now keys on
+    // !hasRecipient (activation is a separate, distinct prompt).
+    expect(home).toContain('!hasRecipient ? (');
   });
 
   it('Settings warns — the only channel to a Hidden-primary user', () => {

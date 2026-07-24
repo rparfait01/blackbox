@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { api } from '@/lib/api';
-import { setSession, type DisplayMode } from '@/lib/auth';
+import { cacheEntitlement, setSession, type DisplayMode } from '@/lib/auth';
 import { enrollPasskey, passkeySupported } from '@/lib/passkey';
 
 /**
@@ -69,12 +69,19 @@ export function MagicLink(): JSX.Element {
       }
       const { sessionToken, displayMode } = res.data;
       setSession(sessionToken, displayMode, { name: '', email: '' });
-      const me = await api<{ user: { name: string | null; email: string | null; displayMode: string | null } }>('/v1/me');
+      const me = await api<{ user: { name: string | null; email: string | null; displayMode: string | null; entitlement?: string; entitlementSource?: string | null } }>('/v1/me');
       const resolved = (me.data?.user.displayMode as DisplayMode | undefined) ?? displayMode;
       setSession(sessionToken, resolved, {
         name: me.data?.user.name ?? '',
         email: me.data?.user.email ?? '',
       });
+      // Brief 28 §2 — seed the offline entitlement cache at sign-in.
+      if (me.data?.user.entitlement) {
+        cacheEntitlement({
+          status: me.data.user.entitlement === 'activated' ? 'activated' : 'unactivated',
+          source: me.data.user.entitlementSource ?? null,
+        });
+      }
       setMode(resolved);
       // Signed in. Offer the passkey — but only where it can actually be created;
       // a device with no WebAuthn support just continues, already signed in. The

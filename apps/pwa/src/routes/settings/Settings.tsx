@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
 import {
+  cacheEntitlement,
   clearSession,
   getDisplayMode,
   isSetupComplete,
@@ -18,7 +19,7 @@ import { AnonymousTally } from './AnonymousTally';
 import { GuidedIntake } from './GuidedIntake';
 
 interface MeData {
-  user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean };
+  user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean; entitlement?: string; entitlementSource?: string | null };
   /** Server-truth live-alert flag (Brief 20 §1): true while an event is open for
    *  the account, even if this device lost its local session. */
   activeEvent?: boolean;
@@ -70,7 +71,18 @@ export function Settings(): JSX.Element {
   const [intakeOpen, setIntakeOpen] = useState(false);
 
   const load = (): void => {
-    void api<MeData>('/v1/me').then((r) => r.ok && r.data && setMe(r.data));
+    void api<MeData>('/v1/me').then((r) => {
+      if (r.ok && r.data) {
+        setMe(r.data);
+        // Brief 28 §2 — keep the offline entitlement cache fresh from account truth.
+        if (r.data.user.entitlement) {
+          cacheEntitlement({
+            status: r.data.user.entitlement === 'activated' ? 'activated' : 'unactivated',
+            source: r.data.user.entitlementSource ?? null,
+          });
+        }
+      }
+    });
   };
   useEffect(load, []);
 
@@ -219,7 +231,22 @@ export function Settings(): JSX.Element {
             v={me?.account ? (me.account.contactsConfigured === 0 ? 'No one yet' : String(me.account.contactsConfigured)) : '—'}
           />
           <Row k="Last check-in" v={me?.account ? whenText(me.account.lastCheckinAt) : '—'} />
+          {/* Brief 28 §2 — activation status (arms the device; never gates the trigger). */}
+          <Row k="Activation" v={me?.user.entitlement === 'activated' ? 'Activated' : me ? 'Not activated' : '—'} />
         </Group>
+
+        {/* Brief 28 §2 — activation prompt for a covert user (whose only route to the
+            app is here). Non-blocking; the trigger works regardless. Never shows a
+            price once activated or when sponsored (org/operator source). */}
+        {me?.user.entitlement === 'unactivated' ? (
+          <Link to="/activate" className="mb-8 block rounded-lg border border-med-text/20 bg-black/20 p-4">
+            <p className="mb-1 text-[12px] font-medium leading-relaxed text-med-text">Activate this device</p>
+            <p className="text-[11px] leading-relaxed text-med-text/60">
+              Enter a code or complete your one-time setup to arm the device. Your
+              emergency trigger already works — activation is never required to send an alert.
+            </p>
+          </Link>
+        ) : null}
 
         {/* An account with no passkey is still reachable by an emailed link — which
             matters if someone else can read that inbox. Offer the upgrade plainly;

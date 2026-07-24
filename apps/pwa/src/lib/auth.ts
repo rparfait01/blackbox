@@ -12,10 +12,20 @@ const TOKEN_KEY = 'blackbox.session';
 const MODE_KEY = 'blackbox.displayMode';
 const SETUP_KEY = 'blackbox.setupComplete';
 const USER_KEY = 'blackbox.user';
+const ENTITLEMENT_KEY = 'blackbox.entitlement';
 
 export interface CachedUser {
   name: string;
   email: string;
+}
+
+export type EntitlementStatus = 'unactivated' | 'activated';
+
+export interface CachedEntitlement {
+  status: EntitlementStatus;
+  /** 'purchase_web' | 'purchase_ios' | 'org_code' | 'operator_grant' | null. An
+   *  org_code / operator_grant source means the UI renders no price. */
+  source: string | null;
 }
 
 function get(key: string): string | null {
@@ -77,9 +87,44 @@ export function setSession(token: string, mode: DisplayMode, user: CachedUser): 
   set(SETUP_KEY, '1');
 }
 
+/**
+ * The account's cached entitlement (Brief 28 §2). Read to decide the ARM affordance
+ * WITHOUT a network round-trip — an activated device arms and (the trigger always
+ * fires regardless) works fully offline after first activation. Defaults to
+ * 'unactivated' when nothing is cached yet.
+ */
+export function getCachedEntitlement(): CachedEntitlement {
+  const raw = get(ENTITLEMENT_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as CachedEntitlement;
+      if (parsed.status === 'activated' || parsed.status === 'unactivated') {
+        return { status: parsed.status, source: parsed.source ?? null };
+      }
+    } catch {
+      /* fall through to default */
+    }
+  }
+  return { status: 'unactivated', source: null };
+}
+
+/**
+ * Cache the entitlement from a fresh GET /v1/me. Monotonic and never-re-locking to
+ * mirror the server (§0): once 'activated' is cached it is NEVER overwritten back to
+ * 'unactivated' — a transient/garbled/offline response can't strip an activated
+ * device of its arm affordance. Only a real activation flips it forward.
+ */
+export function cacheEntitlement(next: CachedEntitlement): void {
+  if (getCachedEntitlement().status === 'activated' && next.status !== 'activated') {
+    return;
+  }
+  set(ENTITLEMENT_KEY, JSON.stringify({ status: next.status, source: next.source ?? null }));
+}
+
 export function clearSession(): void {
   del(TOKEN_KEY);
   del(MODE_KEY);
   del(USER_KEY);
   del(SETUP_KEY);
+  del(ENTITLEMENT_KEY);
 }

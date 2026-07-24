@@ -21,6 +21,7 @@ import { sendCheckin } from '../lib/checkin';
 import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
+import { isEntitled } from '../lib/entitlement';
 import { normalizeSubmission, submitTally } from '../lib/tally';
 import { normalizeIntakeStat, submitIntakeStat } from '../lib/intake-stats';
 import { getAccountKeys, getRecoveryKey, getSurvivorCaptureEnvelope, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
@@ -332,17 +333,27 @@ userRoutes.get('/contacts', async (c) => {
     guardianSlot?.destination != null
       ? await guardianLoad(c.env, guardianSlot.destination, userId)
       : 0;
+  // Brief 28 §2 — the two arm preconditions, computed once. entitled gates the ARM
+  // affordance only (never the trigger); deliverable is the notify-no-one guard.
+  const entitled = await isEntitled(c.env, userId);
+  const deliverable = await hasDeliverableRecipient(c.env, userId);
   return c.json(
     {
       slots,
       guardianEnabled: (user?.guardianEnabled ?? 1) === 1,
       // Surface the guardian's load so the user can judge reliability (Brief 9 caps).
       guardianAlsoFailsafeFor: othersLoad,
-      // Armability: true only when at least one recipient could ACTUALLY be
-      // reached on activation. The client gates the activate affordance on this so
-      // the user can never arm into the notify-no-one deadlock; the server also
-      // enforces it at POST /v1/events.
-      armable: await hasDeliverableRecipient(c.env, userId),
+      // Armability: true only when the account is ENTITLED (Brief 28 §2) AND at least
+      // one recipient could ACTUALLY be reached on activation. The client gates the
+      // activate affordance on this so the user can never arm into the notify-no-one
+      // deadlock, and can never arm before activation. This is the ONLY place
+      // entitlement gates anything — it gates the ARM AFFORDANCE, never the trigger:
+      // POST /v1/events never reads entitlement, and its hasDeliverableRecipient check
+      // there is recording-only ("THE BUTTON ALWAYS FIRES"). armReasons tells the
+      // client WHICH precondition is missing so it shows the right prompt (activate vs
+      // add a recipient) without ever conflating the two.
+      armable: entitled && deliverable,
+      armReasons: { entitled, hasDeliverableRecipient: deliverable },
       // Brief 19: the designated check-in recipient (null → the primary contact is
       // used by default). Lets the UI mark which contact holds the check-in.
       checkinContactId: user?.checkinContactId ?? null,

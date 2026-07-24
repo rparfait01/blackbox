@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom';
 
 import { MeditationHome } from '@/routes/meditation/MeditationHome';
 import { BlackBoxHome } from '@/routes/blackbox/BlackBoxHome';
+import { Activation } from '@/routes/blackbox/Activation';
 import { Settings } from '@/routes/settings/Settings';
 import { Onboarding } from '@/routes/onboarding/Onboarding';
 import { SignIn } from '@/routes/signin/SignIn';
@@ -38,6 +39,9 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
     ),
     errorElement: <MeditationHome />,
   },
+  // Brief 28 §2 — activation (the ARM gate). Reached from the Visible home + Settings,
+  // never from the Hidden facade. Gates arming, never the trigger.
+  { path: '/activate', element: <Activation />, errorElement: <MeditationHome /> },
   { path: '/settings', element: <Settings />, errorElement: <MeditationHome /> },
   { path: '/guardian-accept/:inviteId', element: <GuardianAccept />, errorElement: <MeditationHome /> },
   { path: '*', element: <RootGate />, errorElement: <RootGate /> },
