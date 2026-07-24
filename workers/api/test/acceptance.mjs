@@ -115,13 +115,37 @@ async function claimCoordinator(eventId) {
   return { token, cookie };
 }
 
-// Brief 23 — operator bootstrap: create an org + license record + admin code.
+// Brief 24 — operator bootstrap: create an org + license record + a single-use admin
+// REGISTRATION code (not an enrollment code). Admin #1 is created by the registration
+// ceremony, not by redeeming an enrollment code.
 async function bootstrapOrg(name, lane = 'zero_fee', seatsTotal = 3) {
   const r = await api('POST', '/v1/admin/orgs', { bearer: ADMIN, body: { name, lane, seatsTotal } });
-  if (!r.data?.orgId || !r.data?.adminCode) throw new Error('org bootstrap failed: ' + JSON.stringify(r.data));
-  return { orgId: r.data.orgId, adminCode: r.data.adminCode, seatsTotal };
+  if (!r.data?.orgId || !r.data?.registrationCode) throw new Error('org bootstrap failed: ' + JSON.stringify(r.data));
+  return { orgId: r.data.orgId, registrationCode: r.data.registrationCode, seatsTotal };
 }
-// A fresh throwaway account that redeems a code → { acc, red } (red = redeem result).
+// Register an admin via the Brief 24 ceremony (headless: signup+finalize gets a session,
+// then the explicit completion POST claims admin). The passkey is a client-side UI step
+// (device sign-off) — the server 'complete' requires only a finalized account + code.
+async function registerAdmin(registrationCode, mode = 'direct') {
+  const acc = await signup(mode);
+  const done = await api('POST', '/v1/org-register/complete', {
+    bearer: acc.session,
+    body: { code: registrationCode, licenseVersion: 'v1', acceptancePath: 'click_through' },
+  });
+  return { acc, done };
+}
+// Bootstrap an org and register BOTH required admins, so seat issuance is unlocked.
+async function bootstrapOrgWithTwoAdmins(name, lane = 'zero_fee', seatsTotal = 3) {
+  const org = await bootstrapOrg(name, lane, seatsTotal);
+  const admin1 = await registerAdmin(org.registrationCode);
+  if (!admin1.done.data?.ok) throw new Error('admin #1 register failed: ' + JSON.stringify(admin1.done.data));
+  // Admin #1 invites admin #2 from inside; admin #2 registers → seats unlock.
+  const invite = await api('POST', '/v1/org/admins/invite', { bearer: admin1.acc.session, body: {} });
+  const admin2 = await registerAdmin(invite.data.registrationCode);
+  if (!admin2.done.data?.ok) throw new Error('admin #2 register failed: ' + JSON.stringify(admin2.done.data));
+  return { ...org, admin: admin1.acc, admin2: admin2.acc };
+}
+// A fresh throwaway account that redeems an ENROLLMENT code → { acc, red }.
 async function enrollWith(code, mode = 'direct') {
   const acc = await signup(mode);
   const red = await api('POST', '/v1/me/org/redeem', { bearer: acc.session, body: { code } });
@@ -887,53 +911,49 @@ async function run() {
   // token is absent, like the other admin-only rows.
   await check('38. tenancy: cross-org isolation — a coordinator reaches ONLY their own org', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
-    const A = await bootstrapOrg('Org-A-' + uniq());
-    const B = await bootstrapOrg('Org-B-' + uniq());
-    const adminA = await enrollWith(A.adminCode);
-    const adminB = await enrollWith(B.adminCode);
-    assert(adminA.red.data?.role === 'admin', `A admin not enrolled: ${JSON.stringify(adminA.red.data)}`);
-    const codeA = await api('POST', '/v1/org/codes', { bearer: adminA.acc.session, body: { role: 'survivor' } });
+    const A = await bootstrapOrgWithTwoAdmins('Org-A-' + uniq());
+    const B = await bootstrapOrgWithTwoAdmins('Org-B-' + uniq());
+    const codeA = await api('POST', '/v1/org/codes', { bearer: A.admin.session, body: { role: 'survivor' } });
     const survA = await enrollWith(codeA.data.code);
+    assert(survA.red.data?.role === 'survivor', `A survivor not enrolled: ${JSON.stringify(survA.red.data)}`);
     const evA = await trigger(survA.acc.session);
     // A sees its own survivor + event…
-    const listA = await api('GET', '/v1/org/survivors', { bearer: adminA.acc.session });
+    const listA = await api('GET', '/v1/org/survivors', { bearer: A.admin.session });
     assert(listA.data.survivors.some((s) => s.userId === survA.acc.userId), 'A cannot see its own survivor');
-    const evsA = await api('GET', '/v1/org/events', { bearer: adminA.acc.session });
+    const evsA = await api('GET', '/v1/org/events', { bearer: A.admin.session });
     assert(evsA.data.events.some((e) => e.id === evA.eventId), 'A cannot see its own event');
     // …B sees NEITHER, by any route (the isolation boundary).
-    const listB = await api('GET', '/v1/org/survivors', { bearer: adminB.acc.session });
+    const listB = await api('GET', '/v1/org/survivors', { bearer: B.admin.session });
     assert(!listB.data.survivors.some((s) => s.userId === survA.acc.userId), 'ISOLATION BREACH: B sees A survivor');
-    const evsB = await api('GET', '/v1/org/events', { bearer: adminB.acc.session });
+    const evsB = await api('GET', '/v1/org/events', { bearer: B.admin.session });
     assert(!evsB.data.events.some((e) => e.id === evA.eventId), 'ISOLATION BREACH: B sees A event');
-    const detailB = await api('GET', `/v1/org/events/${evA.eventId}`, { bearer: adminB.acc.session });
+    const detailB = await api('GET', `/v1/org/events/${evA.eventId}`, { bearer: B.admin.session });
     assert(detailB.status === 404, `ISOLATION BREACH: B read A's event detail: ${detailB.status}`);
   });
 
   await check('39. enrollment: valid code enrolls; exhausted + revoked refused (expired: unit-covered)', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
-    const O = await bootstrapOrg('Org-C-' + uniq(), 'zero_fee', 5);
-    const admin = await enrollWith(O.adminCode);
-    const c1 = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor', maxUses: 1 } });
+    const O = await bootstrapOrgWithTwoAdmins('Org-C-' + uniq(), 'zero_fee', 5);
+    const c1 = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor', maxUses: 1 } });
     const s1 = await enrollWith(c1.data.code);
     assert(s1.red.status === 200 && s1.red.data.role === 'survivor', `valid enroll failed: ${JSON.stringify(s1.red.data)}`);
     const s2 = await enrollWith(c1.data.code);
     assert(s2.red.status === 400, `exhausted (maxUses 1) code accepted a 2nd redeem: ${s2.red.status}`);
-    const c2 = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
-    await api('POST', `/v1/org/codes/${c2.data.code}/revoke`, { bearer: admin.acc.session });
+    const c2 = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
+    await api('POST', `/v1/org/codes/${c2.data.code}/revoke`, { bearer: O.admin.session });
     const s3 = await enrollWith(c2.data.code);
     assert(s3.red.status === 400, `revoked code was accepted: ${s3.red.status} ${JSON.stringify(s3.red.data)}`);
   });
 
   await check('40. migration: an individual account joins an org (history preserved) and can leave', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
-    const O = await bootstrapOrg('Org-D-' + uniq(), 'zero_fee', 2);
-    const admin = await enrollWith(O.adminCode);
+    const O = await bootstrapOrgWithTwoAdmins('Org-D-' + uniq(), 'zero_fee', 2);
     // An existing INDIVIDUAL account with history/state: a saved contact. (No active
     // event — enrollment is an account change and is correctly live-alert-locked, so
     // "history" here is durable account state, not an in-flight alert.)
     const indiv = await signup();
     await api('POST', '/v1/me/contacts/guardian', { bearer: indiv.session, body: { contactName: 'Kin', channel: 'email', destination: `smoke+kin-${uniq()}@example.com` } });
-    const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
+    const c = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
     const red = await api('POST', '/v1/me/org/redeem', { bearer: indiv.session, body: { code: c.data.code } });
     assert(red.status === 200 && red.data.orgId === O.orgId, `migration failed: ${red.status} ${JSON.stringify(red.data)}`);
     // History preserved: the pre-join contact is still there after joining.
@@ -945,46 +965,43 @@ async function run() {
     assert(left.status === 200 && left.data.left === true, `leave failed: ${JSON.stringify(left.data)}`);
     const stillKin = (await api('GET', '/v1/me/contacts', { bearer: indiv.session })).data.slots.find((s) => s.slot === 'guardian');
     assert(stillKin && stillKin.contactName === 'Kin', 'contact lost on leave — history not preserved');
-    const list = await api('GET', '/v1/org/survivors', { bearer: admin.acc.session });
+    const list = await api('GET', '/v1/org/survivors', { bearer: O.admin.session });
     assert(!list.data.survivors.some((s) => s.userId === indiv.userId), 'left account still on the org roster');
   });
 
   await check('41. assisted setup: an enrolled survivor reaches Armed; coordinator sees setup complete', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
-    const O = await bootstrapOrg('Org-E-' + uniq(), 'zero_fee', 2);
-    const admin = await enrollWith(O.adminCode);
-    const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor' } });
+    const O = await bootstrapOrgWithTwoAdmins('Org-E-' + uniq(), 'zero_fee', 2);
+    const c = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
     const surv = await enrollWith(c.data.code);
     await api('POST', '/v1/me/contacts/guardian', { bearer: surv.acc.session, body: { contactName: 'G', channel: 'email', destination: `smoke+g-${uniq()}@example.com` } });
     const me = await api('GET', '/v1/me/contacts', { bearer: surv.acc.session });
     assert(me.data.armable === true, `enrolled survivor not armable after setup: ${JSON.stringify(me.data.armable)}`);
-    const list = await api('GET', '/v1/org/survivors', { bearer: admin.acc.session });
+    const list = await api('GET', '/v1/org/survivors', { bearer: O.admin.session });
     const row = list.data.survivors.find((s) => s.userId === surv.acc.userId);
     assert(row && row.setupComplete === true, `coordinator doesn't see setup complete: ${JSON.stringify(row)}`);
   });
 
   await check('42. seats: ceiling refuses over-limit enroll; admin remove frees the seat + revokes', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
-    const O = await bootstrapOrg('Org-F-' + uniq(), 'zero_fee', 1); // ONE seat
-    const admin = await enrollWith(O.adminCode); // staff — consumes no survivor seat
-    const c = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor', maxUses: 5 } });
+    const O = await bootstrapOrgWithTwoAdmins('Org-F-' + uniq(), 'zero_fee', 1); // ONE seat, 2 admins
+    const c = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor', maxUses: 5 } });
     const s1 = await enrollWith(c.data.code);
     assert(s1.red.status === 200, `first survivor rejected on a 1-seat org: ${JSON.stringify(s1.red.data)}`);
     const s2 = await enrollWith(c.data.code);
     assert(s2.red.status === 400 && s2.red.data.error === 'seats_full', `seat ceiling not enforced: ${s2.red.status} ${JSON.stringify(s2.red.data)}`);
-    const rem = await api('POST', `/v1/org/survivors/${s1.acc.userId}/remove`, { bearer: admin.acc.session });
+    const rem = await api('POST', `/v1/org/survivors/${s1.acc.userId}/remove`, { bearer: O.admin.session });
     assert(rem.status === 200, `remove-seat failed: ${JSON.stringify(rem.data)}`);
-    assert(!(await api('GET', '/v1/org/survivors', { bearer: admin.acc.session })).data.survivors.some((s) => s.userId === s1.acc.userId), 'removed survivor still on roster');
+    assert(!(await api('GET', '/v1/org/survivors', { bearer: O.admin.session })).data.survivors.some((s) => s.userId === s1.acc.userId), 'removed survivor still on roster');
     const s3 = await enrollWith(c.data.code);
     assert(s3.red.status === 200, `seat not freed after remove (ceiling still full): ${JSON.stringify(s3.red.data)}`);
   });
 
   await check('43. a leaked/valid code grants MEMBERSHIP ONLY — never read access to survivor data', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
-    const O = await bootstrapOrg('Org-G-' + uniq(), 'zero_fee', 3);
-    const admin = await enrollWith(O.adminCode);
+    const O = await bootstrapOrgWithTwoAdmins('Org-G-' + uniq(), 'zero_fee', 3);
     // A real enrolled survivor with data (an event).
-    const cs = await api('POST', '/v1/org/codes', { bearer: admin.acc.session, body: { role: 'survivor', maxUses: 5 } });
+    const cs = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor', maxUses: 5 } });
     const victim = await enrollWith(cs.data.code);
     const vEvent = await trigger(victim.acc.session);
     // An attacker who obtained the survivor code redeems it → they ARE enrolled…
@@ -1045,6 +1062,89 @@ async function run() {
         assert(allowed.includes(k), `aggregate cell leaked a field: ${k}`);
       }
     }
+  });
+
+  // ===== Brief 24 — org registration (vetted, invite-only, one-time admin code) =====
+  await check('47. registration: operator creates an org + issues a code; the link renders a form (read-only org)', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-Reg-' + uniq(), 'zero_fee', 4);
+    // The GET the page uses to render the form: read-only org details, no session.
+    const view = await api('GET', `/v1/org-register/${O.registrationCode}`);
+    assert(view.status === 200 && view.data.valid === true, `registration view not valid: ${view.status} ${JSON.stringify(view.data)}`);
+    assert(view.data.org && view.data.org.seatsTotal === 4 && view.data.org.orgId === O.orgId, `org details wrong/editable: ${JSON.stringify(view.data.org)}`);
+  });
+
+  await check('48. registration: a passive GET consumes NOTHING and creates NO admin (the scanner hazard)', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-Scan-' + uniq(), 'zero_fee', 2);
+    // Hammer the link like an email scanner would — several times.
+    for (let i = 0; i < 3; i += 1) await api('GET', `/v1/org-register/${O.registrationCode}`);
+    // The code is STILL redeemable (unconsumed) and the org still has ZERO admins:
+    // registering now must succeed, proving no passive GET spent the code or claimed a seat.
+    const admin = await registerAdmin(O.registrationCode);
+    assert(admin.done.status === 201 && admin.done.data.ok, `code was consumed by a passive GET: ${admin.done.status} ${JSON.stringify(admin.done.data)}`);
+  });
+
+  await check('49. registration: completes only on explicit POST; the consumed code is then DEAD', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-Once-' + uniq(), 'zero_fee', 2);
+    const a1 = await registerAdmin(O.registrationCode);
+    assert(a1.done.status === 201 && a1.done.data.ok, `first registration failed: ${JSON.stringify(a1.done.data)}`);
+    // A second explicit attempt on the SAME code is refused clearly (single-use).
+    const a2 = await registerAdmin(O.registrationCode);
+    assert(a2.done.status === 400 && a2.done.data.error === 'redeemed', `consumed code not dead: ${a2.done.status} ${JSON.stringify(a2.done.data)}`);
+    // And the read-only view now reads as a dead route.
+    const view = await api('GET', `/v1/org-register/${O.registrationCode}`);
+    assert(view.data.valid === false, `consumed code still shows a live form: ${JSON.stringify(view.data)}`);
+  });
+
+  await check('50. registration: seat issuance is BLOCKED until 2 admins; unlocks at the second', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-Two-' + uniq(), 'zero_fee', 3);
+    const a1 = await registerAdmin(O.registrationCode);
+    // With one admin, issuing a survivor code is refused (needs_two_admins).
+    const locked = await api('POST', '/v1/org/codes', { bearer: a1.acc.session, body: { role: 'survivor' } });
+    assert(locked.status === 409 && locked.data.error === 'needs_two_admins', `seat issuance not locked at 1 admin: ${locked.status} ${JSON.stringify(locked.data)}`);
+    // /me reports the lock + prompts the second admin.
+    const me = await api('GET', '/v1/org/me', { bearer: a1.acc.session });
+    assert(me.data.seatsLocked === true && me.data.adminCount === 1, `me lock state wrong: ${JSON.stringify(me.data)}`);
+    // Admin #1 invites admin #2 from inside; that is NOT an enrollment code.
+    const invite = await api('POST', '/v1/org/admins/invite', { bearer: a1.acc.session, body: {} });
+    assert(invite.status === 201 && invite.data.registrationCode, `admin invite failed: ${JSON.stringify(invite.data)}`);
+    await registerAdmin(invite.data.registrationCode);
+    // Now seat issuance is unlocked.
+    const ok = await api('POST', '/v1/org/codes', { bearer: a1.acc.session, body: { role: 'survivor' } });
+    assert(ok.status === 201 && ok.data.code, `seat issuance still locked after 2 admins: ${ok.status} ${JSON.stringify(ok.data)}`);
+  });
+
+  await check('51. code-type separation both ways: enrollment code cannot make an admin; registration code cannot make a survivor/coordinator', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrgWithTwoAdmins('Org-Sep-' + uniq(), 'zero_fee', 3);
+    // (a) The enrollment /codes endpoint cannot even be ASKED for an admin code — the
+    // request is coerced to survivor; redeeming it yields a survivor, never an admin.
+    const asAdmin = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'admin' } });
+    const red = await enrollWith(asAdmin.data.code);
+    assert(red.red.data.role === 'survivor', `an enrollment code conferred a non-survivor role: ${JSON.stringify(red.red.data)}`);
+    // (b) A registration code cannot be redeemed via the enrollment path at all.
+    const O2 = await bootstrapOrg('Org-Sep2-' + uniq(), 'zero_fee', 2);
+    const badEnroll = await enrollWith(O2.registrationCode);
+    assert(badEnroll.red.status === 400, `a registration code was accepted by the enrollment path: ${badEnroll.red.status}`);
+  });
+
+  await check('52. registration: operator re-issue works and is logged; the old code stays dead', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const O = await bootstrapOrg('Org-Reissue-' + uniq(), 'zero_fee', 2);
+    const re = await api('POST', `/v1/admin/orgs/${O.orgId}/registration-code/reissue`, { bearer: ADMIN, body: { reason: 'acceptance: wrong recipient' } });
+    assert(re.status === 201 && re.data.registrationCode && re.data.registrationCode !== O.registrationCode, `reissue failed: ${re.status} ${JSON.stringify(re.data)}`);
+    // The OLD code is now dead…
+    const oldView = await api('GET', `/v1/org-register/${O.registrationCode}`);
+    assert(oldView.data.valid === false, `old code still live after reissue: ${JSON.stringify(oldView.data)}`);
+    // …and the FRESH code registers admin #1.
+    const admin = await registerAdmin(re.data.registrationCode);
+    assert(admin.done.status === 201 && admin.done.data.ok, `reissued code did not register: ${JSON.stringify(admin.done.data)}`);
+    // A reissue with no reason is refused (the audit trail is the only control on it).
+    const noReason = await api('POST', `/v1/admin/orgs/${O.orgId}/registration-code/reissue`, { bearer: ADMIN, body: {} });
+    assert(noReason.status === 400, `reissue without a reason was allowed: ${noReason.status}`);
   });
 
   // ---- cleanup ----
