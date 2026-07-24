@@ -1222,6 +1222,23 @@ async function run() {
     assert(bad.status === 400, `empty recovery-key not refused: ${bad.status}`);
   });
 
+  await check('57. zk custody: the OWNING survivor fetches their capture envelope; a non-owner cannot', async () => {
+    const owner = await signup();
+    const ev = await trigger(owner.session);
+    assert(ev && ev.eventId && ev.hmacSecret, `trigger failed: ${JSON.stringify(ev)}`);
+    // Store a survivor-wrapped DEK (as the capture client would).
+    await signed('POST', `/v1/events/${ev.eventId}/wrapped-keys`, ev.hmacSecret, ev.eventId, {
+      keys: [{ recipientType: 'survivor', recipientRef: owner.userId, keyGeneration: 0, algId: 'p256-hkdf-sha256-aes256gcm/v1', wrappedDek: '{"alg":"p256-hkdf-sha256-aes256gcm/v1","epk":"e","iv":"i","ct":"c"}' }],
+    });
+    // The owner gets the envelope (their wrapped DEK) to decrypt client-side.
+    const mine = await api('GET', `/v1/me/events/${ev.eventId}/envelope`, { bearer: owner.session });
+    assert(mine.status === 200 && mine.data.envelope && mine.data.envelope.wrappedDek.includes('epk'), `owner envelope missing: ${JSON.stringify(mine.data)}`);
+    // A DIFFERENT account cannot fetch it — no cross-account decrypt access.
+    const other = await signup();
+    const stolen = await api('GET', `/v1/me/events/${ev.eventId}/envelope`, { bearer: other.session });
+    assert(stolen.status === 200 && stolen.data.envelope === null, `non-owner got the envelope: ${JSON.stringify(stolen.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

@@ -22,7 +22,7 @@ import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { normalizeSubmission, submitTally } from '../lib/tally';
-import { getAccountKeys, getRecoveryKey, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
+import { getAccountKeys, getRecoveryKey, getSurvivorCaptureEnvelope, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -99,6 +99,20 @@ userRoutes.post('/recovery-key', async (c) => {
 
 userRoutes.get('/recovery-key', async (c) => {
   return c.json({ wrapped: await getRecoveryKey(c.env, c.get('userId')) }, 200);
+});
+
+// Brief 26 state 6 (Review) — the OWNING survivor fetches their capture's wrapped DEK +
+// commitments to decrypt it client-side. Fetching the key is the audited decrypt point
+// (the invariant: every decrypt is logged — who, what, when); the actual decrypt happens
+// on the survivor's device, never here. Ownership is enforced in the helper.
+userRoutes.get('/events/:id/envelope', async (c) => {
+  const eventId = c.req.param('id');
+  const envelope = await getSurvivorCaptureEnvelope(c.env, c.get('userId'), eventId);
+  if (!envelope) {
+    return c.json({ envelope: null }, 200);
+  }
+  await audit(c.env, eventId, 'decrypt_review', c.get('userId'), { via: 'survivor' });
+  return c.json({ envelope }, 200);
 });
 
 // Brief 25 — Anonymous Incident Tally. The session authenticates the SENDER (for the

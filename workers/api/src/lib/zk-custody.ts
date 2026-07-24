@@ -75,6 +75,42 @@ export async function setOrgKeys(env: Env, orgId: string, upload: OrgKeyUpload):
   }
 }
 
+export interface SurvivorCaptureEnvelope {
+  wrappedDek: string;
+  algId: string;
+  commitments: Array<{ sequence: number; plaintextHash: string }>;
+}
+
+/** The envelope material an OWNING survivor needs to decrypt their own capture (state 6):
+ *  their wrapped DEK + the per-chunk plaintext commitments. Ownership is enforced
+ *  (event.userId === caller). Returns null if not the owner or the capture is plaintext. */
+export async function getSurvivorCaptureEnvelope(
+  env: Env,
+  userId: string,
+  eventId: string,
+): Promise<SurvivorCaptureEnvelope | null> {
+  const ev = await env.DB.prepare('SELECT userId FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ userId: string | null }>();
+  if (!ev || ev.userId !== userId) {
+    return null; // not the owner (or account-less event) — no cross-account access
+  }
+  const wrap = await env.DB.prepare(
+    "SELECT wrappedDek, algId FROM wrapped_keys WHERE eventId = ? AND recipientType = 'survivor' ORDER BY createdAt DESC LIMIT 1",
+  )
+    .bind(eventId)
+    .first<{ wrappedDek: string; algId: string }>();
+  if (!wrap) {
+    return null; // no survivor-wrapped DEK — a plaintext capture, nothing to decrypt
+  }
+  const { results } = await env.DB.prepare(
+    'SELECT sequence, plaintextHash FROM plaintext_commitments WHERE eventId = ? ORDER BY sequence',
+  )
+    .bind(eventId)
+    .all<{ sequence: number; plaintextHash: string }>();
+  return { wrappedDek: wrap.wrappedDek, algId: wrap.algId, commitments: results };
+}
+
 /** The calling seat's grant at the current org generation (the wrapped org private key
  *  it opens with its own key). Returns null if none — the seat has no operating access. */
 export async function getOrgGrant(env: Env, orgId: string, seatUserId: string): Promise<OrgKeyGrantRow | null> {
