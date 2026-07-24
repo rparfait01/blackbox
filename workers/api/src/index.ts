@@ -1438,17 +1438,68 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('webm') ? 'webm' : 'bin';
   const r2Key = `events/${eventId}/chunks/${sequence}.${ext}`;
   // Integrity (#C2): hash the chunk bytes on write and link into the event's
-  // append-only hash chain before anything can touch the stored object.
+  // append-only hash chain before anything can touch the stored object. The bytes are
+  // opaque either way — plaintext today, ciphertext when the client is armed — so this
+  // is unchanged by the envelope (the chain hashes whatever bytes arrive).
   const sha256 = await hashBytes(bytes);
   const tz = await eventTzOffset(c.env, eventId);
+  // Brief 26 — optional envelope metadata. PRESENCE-gated: a plaintext upload sends
+  // neither header and behaves exactly as before. The server never REQUIRES these (even
+  // with the flag armed) — capture availability is paramount and the client fails open.
+  const isFinal = c.req.header('X-Is-Final') === '1' ? 1 : 0;
+  const commitment = (c.req.header('X-Plaintext-Commitment') ?? '').trim();
   await c.env.MEDIA.put(r2Key, bytes, { httpMetadata: { contentType: mimeType } });
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz)
+    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal)
     .run();
   await appendToChain(c.env, eventId, 'chunk', r2Key, sha256);
+  // The signed PRE-ENCRYPTION plaintext commitment (change #1, admissibility): store it
+  // and sign it into the SAME chain, so a later decryption is verifiable against a
+  // capture-time commitment.
+  if (commitment) {
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO plaintext_commitments (eventId, sequence, plaintextHash, createdAt) VALUES (?, ?, ?, ?)',
+    )
+      .bind(eventId, sequence, commitment, Date.now())
+      .run();
+    await appendToChain(c.env, eventId, 'commitment', `${eventId}/${sequence}`, commitment);
+  }
   return c.json({ ok: true, r2Key }, 201);
+});
+
+// Brief 26 — the per-capture wrapped data keys (states 3–4). One DEK per capture,
+// wrapped to the survivor and (if enrolled) the org public key; uploaded once at capture
+// start. Each wrappedDek is a sealed envelope (itself ciphertext under a public key), so
+// the server stores it and can open none of it. hmac-authed like every event child route.
+app.post('/v1/events/:id/wrapped-keys', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req
+    .json<{ keys?: Array<{ recipientType?: string; recipientRef?: string; keyGeneration?: number; algId?: string; wrappedDek?: string }> }>()
+    .catch(() => ({}) as { keys?: unknown });
+  const keys = Array.isArray(body.keys) ? body.keys : [];
+  let stored = 0;
+  for (const k of keys) {
+    const recipientType = k.recipientType === 'org' ? 'org' : k.recipientType === 'survivor' ? 'survivor' : null;
+    if (!recipientType || !k.algId || !k.wrappedDek) continue;
+    await c.env.DB.prepare(
+      'INSERT INTO wrapped_keys (id, eventId, sequence, recipientType, recipientRef, keyGeneration, algId, wrappedDek, createdAt) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)',
+    )
+      .bind(
+        crypto.randomUUID(),
+        eventId,
+        recipientType,
+        k.recipientRef ?? null,
+        typeof k.keyGeneration === 'number' ? k.keyGeneration : 0,
+        k.algId,
+        k.wrappedDek,
+        Date.now(),
+      )
+      .run();
+    stored += 1;
+  }
+  return c.json({ ok: true, stored }, 201);
 });
 
 interface LocationPayload {

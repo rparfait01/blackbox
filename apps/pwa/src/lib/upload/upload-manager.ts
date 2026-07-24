@@ -2,9 +2,22 @@ import { signRequest } from '@blackbox/shared';
 import type { Classification } from '@blackbox/classifier';
 
 import { log } from '@/lib/log';
-import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
+import { API_BASE_URL, envelopeEncryptionEnabled, uploadsEnabled } from '@/lib/env';
 import { getSessionToken } from '@/lib/auth';
 import { getUserHash } from '@/lib/device';
+import {
+  ENVELOPE_ALG,
+  generateDek,
+  importPublicKey,
+  randomIvPrefix,
+  wrapDek,
+} from '@/lib/crypto/envelope';
+import {
+  makeEncryptor,
+  sealChunkForSend,
+  serializeWrap,
+  type CaptureEncryptor,
+} from './capture-encryptor';
 import {
   deleteQueuedUpload,
   enqueueUpload,
@@ -41,6 +54,11 @@ interface SessionContext {
    *  queue drain) never create two events for one session — which would fire two
    *  activation notifications (Brief 12 P3 duplicate-LINE). */
   openInFlight?: Promise<boolean>;
+  /** Brief 26 — the per-capture encryptor, prepared off the send path after event open.
+   *  `undefined` = not yet attempted; `null` = attempted and NOT available (flag off, no
+   *  survivor key, or setup failed) → every chunk uploads plaintext (fail-open). A
+   *  ready CaptureEncryptor = chunks encrypt. sendItem never blocks on this. */
+  encryptor?: CaptureEncryptor | null;
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -307,7 +325,78 @@ async function openEvent(ctx: SessionContext): Promise<boolean> {
   ctx.eventId = data.eventId;
   ctx.hmacSecret = data.hmacSecret;
   await setSessionBackend(ctx.sessionId, data.eventId, data.hmacSecret);
+  // Brief 26 — prepare the capture encryptor OFF the send path. Fire-and-forget: it can
+  // never block event-open or the alert notification. Until it resolves (or if it never
+  // does), ctx.encryptor is undefined/null and chunks upload plaintext — fail-open.
+  void prepareEncryptor(ctx);
   return true;
+}
+
+/**
+ * Set up the per-capture encryptor: fetch the account's public keys, generate one DEK,
+ * wrap it to the survivor (+ org) key, upload the wrapped keys, and only THEN mark the
+ * encryptor ready. Every early return leaves ctx.encryptor null → plaintext. This runs
+ * entirely off the send path; a failure here never touches a capture's availability.
+ */
+async function prepareEncryptor(ctx: SessionContext): Promise<void> {
+  if (!envelopeEncryptionEnabled || ctx.encryptor !== undefined) {
+    return; // flag off, or already attempted — leave plaintext
+  }
+  ctx.encryptor = null; // mark attempted; stays null (plaintext) unless we fully succeed
+  try {
+    const eventId = ctx.eventId;
+    const secret = ctx.hmacSecret;
+    const token = getSessionToken();
+    if (!eventId || !secret || !token) {
+      return;
+    }
+    const keysRes = await fetch(`${API_BASE_URL}/v1/me/keys`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!keysRes.ok) {
+      return;
+    }
+    const keys = (await keysRes.json()) as { pubkey: string | null; org: { orgPubkey: string; generation: number } | null };
+    if (!keys.pubkey) {
+      return; // no survivor public key yet → cannot encrypt recoverably → plaintext
+    }
+    const dek = await generateDek();
+    const ivPrefix = randomIvPrefix();
+    const wraps: Array<{ recipientType: string; recipientRef: string | null; keyGeneration: number; algId: string; wrappedDek: string }> = [
+      {
+        recipientType: 'survivor',
+        recipientRef: null,
+        keyGeneration: 0,
+        algId: ENVELOPE_ALG,
+        wrappedDek: serializeWrap(await wrapDek(dek, await importPublicKey(keys.pubkey))),
+      },
+    ];
+    if (keys.org) {
+      wraps.push({
+        recipientType: 'org',
+        recipientRef: null,
+        keyGeneration: keys.org.generation,
+        algId: ENVELOPE_ALG,
+        wrappedDek: serializeWrap(await wrapDek(dek, await importPublicKey(keys.org.orgPubkey))),
+      });
+    }
+    // Upload the wrapped keys BEFORE marking ready — a chunk must never encrypt under a
+    // DEK the server has no wrapped copy of (it would be unrecoverable).
+    const path = `/v1/events/${eventId}/wrapped-keys`;
+    const bodyBytes = new TextEncoder().encode(JSON.stringify({ keys: wraps }));
+    const ts = Date.now();
+    const signed = await signRequest({ secret, eventId, method: 'POST', path, timestamp: ts, body: bodyBytes });
+    const up = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { ...signed, 'Content-Type': 'application/json' },
+      body: bodyBytes as BodyInit,
+    });
+    if (!up.ok) {
+      return; // wrapped keys not stored → keep plaintext
+    }
+    ctx.encryptor = makeEncryptor(dek, eventId, ivPrefix); // ready — chunks now encrypt
+  } catch (error) {
+    log.error('encryptor prep failed; capture continues plaintext', error);
+    // ctx.encryptor stays null → fail-open to plaintext.
+  }
 }
 
 async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boolean> {
@@ -323,9 +412,23 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
 
   if (item.kind === 'chunk') {
     path = `/v1/events/${eventId}/chunks/${item.sequence}`;
-    body = new Uint8Array(await (item.blob ?? new Blob()).arrayBuffer());
+    const plaintext = new Uint8Array(await (item.blob ?? new Blob()).arrayBuffer());
+    // Brief 26 — fail-open by construction: the body STARTS as the plaintext bytes and is
+    // only replaced with ciphertext when a ready encryptor seals it within a time bound.
+    // Flag off, no key, a throw, or a hang all leave the plaintext body — the chunk lands.
+    const sealed = await sealChunkForSend({
+      encryptor: ctx.encryptor ?? null,
+      plaintext,
+      sequence: item.sequence ?? 0,
+      isFinal: false,
+    });
+    body = sealed.body;
     headers['X-Mime-Type'] = item.mimeType ?? 'application/octet-stream';
     headers['Content-Type'] = 'application/octet-stream';
+    if (sealed.encrypted && sealed.commitment) {
+      headers['X-Plaintext-Commitment'] = sealed.commitment;
+      headers['X-Is-Final'] = sealed.isFinal ? '1' : '0';
+    }
   } else {
     path = `/v1/events/${eventId}/${item.kind}`;
     body = new TextEncoder().encode(JSON.stringify(item.payload ?? {}));

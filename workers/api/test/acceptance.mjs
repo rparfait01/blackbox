@@ -1190,6 +1190,23 @@ async function run() {
     assert(other.data.grant === null, `a seat with no grant should get null: ${JSON.stringify(other.data)}`);
   });
 
+  await check('55. zk custody: per-capture wrapped DEKs store on the event (opaque, hmac-authed)', async () => {
+    const u = await signup();
+    const ev = await trigger(u.session);
+    assert(ev && ev.eventId && ev.hmacSecret, `trigger failed: ${JSON.stringify(ev)}`);
+    // The server stores the wrapped envelopes verbatim (each is ciphertext under a pubkey).
+    const res = await signed('POST', `/v1/events/${ev.eventId}/wrapped-keys`, ev.hmacSecret, ev.eventId, {
+      keys: [
+        { recipientType: 'survivor', recipientRef: null, keyGeneration: 0, algId: 'p256-hkdf-sha256-aes256gcm/v1', wrappedDek: '{"alg":"p256-hkdf-sha256-aes256gcm/v1","epk":"x","iv":"y","ct":"z"}' },
+        { recipientType: 'org', recipientRef: null, keyGeneration: 0, algId: 'p256-hkdf-sha256-aes256gcm/v1', wrappedDek: '{"alg":"p256-hkdf-sha256-aes256gcm/v1","epk":"a","iv":"b","ct":"c"}' },
+      ],
+    });
+    assert(res.status === 201 && res.data.stored === 2, `wrapped-keys not stored: ${res.status} ${JSON.stringify(res.data)}`);
+    // An unsigned attempt is refused (event routes are hmac-authed).
+    const forged = await api('POST', `/v1/events/${ev.eventId}/wrapped-keys`, { body: { keys: [] } });
+    assert(forged.status === 401, `unsigned wrapped-keys not refused: ${forged.status}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 

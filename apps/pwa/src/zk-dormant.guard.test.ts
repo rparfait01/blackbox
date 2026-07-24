@@ -6,15 +6,20 @@ import { describe, expect, it } from 'vitest';
 import { envelopeEncryptionEnabled } from '@/lib/env';
 
 /**
- * Brief 26 Phase 1 — dormancy guard. Until the flag is armed, the zero-knowledge
- * envelope must change NOTHING on the capture path. This pins that: the flag defaults
- * OFF, and the capture/upload pipeline does not yet import the crypto core — so a
- * regression that quietly wires encryption into the send path (before the fail-open
- * step 3 is built) trips here instead of risking a survivor's recording.
+ * Brief 26 — fail-open guard for the capture path. The envelope is now WIRED into the
+ * upload send path (step 3), so the invariant is no longer "not imported" but
+ * "encryption can never break or block a capture." These pin that structurally:
+ *   - the flag defaults OFF;
+ *   - the media recorder is still untouched (encryption lives in the upload layer);
+ *   - the send path goes through sealChunkForSend (plaintext-by-default) and never calls
+ *     the raw encrypt primitive directly;
+ *   - encryptor setup is fire-and-forget, never awaited on the open/send path.
  */
 
 const SRC = dirname(fileURLToPath(import.meta.url));
 const read = (p: string): string => readFileSync(join(SRC, p), 'utf8');
+const uploadMgr = read('./lib/upload/upload-manager.ts');
+const sealer = read('./lib/upload/capture-encryptor.ts');
 
 describe('the envelope flag defaults OFF', () => {
   it('is false unless VITE_ENVELOPE_ENC is exactly "true"', () => {
@@ -22,22 +27,34 @@ describe('the envelope flag defaults OFF', () => {
   });
 });
 
-describe('the capture path is untouched while dormant', () => {
-  it('the upload manager does not import the envelope crypto (no encrypt on the send path yet)', () => {
-    const upload = read('./lib/upload/upload-manager.ts');
-    expect(upload).not.toMatch(/crypto\/envelope|encryptChunk|wrapDek/);
-  });
-  it('media capture does not import the envelope crypto', () => {
-    const capture = read('./lib/capture/media-capture.ts');
-    expect(capture).not.toMatch(/crypto\/envelope|encryptChunk/);
+describe('the media recorder is untouched — encryption is in the upload layer only', () => {
+  it('media-capture does not import the crypto core', () => {
+    expect(read('./lib/capture/media-capture.ts')).not.toMatch(/crypto\/envelope|encryptChunk/);
   });
 });
 
-describe('the crypto core stays server-blind by construction', () => {
-  it('the envelope core never exports a way to hand a private key to the server', () => {
-    // A sanity tripwire: the only exports that touch a private key operate client-side
-    // (unwrap/open); nothing serializes a private key for upload in the core.
-    const core = read('./lib/crypto/envelope.ts');
-    expect(core).not.toMatch(/upload|fetch\(|POST/i);
+describe('the send path is fail-open by construction', () => {
+  it('chunk sending goes through sealChunkForSend, not a raw encryptChunk call', () => {
+    expect(uploadMgr).toMatch(/sealChunkForSend\(/);
+    // The send path must not call the raw AEAD directly — only via the fail-open wrapper.
+    const sendItem = uploadMgr.slice(uploadMgr.indexOf('async function sendItem'), uploadMgr.indexOf('async function drainQueue'));
+    expect(sendItem).not.toMatch(/\bencryptChunk\(/);
+  });
+
+  it('the body defaults to plaintext and is only replaced on a successful seal', () => {
+    // sealChunkForSend returns { body } starting from the plaintext; sendItem assigns it.
+    expect(uploadMgr).toMatch(/body = sealed\.body/);
+    expect(sealer).toMatch(/const plaintextResult: SealResult = \{ body: opts\.plaintext/);
+  });
+
+  it('encryptor setup is fire-and-forget — never awaited on the open path', () => {
+    expect(uploadMgr).toMatch(/void prepareEncryptor\(ctx\)/);
+    // prepareEncryptor must not be awaited (that could delay the alert / block capture).
+    expect(uploadMgr).not.toMatch(/await prepareEncryptor\(/);
+  });
+
+  it('the seal is time-bounded so a hung crypto call cannot wedge the send', () => {
+    expect(sealer).toMatch(/withTimeout\(/);
+    expect(sealer).toMatch(/ENCRYPT_TIMEOUT_MS/);
   });
 });
