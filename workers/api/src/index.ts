@@ -38,6 +38,7 @@ import { audioStream, locationStream } from './routes/contact-streams';
 import { dispatch } from './channels/router';
 import { handleLineWebhook } from './routes/line-webhook';
 import { handleTwilioWebhook } from './routes/twilio-webhook';
+import { handleActivationWebhook } from './routes/activation';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
@@ -698,6 +699,10 @@ app.get('/v1/admin/events/:id/deliveries', async (c) => {
 app.post('/v1/webhooks/line', handleLineWebhook);
 // Contact Consent §2: pending SMS contacts reply YES/NO/STOP here.
 app.post('/v1/webhooks/twilio', handleTwilioWebhook);
+// Brief 28 §3: web-purchase activation. Public + fail-closed — authenticated ENTIRELY
+// by the HMAC signature, never a session or a client claim (no client-granted
+// entitlement, ever). 401s when the secret is unset or the signature is wrong.
+app.post('/v1/activation/webhook', handleActivationWebhook);
 
 // --- Contact magic-link view (no login; the signed token is the auth) ---
 async function requireMagicToken(c: AppContext): Promise<boolean> {

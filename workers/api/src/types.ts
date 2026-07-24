@@ -72,6 +72,11 @@ export interface Env {
   /** R2 bucket for the sealed, write-once 36-month custody vault (Fix Brief 2
    *  #C3). Separate from MEDIA (the live capture bucket). */
   VAULT?: import('@cloudflare/workers-types').R2Bucket;
+  /** Brief 28 §3 — HMAC key verifying the web-purchase activation webhook. The
+   *  webhook is SECRET-GATED and fail-closed: when this is unset, the endpoint 401s
+   *  (no unverified payment can activate an account). Provider-agnostic: the payload
+   *  is HMAC-SHA256(secret, rawBody), hex in x-activation-signature. Set via secret. */
+  ACTIVATION_WEBHOOK_SECRET?: string;
 }
 
 /** Hono Variables set by the auth middlewares. */

@@ -22,6 +22,7 @@ import { isChannelDeliverable } from '../channels/router';
 import { sendConfirmationAsk } from '../lib/consent';
 import { leaveOrg, redeemCode } from '../lib/enrollment';
 import { isEntitled } from '../lib/entitlement';
+import { confirmActivation } from './activation';
 import { normalizeSubmission, submitTally } from '../lib/tally';
 import { normalizeIntakeStat, submitIntakeStat } from '../lib/intake-stats';
 import { getAccountKeys, getRecoveryKey, getSurvivorCaptureEnvelope, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
@@ -57,6 +58,10 @@ userRoutes.post('/org/redeem', async (c) => {
   }
   return c.json({ ok: true, orgId: res.orgId, role: res.role }, 200);
 });
+
+// Brief 28 §3 — a signed-in buyer confirms activation after a web checkout. Re-checks
+// the SERVER's verified receipt (never a client claim); grants only if one exists.
+userRoutes.post('/activation/confirm', confirmActivation);
 
 userRoutes.post('/org/leave', async (c) => {
   if (await lockedDuringAlert(c)) {
