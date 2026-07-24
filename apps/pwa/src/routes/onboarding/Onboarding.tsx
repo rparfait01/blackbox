@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
-import { setSession, type DisplayMode } from '@/lib/auth';
+import { cacheEntitlement, setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
 import { enrollPasskey } from '@/lib/passkey';
 import { provisionSurvivorKey } from '@/lib/crypto/key-provisioning';
@@ -186,6 +186,10 @@ export function Onboarding(): JSX.Element {
     setBusy(false);
     if (res.ok && res.data?.sessionToken) {
       setSession(res.data.sessionToken, displayMode, { name: name.trim(), email: email.trim() });
+      // Brief 28 §2 — a brand-new account is server-side 'unactivated'. Cache that
+      // explicitly so the arm gate applies to new users, while a CLEARED cache (an
+      // offline reinstall) stays 'unknown' and fails OPEN. New = gated; reinstall = armed.
+      cacheEntitlement({ status: 'unactivated', source: null });
       // Brief 26 — provision the survivor's envelope key in the BACKGROUND. Fire-and-forget
       // and flag-gated: it never blocks reaching Armed and is a no-op unless encryption is
       // armed. If it fails or hangs, captures simply stay plaintext (same fail-open rule as

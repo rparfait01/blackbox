@@ -44,9 +44,9 @@ describe('§0 the client trigger/capture/dispatch path has zero paywall checks',
   it('the disc dispatches to the core unconditionally — no entitlement gate on the tap', () => {
     const vis = read('./routes/blackbox/BlackBoxHome.tsx');
     expect(vis).toContain("useDoubleTap(() => void triggerAlert('direct-tap'))");
-    // The tap is never disabled or short-circuited by entitlement.
-    expect(vis).not.toMatch(/disabled=\{[^}]*entitled/);
-    expect(vis).not.toMatch(/if \(!entitled\)\s*\{?\s*return/);
+    // The tap is never disabled or short-circuited by entitlement / the gate.
+    expect(vis).not.toMatch(/disabled=\{[^}]*(entitled|gated)/);
+    expect(vis).not.toMatch(/if \(gated\)\s*\{?\s*return/);
   });
 });
 
@@ -80,9 +80,20 @@ describe('§2 entitlement is offline-durable — no network to arm or fire', () 
     expect(auth).toMatch(/getCachedEntitlement\(\)\.status === 'activated' && next\.status !== 'activated'/);
   });
 
-  it("the home seeds 'entitled' from the cache so first render is correct offline", () => {
+  it('an empty cache is UNKNOWN, not unactivated (so it can fail open)', () => {
+    expect(auth).toMatch(/return \{ status: 'unknown', source: null \}/);
+  });
+
+  it('the arm gate FAILS OPEN on unknown — an offline reinstall is never locked out', () => {
+    // mayArmByCache returns true unless the server CONFIRMED unactivated.
+    expect(auth).toMatch(/export function mayArmByCache/);
+    expect(auth).toMatch(/getCachedEntitlement\(\)\.status !== 'unactivated'/);
+  });
+
+  it('the home gate keys ONLY on a server-confirmed unactivated (unknown → armed)', () => {
     const vis = read('./routes/blackbox/BlackBoxHome.tsx');
-    expect(vis).toMatch(/useState\(\(\) => getCachedEntitlement\(\)\.status === 'activated'\)/);
+    expect(vis).toMatch(/useState\(\(\) => getCachedEntitlement\(\)\.status === 'unactivated'\)/);
+    expect(vis).toContain('const armable = !gated && hasRecipient');
   });
 });
 
@@ -94,8 +105,8 @@ describe('§2 an activated / org-sourced account never sees a price', () => {
     expect(activation).toMatch(/getCachedEntitlement\(\)\.status === 'activated'[\s\S]*?Navigate to="\/blackbox"/);
   });
 
-  it('the home activation prompt shows ONLY when unactivated', () => {
-    expect(home).toContain('{!entitled ? (');
+  it('the home activation prompt shows ONLY when server-confirmed unactivated', () => {
+    expect(home).toContain('{gated ? (');
   });
 });
 

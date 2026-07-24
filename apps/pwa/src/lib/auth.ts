@@ -19,7 +19,15 @@ export interface CachedUser {
   email: string;
 }
 
-export type EntitlementStatus = 'unactivated' | 'activated';
+/**
+ * 'unknown' = we have never been able to determine entitlement on THIS install (fresh
+ * install / cache cleared / never online since). It is DISTINCT from 'unactivated', which
+ * is a server-confirmed "no". This distinction is load-bearing for the offline arm gate
+ * (see mayArmByCache): the arm affordance fails OPEN on 'unknown' so a survivor who
+ * reinstalls with no signal is never locked out of arming (§0 — never require a network
+ * call to arm). Only a server-confirmed 'unactivated' gates.
+ */
+export type EntitlementStatus = 'unknown' | 'unactivated' | 'activated';
 
 export interface CachedEntitlement {
   status: EntitlementStatus;
@@ -105,7 +113,19 @@ export function getCachedEntitlement(): CachedEntitlement {
       /* fall through to default */
     }
   }
-  return { status: 'unactivated', source: null };
+  // Nothing cached → UNKNOWN, not unactivated. The caller decides; the arm gate treats
+  // unknown as permissive so an offline reinstall is never a lockout.
+  return { status: 'unknown', source: null };
+}
+
+/**
+ * May this install ARM by cache alone (no network)? Fails OPEN on 'unknown' (§0): an
+ * activated device, and a device that has never been able to check, both arm; only a
+ * server-confirmed 'unactivated' returns false. Never gates the TRIGGER — the trigger
+ * fires regardless of this.
+ */
+export function mayArmByCache(): boolean {
+  return getCachedEntitlement().status !== 'unactivated';
 }
 
 /**

@@ -1381,6 +1381,24 @@ async function run() {
     assert(unauth.status === 401, 'admin grant is reachable without the ADMIN token');
   });
 
+  await check('66. §28/§0: operator revoke NEVER strips protection mid-alert — refused (409) while a live event is open', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const u = await signup();
+    await api('POST', '/v1/admin/entitlement/grant', { bearer: ADMIN, body: { email: u.email, reason: 'acc' } });
+    // The survivor is mid-alert (a live event is open).
+    const ev = await trigger(u.session, 'acc-revoke-guard');
+    assert(ev?.eventId, 'trigger did not open an event');
+    const rev = await api('POST', '/v1/admin/entitlement/revoke', { bearer: ADMIN, body: { email: u.email, reason: 'fraud-test' } });
+    assert(rev.status === 409 && rev.data.error === 'active_event', `revoke was NOT refused mid-alert: ${rev.status} ${JSON.stringify(rev.data)}`);
+    // Still activated — protection intact.
+    const me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.data.user.entitlement === 'activated', 'revoke stripped entitlement mid-alert — §0 violated');
+    // Once the alert is closed, revoke is allowed again.
+    await api('POST', `/v1/admin/events/${ev.eventId}/force-close`, { bearer: ADMIN }).catch(() => {});
+    const rev2 = await api('POST', '/v1/admin/entitlement/revoke', { bearer: ADMIN, body: { email: u.email, reason: 'fraud-test' } });
+    assert(rev2.status === 200 && rev2.data.changed === true, `revoke after close failed: ${JSON.stringify(rev2.data)}`);
+  });
+
   await check('65. §28/§0: an activated survivor stays activated after the org tie ends — entitlement lives on the account, not the license', async () => {
     if (!ADMIN || !MAGIC) { console.log('        (note: needs ADMIN + MAGIC — skipped)'); return; }
     const O = await bootstrapOrgWithTwoAdmins('Org-L-' + uniq(), 'zero_fee', 3);

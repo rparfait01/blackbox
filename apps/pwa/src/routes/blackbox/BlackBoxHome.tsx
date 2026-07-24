@@ -44,15 +44,17 @@ export function BlackBoxHome(): JSX.Element {
   // (activate vs add-a-contact) and never conflates them. NEITHER gates the tap —
   // since §0 the trigger always fires (server + client), and Brief 28 §0 extends that:
   // entitlement gates the ARM AFFORDANCE, never the trigger.
-  //   entitled     — Brief 28 §2. Seeded from the OFFLINE cache so an activated
-  //                  device shows "Armed" on first render with no network, and a
-  //                  transient failure never strips the affordance.
+  //   gated        — Brief 28 §2. TRUE only when entitlement is SERVER-CONFIRMED
+  //                  'unactivated'. Fails OPEN on 'unknown' (§0): a fresh install / cleared
+  //                  cache / never-online device is NOT gated, so an offline reinstall is
+  //                  never a lockout — it arms, and the trigger fires regardless. Only a
+  //                  confirmed "no" (cached from the server) shows the activation gate.
   //   hasRecipient — someone could actually be reached. Defaults true so a transient
   //                  fetch failure doesn't cry "no one will be notified" at a user who
   //                  does have contacts; we simply say nothing until we know.
-  const [entitled, setEntitled] = useState(() => getCachedEntitlement().status === 'activated');
+  const [gated, setGated] = useState(() => getCachedEntitlement().status === 'unactivated');
   const [hasRecipient, setHasRecipient] = useState(true);
-  const armable = entitled && hasRecipient;
+  const armable = !gated && hasRecipient;
   const [pinOpen, setPinOpen] = useState(false);
   const alertActive = useActiveAlert();
   // §1: the server's real delivery result — ONE poll drives both the honest status
@@ -114,7 +116,8 @@ export function BlackBoxHome(): JSX.Element {
         const reasons = res.data.armReasons;
         setHasRecipient(reasons ? reasons.hasDeliverableRecipient : res.data.armable);
         if (reasons) {
-          setEntitled(reasons.entitled);
+          // Server truth resolves the unknown: gate ONLY on a confirmed 'unactivated'.
+          setGated(!reasons.entitled);
           // Refresh the offline cache from server truth (monotonic: never re-locks).
           cacheEntitlement({
             status: reasons.entitled ? 'activated' : 'unactivated',
@@ -215,7 +218,7 @@ export function BlackBoxHome(): JSX.Element {
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-status-active" />
               Alert active · Recording
             </>
-          ) : !entitled ? (
+          ) : gated ? (
             'Not activated'
           ) : !hasRecipient ? (
             'Armed · No contact to reach yet'
@@ -297,7 +300,7 @@ export function BlackBoxHome(): JSX.Element {
                 fires (§0), so this reassures rather than locks. Shown only while the
                 account is unactivated; an activated OR org-sourced account never sees
                 it (and never sees a price). */}
-            {!entitled ? (
+            {gated ? (
               <Link
                 to="/activate"
                 className="mx-auto mt-4 block max-w-xs rounded-lg border border-status-armed/50 bg-status-armed/10 p-3 text-left"

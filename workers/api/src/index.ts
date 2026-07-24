@@ -47,7 +47,7 @@ import { orgRegisterRoutes } from './routes/org-register';
 import { createOrg, recordLicense } from './lib/org';
 import { createAdminRegistrationCode, reissueRegistrationCode, revokeRegistrationCode } from './lib/org-registration';
 import { grantEntitlement, operatorRevokeEntitlement } from './lib/entitlement';
-import { getUserByEmail } from './lib/users';
+import { getUserByEmail, hasActiveEvent } from './lib/users';
 import { SUPPRESSION_THRESHOLD, tallyAggregate } from './lib/tally';
 import { intakeStatsAggregate } from './lib/intake-stats';
 import type { Env, Vars } from './types';
@@ -585,6 +585,14 @@ app.post('/v1/admin/entitlement/revoke', async (c) => {
   const userId = body.userId?.trim() || (body.email ? (await getUserByEmail(c.env, body.email))?.id : undefined);
   if (!userId) {
     return c.json({ error: 'account_not_found' }, 404);
+  }
+  // Never strip protection from someone actively being protected (§0 principle, same as
+  // a lapsed org license). Revoke is refused while the account has a LIVE alert — even
+  // though revoke would only affect the ARM affordance, not the open event or the trigger
+  // (both stay live), yanking entitlement mid-alert is exactly the case this must not do.
+  // Retry once the alert is closed.
+  if (await hasActiveEvent(c.env, userId)) {
+    return c.json({ error: 'active_event', message: 'Cannot revoke while the account has a live alert. Retry after it closes.' }, 409);
   }
   const changed = await operatorRevokeEntitlement(c.env, userId, reason, null);
   return c.json({ ok: true, userId, changed }, 200);
