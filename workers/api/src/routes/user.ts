@@ -262,6 +262,12 @@ userRoutes.get('/', async (c) => {
         regionId: user.regionId,
         nationality: user.nationality,
         hasDuressCode: user.duressCodeHash != null,
+        // Entitlement (Brief 28). Surfaced so the client can cache it and decide the
+        // ARM affordance offline — NEVER the trigger. An org_code / operator_grant
+        // source means the client renders no price. Permanent once 'activated'.
+        entitlement: user.entitlement,
+        entitlementSource: user.entitlementSource,
+        activatedAt: user.activatedAt,
       },
       // Server-truth live-alert flag (Brief 20 §1). The client gates settings entry
       // and refuses sign-out on THIS, not just its local session — so a device that

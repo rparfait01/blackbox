@@ -24,12 +24,21 @@ export interface UserRow {
   /** The contact designated as the check-in recipient (Brief 19). NULL → default
    *  to the primary contact at resolve time. Never the guardian. */
   checkinContactId: string | null;
+  /** Entitlement (Brief 28). 'unactivated' | 'activated'. One-way: once 'activated'
+   *  it is NEVER set back — permanent, offline-durable, never re-checked. Gates the
+   *  ARM affordance only; the trigger path never reads it. */
+  entitlement: string;
+  /** How entitlement was granted: 'purchase_web' | 'purchase_ios' | 'org_code' |
+   *  'operator_grant'. NULL while unactivated. An org_code source never renders price. */
+  entitlementSource: string | null;
+  /** When entitlement flipped to 'activated'. NULL while unactivated. */
+  activatedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
 
 const USER_COLS =
-  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, checkinContactId, createdAt, updatedAt';
+  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, checkinContactId, entitlement, entitlement_source AS entitlementSource, activatedAt, createdAt, updatedAt';
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
