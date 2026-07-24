@@ -42,7 +42,9 @@ import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
 import { orgRoutes } from './routes/org';
-import { createEnrollmentCode, createOrg, recordLicense } from './lib/org';
+import { orgRegisterRoutes } from './routes/org-register';
+import { createOrg, recordLicense } from './lib/org';
+import { createAdminRegistrationCode, reissueRegistrationCode, revokeRegistrationCode } from './lib/org-registration';
 import { SUPPRESSION_THRESHOLD, tallyAggregate } from './lib/tally';
 import type { Env, Vars } from './types';
 
@@ -405,6 +407,10 @@ app.post('/v1/events', async (c) => {
 app.route('/v1/auth', authRoutes);
 app.route('/v1/guardians', guardianRoutes);
 app.route('/v1/me', userRoutes);
+// Brief 24 — org admin registration at its OWN base path (distinct from the
+// session-gated /v1/org portal group): the public read-only GET /v1/org-register/:code
+// is reachable without a session; the completion POST applies requireSession itself.
+app.route('/v1/org-register', orgRegisterRoutes);
 // Brief 23 — the org portal surface. Every route inside is session + org-role gated
 // and scoped to the caller's own org; individual accounts never reach it.
 app.route('/v1/org', orgRoutes);
@@ -469,12 +475,12 @@ app.get('/v1/admin/contacts', async (c) => {
   return c.json({ contacts: await listContacts(c.env) }, 200);
 });
 
-// Brief 23 §4 — operator bootstrap for an org: create the organization + a license
-// RECORD (no payment processing — the seat count/term is recorded, not charged) +
-// an initial single-use ADMIN enrollment code. The operator hands that code to the
-// org's admin, who redeems it (§3) to become the first staff member and can then
-// issue coordinator/survivor codes. Sponsorship/third-party funding is out of scope:
-// there is no funder entity and no seat-gifting path.
+// Brief 24 §1 — operator bootstrap (AFTER out-of-band human vetting): create the org
+// RECORD (name, lane, seats, term — no payment processing) + a single-use ADMIN
+// REGISTRATION code bound to this org. The operator delivers the code SEPARATELY from
+// the approval link to the named individual, who registers admin #1 (§1 step 5). This
+// issues a REGISTRATION code, never an enrollment code — a registration code can only
+// ever create admin #1 on THIS org; it can never confer a seat or a coordinator.
 app.post('/v1/admin/orgs', async (c) => {
   const body = await c.req
     .json<{ name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }>()
@@ -492,17 +498,48 @@ app.post('/v1/admin/orgs', async (c) => {
     termStart: typeof body.termStart === 'number' ? body.termStart : null,
     termEnd: typeof body.termEnd === 'number' ? body.termEnd : null,
   });
-  const adminCode = await createEnrollmentCode(c.env, {
-    orgId: org.id,
-    role: 'admin',
-    maxUses: 1,
-    createdBy: null,
-  });
+  const reg = await createAdminRegistrationCode(c.env, { orgId: org.id, createdBy: null });
   await audit(c.env, null, 'admin.org_create', null, { orgId: org.id, lane, seatsTotal });
   return c.json(
-    { orgId: org.id, name: org.name, lane: org.lane, licenseId: license.id, seatsTotal, adminCode: adminCode.code },
+    {
+      orgId: org.id,
+      name: org.name,
+      lane: org.lane,
+      licenseId: license.id,
+      seatsTotal,
+      registrationCode: reg.code,
+      registrationExpiresAt: reg.expiresAt,
+    },
     201,
   );
+});
+
+// Brief 24 §6 — operator escape hatches (logged with reason). Re-issue a fresh
+// registration code (revoking any live one) when a code expired, went to the wrong
+// person, or admin #1 left before adding admin #2; or revoke a live code outright.
+app.post('/v1/admin/orgs/:orgId/registration-code/reissue', async (c) => {
+  const orgId = c.req.param('orgId');
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const reason = (body.reason ?? '').trim();
+  if (!reason) {
+    return c.json({ error: 'reason required (this is a logged privileged action)' }, 400);
+  }
+  const fresh = await reissueRegistrationCode(c.env, orgId, reason, null);
+  return c.json({ registrationCode: fresh.code, registrationExpiresAt: fresh.expiresAt }, 201);
+});
+
+app.post('/v1/admin/orgs/:orgId/registration-code/revoke', async (c) => {
+  const body = await c.req.json<{ code?: string; reason?: string }>().catch(() => ({}) as { code?: string; reason?: string });
+  const code = (body.code ?? '').trim();
+  const reason = (body.reason ?? '').trim();
+  if (!code || !reason) {
+    return c.json({ error: 'code and reason required' }, 400);
+  }
+  const ok = await revokeRegistrationCode(c.env, code, reason, null);
+  if (!ok) {
+    return c.json({ error: 'code_not_found_or_already_redeemed' }, 404);
+  }
+  return c.json({ revoked: true }, 200);
 });
 
 app.get('/v1/admin/line-follows', async (c) => {

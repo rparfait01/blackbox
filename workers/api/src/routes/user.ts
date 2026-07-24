@@ -59,6 +59,10 @@ userRoutes.post('/org/leave', async (c) => {
     return c.json({ error: 'locked_during_active_alert' }, 423);
   }
   const res = await leaveOrg(c.env, c.get('userId'));
+  if (!res.ok) {
+    // Blocked: you are the second-to-last admin (§0/§6 — the org must keep two).
+    return c.json({ error: res.reason, message: 'Your organisation must keep at least two admins. Add another admin before leaving.' }, 409);
+  }
   return c.json({ ok: true, left: res.left }, 200);
 });
 

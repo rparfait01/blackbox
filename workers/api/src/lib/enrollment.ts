@@ -12,11 +12,11 @@
  *                           row. Staff do NOT consume a survivor seat.
  */
 import { audit } from './audit';
-import { getActiveLicense } from './org';
+import { adminRemovalBlocked, getActiveLicense, seatIssuanceLocked } from './org';
 import type { Env, EnrollmentCodeRow } from '../types';
 
 export type RedeemFailure = 'not_found' | 'revoked' | 'expired' | 'exhausted';
-export type BindFailure = 'already_in_org' | 'seats_full' | 'no_license';
+export type BindFailure = 'already_in_org' | 'seats_full' | 'no_license' | 'needs_two_admins';
 
 /**
  * Pure redeemability rule for a code at a given instant. Decoupled from D1 so every
@@ -62,6 +62,12 @@ export async function bindAccountToOrg(
   }
 
   if (role === 'survivor') {
+    // Brief 24 §5 — seat issuance is locked until the org has two admins. No survivor
+    // is enrolled into an org not yet staffed with two accountable admins. (Skip the
+    // check for an idempotent re-bind of a seat this account already holds.)
+    if (user?.orgId !== orgId && (await seatIssuanceLocked(env, orgId))) {
+      return { ok: false, reason: 'needs_two_admins' };
+    }
     // Atomic seat reservation: only succeeds while seats remain under the ceiling.
     const license = await getActiveLicense(env, orgId);
     if (!license) return { ok: false, reason: 'no_license' };
@@ -146,19 +152,28 @@ export async function redeemCode(
  * Leave an org (reversal per policy). Unsets users.orgId, revokes any staff
  * membership, and frees the survivor's seat (only survivors consume one). Past events
  * keep their stamped orgId — custody attribution is immutable, history preserved.
+ *
+ * Brief 24: refuses to remove the second-to-last admin (the org must keep MIN_ADMINS).
  */
-export async function leaveOrg(env: Env, userId: string): Promise<{ ok: true; left: boolean }> {
+export async function leaveOrg(
+  env: Env,
+  userId: string,
+): Promise<{ ok: true; left: boolean } | { ok: false; reason: 'min_admins' }> {
   const user = await env.DB.prepare('SELECT orgId FROM users WHERE id = ?')
     .bind(userId)
     .first<{ orgId: string | null }>();
   if (!user?.orgId) return { ok: true, left: false };
   const orgId = user.orgId;
   const staff = await env.DB.prepare(
-    "SELECT id FROM org_members WHERE orgId = ? AND userId = ? AND status = 'active'",
+    "SELECT id, role FROM org_members WHERE orgId = ? AND userId = ? AND status = 'active'",
   )
     .bind(orgId, userId)
-    .first<{ id: string }>();
+    .first<{ id: string; role: string }>();
   if (staff) {
+    // Min-2-admin guard: an org may not drop below two admins by removing one (§0/§6).
+    if (staff.role === 'admin' && (await adminRemovalBlocked(env, orgId))) {
+      return { ok: false, reason: 'min_admins' };
+    }
     await env.DB.prepare("UPDATE org_members SET status = 'revoked' WHERE orgId = ? AND userId = ?")
       .bind(orgId, userId)
       .run();

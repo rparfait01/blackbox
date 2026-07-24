@@ -134,6 +134,40 @@ export async function getOrg(env: Env, orgId: string): Promise<OrganizationRow |
     .first<OrganizationRow>();
 }
 
+// --- Brief 24: minimum-admin enforcement (lives here so both enrollment.ts and
+// org-registration.ts can use it without a circular import) ---
+
+/** Minimum admins an org must have. Enforced: the system refuses to drop below this. */
+export const MIN_ADMINS = 2;
+
+/** Count an org's ACTIVE admins (org_members role=admin, status=active). */
+export async function countActiveAdmins(env: Env, orgId: string): Promise<number> {
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM org_members WHERE orgId = ? AND role = 'admin' AND status = 'active'",
+  )
+    .bind(orgId)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+/** Seat issuance (enrolling survivors) is locked until the org has MIN_ADMINS admins
+ *  (§5). No survivor is enrolled into an org not yet staffed with two accountable
+ *  admins. */
+export async function seatIssuanceLocked(env: Env, orgId: string): Promise<boolean> {
+  return (await countActiveAdmins(env, orgId)) < MIN_ADMINS;
+}
+
+/**
+ * May this admin be removed? Blocked when it would drop the org below MIN_ADMINS while
+ * at least MIN_ADMINS exist — i.e. you cannot remove the second-to-last admin (§0/§6).
+ * The bootstrap window (a sole admin #1 before #2 is added) is NOT blocked here; that
+ * 1→0 case is recovered by the operator re-issue path.
+ */
+export async function adminRemovalBlocked(env: Env, orgId: string): Promise<boolean> {
+  const admins = await countActiveAdmins(env, orgId);
+  return admins >= MIN_ADMINS && admins - 1 < MIN_ADMINS;
+}
+
 /** The org's active license, if any. seatsUsed counts enrolled survivors. */
 export async function getActiveLicense(env: Env, orgId: string): Promise<OrgLicenseRow | null> {
   return env.DB.prepare(

@@ -9,8 +9,9 @@
 import { Hono } from 'hono';
 
 import { requireOrgRole, requireSession } from '../auth';
-import { createEnrollmentCode, getActiveLicense, getOrg } from '../lib/org';
+import { createEnrollmentCode, getActiveLicense, getOrg, seatIssuanceLocked } from '../lib/org';
 import { leaveOrg } from '../lib/enrollment';
+import { createAdminRegistrationCode } from '../lib/org-registration';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -41,9 +42,17 @@ orgRoutes.post('/codes', requireOrgRole('coordinator'), async (c) => {
   const body = await c.req
     .json<{ role?: string; maxUses?: number; expiresInHours?: number }>()
     .catch(() => ({}) as { role?: string; maxUses?: number; expiresInHours?: number });
-  const requested = body.role === 'coordinator' || body.role === 'admin' ? body.role : 'survivor';
-  if (requested !== 'survivor' && actorRole !== 'admin') {
+  // Brief 24 §2: an ENROLLMENT code can never confer admin — admin is ONLY created via
+  // the registration ceremony (/v1/org-register), issued by the operator (admin #1) or
+  // by an existing admin from inside (admin #2+, POST /admins/invite). So the only
+  // enrollable roles here are coordinator and survivor.
+  const requested = body.role === 'coordinator' ? 'coordinator' : 'survivor';
+  if (requested === 'coordinator' && actorRole !== 'admin') {
     return c.json({ error: 'admin_required_for_staff_codes' }, 403);
+  }
+  // §5: seat issuance (enrolling survivors) is locked until the org has two admins.
+  if (requested === 'survivor' && (await seatIssuanceLocked(c.env, orgId))) {
+    return c.json({ error: 'needs_two_admins', message: 'Add a second admin before enrolling survivors.' }, 409);
   }
   const expiresAt =
     typeof body.expiresInHours === 'number' && body.expiresInHours > 0
@@ -59,6 +68,18 @@ orgRoutes.post('/codes', requireOrgRole('coordinator'), async (c) => {
   });
   await audit(c.env, null, 'org.code_issue', c.get('userId'), { orgId, role: requested, maxUses });
   return c.json({ code: codeRow.code, role: requested, maxUses, expiresAt }, 201);
+});
+
+// Brief 24 §5 — invite admin #2+ FROM INSIDE by an existing admin. Issues a single-use
+// admin REGISTRATION code bound to the caller's own org (createdBy = the inviting
+// admin, so it is self-service, no operator involvement). The invitee registers via the
+// same passive-GET-safe /org-register ceremony. This is NOT an enrollment code — it
+// runs the registration path — so the enrollment→admin door stays firmly shut.
+orgRoutes.post('/admins/invite', requireOrgRole('admin'), async (c) => {
+  const orgId = c.get('orgId')!;
+  const reg = await createAdminRegistrationCode(c.env, { orgId, createdBy: c.get('userId') });
+  await audit(c.env, null, 'org.admin_invite', c.get('userId'), { orgId });
+  return c.json({ registrationCode: reg.code, registrationExpiresAt: reg.expiresAt }, 201);
 });
 
 // §3 — revoke a code, but ONLY one belonging to the coordinator's own org (the
@@ -179,7 +200,11 @@ orgRoutes.post('/survivors/:userId/remove', requireOrgRole('admin'), async (c) =
   if (!target || target.orgId !== orgId) {
     return c.json({ error: 'not_found' }, 404);
   }
-  await leaveOrg(c.env, targetId);
+  const res = await leaveOrg(c.env, targetId);
+  if (!res.ok) {
+    // Blocked: this would remove the second-to-last admin (§0/§6 — min two admins).
+    return c.json({ error: res.reason, message: 'An organisation must keep at least two admins. Add another admin before removing this one.' }, 409);
+  }
   await audit(c.env, null, 'org.seat_remove', c.get('userId'), { orgId, targetId });
   return c.json({ removed: true }, 200);
 });
