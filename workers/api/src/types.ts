@@ -90,6 +90,27 @@ export interface OrganizationRow {
   lane: 'zero_fee' | 'paid';
   orgPubkey: string | null;
   createdAt: number;
+  // Brief 24 — license acceptance record (nullable until admin #1 registers).
+  licenseAcceptedBy: string | null;
+  licenseAcceptedAt: number | null;
+  licenseVersion: string | null;
+  licenseAcceptancePath: 'click_through' | 'out_of_band' | null;
+}
+
+/** A single-use, admin-only registration code bound to one pre-created org (Brief 24).
+ *  Distinct from EnrollmentCodeRow — this can only ever create admin #1, never a seat. */
+export interface AdminRegistrationCodeRow {
+  code: string;
+  orgId: string;
+  expiresAt: number;
+  revoked: number;
+  redeemedAt: number | null;
+  redeemedByUserId: string | null;
+  attemptCount: number;
+  lastAttemptAt: number | null;
+  reissueReason: string | null;
+  createdBy: string | null;
+  createdAt: number;
 }
 
 /** STAFF membership in an org (admin | coordinator). Enrolled survivors are NOT rows

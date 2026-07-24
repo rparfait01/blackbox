@@ -45,6 +45,11 @@ export async function createOrg(
     lane: input.lane,
     orgPubkey: null,
     createdAt: Date.now(),
+    // License acceptance is recorded later, when admin #1 registers (Brief 24 §4).
+    licenseAcceptedBy: null,
+    licenseAcceptedAt: null,
+    licenseVersion: null,
+    licenseAcceptancePath: null,
   };
   await env.DB.prepare(
     'INSERT INTO organizations (id, name, status, lane, orgPubkey, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
@@ -123,7 +128,7 @@ export async function createEnrollmentCode(
 /** Load an org row (or null). */
 export async function getOrg(env: Env, orgId: string): Promise<OrganizationRow | null> {
   return env.DB.prepare(
-    'SELECT id, name, status, lane, orgPubkey, createdAt FROM organizations WHERE id = ?',
+    'SELECT id, name, status, lane, orgPubkey, createdAt, licenseAcceptedBy, licenseAcceptedAt, licenseVersion, licenseAcceptancePath FROM organizations WHERE id = ?',
   )
     .bind(orgId)
     .first<OrganizationRow>();
