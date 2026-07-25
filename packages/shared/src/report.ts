@@ -17,9 +17,27 @@ export const REPORT_DOCUMENT_FORMAT = 'blackbox-certified-report/v1';
 
 export const EVIDENCE_FORMAT_VERSION = 1;
 
+/**
+ * The report signature algorithm: ECDSA P-256 with SHA-256, signature in raw r‖s (P1363)
+ * form — which is what WebCrypto produces and consumes.
+ *
+ * WHY P-256 rather than Ed25519. This signature's whole job is to be checkable by strangers
+ * on whatever browser and tooling they happen to have. ECDSA P-256 has been universal in
+ * WebCrypto for a decade; Ed25519 only arrived in Chrome 137 (May 2025), Safari 17, Firefox
+ * 129. A public verifier that answers "this browser cannot check it" is a trust cost we do
+ * not need to pay. Same reasoning the Brief 26 crypto review used to choose P-256 over
+ * X25519: for a safety tool, universal beats elegant.
+ *
+ * NOTE for third-party verification: OpenSSL expects DER-encoded ECDSA signatures, so the
+ * 64-byte r‖s value must be converted before `openssl pkeyutl -verify`. See
+ * docs/brief29/VERIFICATION.md §3 for the exact recipe — this is the one real interop
+ * gotcha in the format.
+ */
+export const REPORT_SIGNATURE_ALG = 'ECDSA-P256-SHA256';
+
 export interface ReportAttestation {
   format: string;
-  alg: 'Ed25519';
+  alg: typeof REPORT_SIGNATURE_ALG;
   eventId: string;
   /** SHA-256 of the canonical evidence-zone JSON — computed on the survivor's device. */
   evidenceHash: string;
@@ -39,7 +57,7 @@ export interface ReportAttestation {
 /** What the sign endpoint returns and the document embeds. */
 export interface SignedAttestation {
   attestation: ReportAttestation;
-  /** Ed25519 signature (base64) over canonicalize(attestation). */
+  /** ECDSA P-256 / SHA-256 signature (base64 of raw r‖s) over canonicalize(attestation). */
   signature: string;
   /** The published SPKI public key (base64) it was signed with. */
   publicKey: string;

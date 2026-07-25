@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify a BLACK BOX report</title>
+<meta name="description" content="Check whether a BLACK BOX report is authentic and unaltered. Runs entirely in your browser — your file is never uploaded.">
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;padding:2rem 1.25rem 4rem;font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#14181d;background:#f4f6f8}
+main{max-width:46rem;margin:0 auto}
+h1{font-size:1.6rem;line-height:1.25;margin:0 0 .4rem;letter-spacing:-.01em}
+.lede{color:#4a5462;margin:0 0 1.75rem}
+#drop{border:2px dashed #a4aebb;border-radius:.85rem;padding:2.75rem 1.5rem;text-align:center;background:#fff;cursor:pointer;transition:border-color .15s,background .15s}
+#drop:hover,#drop.over{border-color:#0a7a55;background:#f1fdf8}
+#drop b{display:block;font-size:1.05rem;margin-bottom:.2rem}
+#drop span{color:#6b7684;font-size:13px}
+#file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.card{margin-top:1.5rem;border-radius:.85rem;padding:1.35rem 1.5rem;background:#fff;border:2px solid #ccd4de}
+.card.certified{border-color:#0a7a55;background:#f2fdf8}
+.card.tampered{border-color:#c22d2d;background:#fff5f5}
+.card.unverifiable,.card.not_a_report{border-color:#b8791b;background:#fffcf3}
+.headline{font-weight:700;margin:0 0 .5rem;font-size:1.08rem;line-height:1.35}
+.card.certified .headline{color:#075c40}
+.card.tampered .headline{color:#9d1c1c}
+.card.unverifiable .headline,.card.not_a_report .headline{color:#8a5a10}
+.detail{margin:0 0 .9rem;color:#3a4450}
+.checks{list-style:none;padding:0;margin:0 0 .9rem;font-size:13.5px}
+.checks li{padding:.18rem 0}
+.checks .ok{color:#075c40}
+.checks .bad{color:#9d1c1c}
+.statement{font-size:13.5px;color:#4a5462;border-top:1px solid #e4e8ee;padding-top:.8rem;margin:0}
+details{margin-top:.9rem;font-size:13.5px}
+summary{cursor:pointer;color:#2f6fb5}
+pre.signed{white-space:pre-wrap;word-wrap:break-word;font:11.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:#f4f6f8;padding:.8rem;border-radius:.45rem;max-height:26rem;overflow:auto;margin:.6rem 0 0}
+.panel{margin-top:2rem;font-size:13px;color:#4a5462;background:#fff;border:1px solid #dde3ea;border-radius:.6rem;padding:1.1rem 1.35rem}
+.panel h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.07em;color:#6b7684;margin:0 0 .6rem}
+.panel p{margin:.55rem 0}
+.panel code{font:11.5px/1.5 ui-monospace,monospace;word-break:break-all;display:block;margin-top:.4rem;padding:.55rem .65rem;background:#f4f6f8;border-radius:.35rem;color:#22303f}
+a{color:#2f6fb5}
+footer{max-width:46rem;margin:2rem auto 0;font-size:12px;color:#77818f;text-align:center}
+@media (prefers-color-scheme:dark){
+body{background:#10141a;color:#e6eaf0}
+#drop{background:#171d25;border-color:#3b4654}
+#drop:hover,#drop.over{background:#12251f;border-color:#2f9b6e}
+.card{background:#171d25;border-color:#2c3644}
+.card.certified{background:#102a20;border-color:#2f9b6e}
+.card.tampered{background:#2a1414;border-color:#d4534f}
+.card.unverifiable,.card.not_a_report{background:#2a2312;border-color:#c08a2e}
+.card.certified .headline{color:#57d3a0}
+.card.tampered .headline{color:#f38b87}
+.card.unverifiable .headline,.card.not_a_report .headline{color:#e3b25f}
+.lede,.detail,.statement,.panel{color:#a9b4c2}
+.panel{background:#171d25;border-color:#2c3644}
+.checks .ok{color:#57d3a0}
+.checks .bad{color:#f38b87}
+pre.signed,.panel code{background:#0d1116;color:#c7d2e0}
+a,summary{color:#7bb3ec}
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Verify a BLACK BOX report</h1>
+<p class="lede">
+  An independent check that a BLACK BOX report is authentic and unaltered. Drop the file in
+  below — no account, no sign-in, and no need to contact BLACK BOX.
+</p>
+
+<div id="drop" role="button" tabindex="0" aria-label="Choose or drop a report file to verify">
+  <b>Drop the report file here</b>
+  <span>or click to choose a file</span>
+</div>
+<input type="file" id="file" accept=".html,.htm,text/html">
+
+<div id="out" aria-live="polite"></div>
+
+<div class="panel">
+  <h2>Your file stays on your device</h2>
+  <p>
+    This page reads and checks the file <b>in your browser</b>. It is never uploaded — so there
+    is nothing for BLACK BOX to store, and nothing for us to see. Verification is public; the
+    contents of the report are not. Once this page has loaded you can disconnect from the
+    network and it will still work: it is only mathematics and a published key.
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Verify independently, without this page</h2>
+  <p>
+    The page is a convenience. The mathematics is the proof. The signature is
+    <b>ECDSA P-256 with SHA-256</b> over the canonical JSON of the document's attestation
+    object (keys sorted by Unicode code point, no insignificant whitespace); the signature
+    value is raw <i>r‖s</i> (P1363), base64.
+  </p>
+  <p>
+    Download the public key and check it with your own tooling:
+    <a href="./blackbox-report-public-key.pem" download>public key (PEM)</a> ·
+    <a href="./blackbox-report-public-key.jwk.json" download>public key (JWK)</a> ·
+    <a href="./verification-steps.html">full verification steps</a>
+  </p>
+  <p>Published public key (SPKI, base64):<code>__PUBLIC_KEY__</code></p>
+</div>
+
+<div class="panel">
+  <h2>What this does and does not tell you</h2>
+  <p>
+    <b>It tells you</b> whether the evidence section of the report is byte-for-byte what BLACK
+    BOX signed, and when it was signed.
+  </p>
+  <p>
+    <b>It does not tell you</b> that any particular thing happened. BLACK BOX does not
+    interpret, transcribe, or assess a recording — it attests to the record's structure and
+    integrity. The survivor's statement section is deliberately <b>not</b> covered by the
+    signature: it is her own account, and she can revise it at any time without affecting the
+    certification.
+  </p>
+</div>
+</main>
+<footer>BLACK BOX · report verification</footer>
+
+<script type="module">
+const PUBLISHED_KEY = "__PUBLIC_KEY__";
+__VERIFIER__
+
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const out = document.getElementById('out');
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function render(result) {
+  out.textContent = '';
+  const card = el('div', 'card ' + result.verdict);
+  card.appendChild(el('p', 'headline', result.headline));
+  card.appendChild(el('p', 'detail', result.detail));
+
+  if (result.checks) {
+    const list = el('ul', 'checks');
+    const rows = [
+      ['Signature valid against the published BLACK BOX key', result.checks.signatureValid],
+      ['Evidence data matches the signed hash', result.checks.evidenceHashMatches],
+      ['Visible evidence text matches the signed text', result.checks.renderedTextMatches],
+      ['Visible text is what the signed data renders to', result.checks.renderingConsistent],
+    ];
+    for (const [label, ok] of rows) {
+      list.appendChild(el('li', ok ? 'ok' : 'bad', (ok ? '✓ ' : '✗ ') + label));
+    }
+    card.appendChild(list);
+  }
+
+  if (result.statement) {
+    const s = el('p', 'statement');
+    s.textContent = result.statement.note + (result.statement.present
+      ? ' — present in this document. It is deliberately not covered by the signature, and editing it never makes a document TAMPERED.'
+      : ' — none included in this document.');
+    card.appendChild(s);
+  }
+
+  if (result.signedEvidenceText) {
+    const d = el('details');
+    d.appendChild(el('summary', undefined, 'Show exactly what BLACK BOX signed'));
+    d.appendChild(el('pre', 'signed', result.signedEvidenceText));
+    card.appendChild(d);
+  }
+  out.appendChild(card);
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  out.textContent = '';
+  out.appendChild(el('p', 'detail', 'Checking…'));
+  try {
+    render(await verifyReportDocument(await file.text(), PUBLISHED_KEY));
+  } catch (e) {
+    render({
+      verdict: 'not_a_report',
+      headline: 'Could not read this file',
+      detail: 'The file could not be opened as text, so there is nothing to verify. ' + String(e),
+    });
+  }
+}
+
+fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  handleFile(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

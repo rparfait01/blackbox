@@ -14,9 +14,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { canonicalize, canonicalHash, REPORT_DOCUMENT_FORMAT } from '@blackbox/shared';
+import { canonicalize, canonicalHash, REPORT_DOCUMENT_FORMAT, REPORT_SIGNATURE_ALG } from '@blackbox/shared';
 import { signReportAttestation } from '../src/lib/report-attestation';
-import { verify } from '../src/lib/integrity';
+
 import type { Env } from '../src/types';
 
 function bytesToB64(bytes: Uint8Array): string {
@@ -26,11 +26,32 @@ function bytesToB64(bytes: Uint8Array): string {
 }
 
 async function makeKeypair(): Promise<{ signingKeyB64: string; publicKeyB64: string }> {
-  const pair = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
   return {
     signingKeyB64: bytesToB64(new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey))),
     publicKeyB64: bytesToB64(new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey))),
   };
+}
+
+/** Verify with the SAME primitive the public verifier uses — ECDSA P-256 / SHA-256 over
+ *  raw r||s. If these ever diverge, every published document stops verifying. */
+async function verifyP256(data: string, signatureB64: string, publicKeyB64: string): Promise<boolean> {
+  const key = await crypto.subtle.importKey(
+    'spki',
+    Buffer.from(publicKeyB64, 'base64'),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify'],
+  );
+  return crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    Buffer.from(signatureB64, 'base64'),
+    new TextEncoder().encode(data),
+  );
 }
 
 const HASH_A = 'a'.repeat(64);
@@ -76,8 +97,8 @@ function fakeEnv(keys: { signingKeyB64?: string; publicKeyB64?: string }, rows: 
   };
   return {
     DB: db,
-    INTEGRITY_SIGNING_KEY: keys.signingKeyB64,
-    INTEGRITY_PUBLIC_KEY: keys.publicKeyB64,
+    REPORT_SIGNING_KEY: keys.signingKeyB64,
+    REPORT_PUBLIC_KEY: keys.publicKeyB64,
   } as unknown as Env;
 }
 
@@ -162,13 +183,13 @@ describe('the signature is real, and binds what the SERVER holds', () => {
     const { attestation, signature, publicKey } = result.signed;
     expect(publicKey).toBe(keys.publicKeyB64);
     expect(attestation.format).toBe(REPORT_DOCUMENT_FORMAT);
-    expect(attestation.alg).toBe('Ed25519');
+    expect(attestation.alg).toBe(REPORT_SIGNATURE_ALG);
     expect(attestation.signedAt).toBe('2026-07-25T10:00:01.000Z');
-    expect(await verify(canonicalize(attestation), signature, publicKey)).toBe(true);
+    expect(await verifyP256(canonicalize(attestation), signature, publicKey)).toBe(true);
 
     // One byte off → verification fails. That is the whole tamper-evidence claim.
     const tampered = { ...attestation, evidenceHash: 'c'.repeat(64) };
-    expect(await verify(canonicalize(tampered), signature, publicKey)).toBe(false);
+    expect(await verifyP256(canonicalize(tampered), signature, publicKey)).toBe(false);
   });
 
   it('binds the SERVER’s own commitments hash — not one the device supplied', async () => {

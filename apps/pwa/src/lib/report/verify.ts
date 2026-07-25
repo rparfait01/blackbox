@@ -9,7 +9,7 @@
  * the system unchanged (see report-leaf.guard.test.ts).
  */
 export {
-  verifyEd25519,
+  verifyReportSignature,
   verifyReportDocument,
   CERTIFIED_PREFIX,
   STATEMENT_NOTE,

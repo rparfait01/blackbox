@@ -1,0 +1,16 @@
+{
+  "name": "@blackbox/verifier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone public report verifier (Brief 30). Static, client-side, no backend, no app coupling.",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/verifier.guard.test.mjs",
+    "deploy": "node build.mjs && wrangler pages deploy dist --project-name=blackbox-verify --branch=main --commit-dirty=true"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "wrangler": "^3.99.0"
+  }
+}

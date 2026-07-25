@@ -25,6 +25,13 @@ SECURITY_CONTACT_EMAIL = "royce.ikumi.parfait@gmail.com"
 # matching PRIVATE key is the INTEGRITY_SIGNING_KEY secret. Publish this value
 # out-of-band so recipients/courts can pin it.
 INTEGRITY_PUBLIC_KEY = "MCowBQYDK2VwAyEA0JvR9tHYACGq0mivDWifJ16CJ6mt6t5A06yLlhpwPYE="
+# ECDSA P-256 PUBLIC verification key (SPKI base64) for CERTIFIED REPORTS (Brief 30 §1).
+# The matching PRIVATE key is the REPORT_SIGNING_KEY secret. This value is PUBLISHED —
+# it is embedded in the standalone verifier and served at
+# /.well-known/blackbox-report-public-key.json so a court's own expert can check a report
+# without BLACK BOX and without the verification page. Deliberately a DIFFERENT key from
+# INTEGRITY_PUBLIC_KEY: different artifact, different audience, independent rotation.
+REPORT_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXqmajlR2iQOxIrPfF4AE8kTQdfofQIlLWaZn39L2mxyq2mwbcCb32QvqrNzQsTVHnBR1l3j9+0c/7nmbydR+GQ=="
 # StillPoint Official Account basic id (public, @-prefixed) for the QR-connect LINE
 # pairing deep link (Brief 18). Not a secret — it is the OA's public handle.
 LINE_OA_BASIC_ID = "@346hrzaa"

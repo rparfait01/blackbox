@@ -14,8 +14,8 @@
  *
  * FOUR OUTCOMES, AND WHY 'unverifiable' EXISTS. A verifier that cannot tell "unaltered"
  * from "I couldn't check" is worse than none: it would print CERTIFIED on faith. If the
- * runtime has no Ed25519, we say so and point to the published key + algorithm so a court's
- * own expert can check it elsewhere. We never guess in the reassuring direction.
+ * runtime cannot run the check, we say so and point to the published key + algorithm so a
+ * court's own expert can check it elsewhere. We never guess in the reassuring direction.
  */
 import { canonicalize, canonicalHash, renderedHash } from './canonical';
 import { parseReportDocument, renderEvidenceText } from './report-document';
@@ -58,24 +58,33 @@ function b64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** Ed25519 verify. Returns null — NOT false — when the runtime cannot do Ed25519 at all,
- *  so "I can't check this" is never reported as "this failed". */
-export async function verifyEd25519(
+/**
+ * Verify a report signature: ECDSA P-256 / SHA-256 over `data`, signature as raw r‖s.
+ *
+ * Returns null — NOT false — when the runtime cannot perform the check at all (no ECDSA, or
+ * an unusable key), so "I can't check this" is never reported as "this failed". P-256 is
+ * universally available, so in practice this only fires on a malformed key.
+ */
+export async function verifyReportSignature(
   data: string,
   signatureB64: string,
   publicKeyB64: string,
 ): Promise<boolean | null> {
   let key: CryptoKey;
   try {
-    key = await crypto.subtle.importKey('spki', b64ToBytes(publicKeyB64) as BufferSource, { name: 'Ed25519' }, false, [
-      'verify',
-    ]);
+    key = await crypto.subtle.importKey(
+      'spki',
+      b64ToBytes(publicKeyB64) as BufferSource,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
   } catch {
-    return null; // no Ed25519 here (or an unusable key) — unverifiable, not invalid
+    return null; // unusable key / no ECDSA here — unverifiable, not invalid
   }
   try {
     return await crypto.subtle.verify(
-      'Ed25519',
+      { name: 'ECDSA', hash: 'SHA-256' },
       key,
       b64ToBytes(signatureB64) as BufferSource,
       new TextEncoder().encode(data) as BufferSource,
@@ -136,7 +145,7 @@ export async function verifyReportDocument(html: string, expectedPublicKey?: str
   //    cannot show one thing while carrying another.
   const renderingConsistent = (await renderedHash(signedEvidenceText)) === fileTextHash;
   // 4. The signature over the attestation must check out against the published key.
-  const signatureValid = await verifyEd25519(canonicalize(attestation), payload.signature, payload.publicKey);
+  const signatureValid = await verifyReportSignature(canonicalize(attestation), payload.signature, payload.publicKey);
 
   const checks: VerificationChecks = {
     signatureValid: signatureValid === true,
@@ -150,7 +159,7 @@ export async function verifyReportDocument(html: string, expectedPublicKey?: str
       verdict: 'unverifiable',
       headline: 'Could not verify here',
       detail:
-        'This runtime cannot perform Ed25519 verification, so we will not tell you either way. Verify the signature with the published BLACK BOX public key and algorithm shown in the document, using your own tooling.',
+        'This runtime cannot perform ECDSA P-256 verification, so we will not tell you either way. Verify the signature with the published BLACK BOX public key and algorithm shown in the document, using your own tooling.',
       checks,
       attestation,
       signedEvidenceText,

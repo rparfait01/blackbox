@@ -2,6 +2,9 @@ packages:
   - 'apps/*'
   - 'workers/*'
   - 'packages/*'
+  # Brief 30: the standalone public verifier. A SEPARATE deployment that shares no
+  # runtime code with the app — it only bundles packages/shared at build time.
+  - 'verifier'
 
 allowBuilds:
   esbuild: true

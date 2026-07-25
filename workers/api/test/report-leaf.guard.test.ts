@@ -59,7 +59,7 @@ describe('§3 [A] the verifier never stores the uploaded document', () => {
   it('it publishes the key + algorithm so a court can verify without the page', () => {
     const page = read('lib/verification-page.ts');
     expect(page).toMatch(/Verify independently, without this page/);
-    expect(page).toMatch(/Ed25519 over the canonical JSON/);
+    expect(page).toMatch(/ECDSA P-256 with SHA-256 over the canonical JSON/);
     expect(page).toMatch(/Published public key/);
   });
 });
@@ -130,10 +130,23 @@ describe('§5 org and operator are never in the path', () => {
 });
 
 describe('§2 [A] the signing key stays server-side', () => {
-  it('signing reuses the shipped integrity key — no second key system', () => {
+  it('uses the DEDICATED report key, and never the export-manifest key', () => {
     const attestation = read('lib/report-attestation.ts');
-    expect(attestation).toMatch(/from '\.\/integrity'/);
-    expect(attestation).not.toMatch(/generateKey|importKey|INTEGRITY_SIGNING_KEY/);
+    expect(attestation).toMatch(/from '\.\/report-signing'/);
+    // The attestation module holds no key material and opens no crypto of its own.
+    expect(attestation).not.toMatch(/generateKey|importKey|REPORT_SIGNING_KEY/);
+    // Report signing must NOT reach for the custody export key — different artifact,
+    // different audience, and compromise of one must not forge the other.
+    expect(attestation).not.toMatch(/INTEGRITY_SIGNING_KEY|publicKeyB64/);
+  });
+
+  it('the private report key never leaves the Worker', () => {
+    const signing = read('lib/report-signing.ts');
+    // Private key: import + sign only. No export path, and it is never returned.
+    expect(signing).toMatch(/\['sign'\]/);
+    expect(signing).not.toMatch(/exportKey|REPORT_SIGNING_KEY\s*[,}]/);
+    // The published half is the ONLY thing any caller can obtain.
+    expect(signing).toMatch(/export function reportPublicKey/);
   });
 
   it('the sign endpoint accepts hashes only — never report content', () => {

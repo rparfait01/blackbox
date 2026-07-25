@@ -140,6 +140,15 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  verifier:
+    devDependencies:
+      esbuild:
+        specifier: ^0.21.5
+        version: 0.21.5
+      wrangler:
+        specifier: ^3.99.0
+        version: 3.114.17(@cloudflare/workers-types@4.20260609.1)
+
   workers/api:
     dependencies:
       '@blackbox/shared':

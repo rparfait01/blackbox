@@ -69,6 +69,15 @@ export interface Env {
   /** Ed25519 PUBLIC key (SPKI, base64) — published in manifests so the verifier
    *  (recipient/court) can check signatures. Non-secret; safe in vars. */
   INTEGRITY_PUBLIC_KEY?: string;
+  /** ECDSA P-256 PRIVATE key (PKCS8, base64) signing CERTIFIED REPORTS (Brief 30 §1).
+   *  DELIBERATELY SEPARATE from INTEGRITY_SIGNING_KEY: different artifact, different
+   *  audience, different blast radius — compromise of one must not forge the other.
+   *  Set via `wrangler secret put REPORT_SIGNING_KEY`; never in the repo or any client. */
+  REPORT_SIGNING_KEY?: string;
+  /** ECDSA P-256 PUBLIC key (SPKI, base64) — PUBLISHED, embedded in the standalone
+   *  verifier and served at /.well-known/blackbox-report-public-key.json so a court's
+   *  own expert can verify a report without us. Non-secret; safe in vars. */
+  REPORT_PUBLIC_KEY?: string;
   /** R2 bucket for the sealed, write-once 36-month custody vault (Fix Brief 2
    *  #C3). Separate from MEDIA (the live capture bucket). */
   VAULT?: import('@cloudflare/workers-types').R2Bucket;

@@ -154,7 +154,8 @@ describe('honest outcomes for everything else', () => {
   });
 
   it('never claims CERTIFIED when the signature could not be checked', async () => {
-    // Simulate a runtime with no Ed25519: an unusable key makes verifyEd25519 return null.
+    // Simulate a runtime that cannot check: an unusable key makes the verify helper
+    // return null, which must surface as 'unverifiable' — never as certified.
     const report = await sampleReport();
     const html = renderReportHtml({ ...report, statement: '' }).replace(
       /"publicKey":"[^"]+"/,

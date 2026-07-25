@@ -22,9 +22,17 @@
  * FLAG-GATED. No report may be signed while zero-knowledge custody is off — with the flag
  * down there are no commitments, so a "certified" report would be chained to nothing.
  */
-import { canonicalHash, canonicalize, REPORT_DOCUMENT_FORMAT, type ReportAttestation, type SignedAttestation } from '@blackbox/shared';
+import {
+  canonicalHash,
+  canonicalize,
+  REPORT_DOCUMENT_FORMAT,
+  REPORT_SIGNATURE_ALG,
+  type ReportAttestation,
+  type SignedAttestation,
+} from '@blackbox/shared';
 import type { Env } from '../types';
-import { getChainHead, publicKeyB64, sign } from './integrity';
+import { getChainHead } from './integrity';
+import { reportPublicKey, signReport } from './report-signing';
 
 export type AttestationResult =
   | { ok: true; signed: SignedAttestation }
@@ -73,7 +81,7 @@ export async function signReportAttestation(
     return { ok: false, reason: 'no_commitments' };
   }
 
-  const publicKey = publicKeyB64(env);
+  const publicKey = reportPublicKey(env);
   if (!publicKey) {
     return { ok: false, reason: 'no_signing_key' };
   }
@@ -81,7 +89,7 @@ export async function signReportAttestation(
   const head = await getChainHead(env, input.eventId);
   const attestation: ReportAttestation = {
     format: REPORT_DOCUMENT_FORMAT,
-    alg: 'Ed25519',
+    alg: REPORT_SIGNATURE_ALG,
     eventId: input.eventId,
     evidenceHash: input.evidenceHash,
     renderedHash: input.renderedHash,
@@ -91,7 +99,7 @@ export async function signReportAttestation(
     signedAt: new Date(input.now).toISOString(),
   };
 
-  const signature = await sign(env, canonicalize(attestation));
+  const signature = await signReport(env, canonicalize(attestation));
   if (!signature) {
     return { ok: false, reason: 'no_signing_key' };
   }

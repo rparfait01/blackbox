@@ -158,8 +158,8 @@ export function verificationPage(publicKey: string, verifierSource: string): str
   nothing for us to see. Verification is public; the contents of your document are not.</p>
 
   <p style="margin:.75rem 0 0"><b>Verify independently, without this page.</b> The signature is
-  Ed25519 over the canonical JSON of the document's attestation object (keys sorted by Unicode
-  code point, no insignificant whitespace). Check it against the published key with your own
+  ECDSA P-256 with SHA-256 over the canonical JSON of the document's attestation object (keys
+  sorted by Unicode code point, no insignificant whitespace), signature as raw r&#8214;s, base64. Check it against the published key with your own
   tooling — the page is a convenience, the mathematics is the proof.</p>
   <p style="margin:.5rem 0 0">Published public key (SPKI, base64):<code>${publicKey}</code></p>
 </div>

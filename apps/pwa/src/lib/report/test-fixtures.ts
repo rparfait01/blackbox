@@ -8,6 +8,7 @@
  */
 import { canonicalize } from './canonical';
 import { computeEvidenceHashes } from './document';
+import { REPORT_SIGNATURE_ALG } from '@blackbox/shared';
 import type { CertifiedReportPayload, EvidenceZone, ReportAttestation } from '@blackbox/shared';
 
 function bytesToB64(bytes: Uint8Array): string {
@@ -90,14 +91,21 @@ export interface SigningFixture {
   sign: (data: string) => Promise<string>;
 }
 
-/** A throwaway Ed25519 keypair standing in for the Worker's INTEGRITY_SIGNING_KEY. */
+/** A throwaway ECDSA P-256 keypair standing in for the Worker's REPORT_SIGNING_KEY. */
 export async function signingFixture(): Promise<SigningFixture> {
-  const kp = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
   const publicKey = bytesToB64(new Uint8Array(await crypto.subtle.exportKey('spki', kp.publicKey)));
   return {
     publicKey,
     sign: async (data: string) =>
-      bytesToB64(new Uint8Array(await crypto.subtle.sign('Ed25519', kp.privateKey, new TextEncoder().encode(data)))),
+      bytesToB64(
+        new Uint8Array(
+          await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, new TextEncoder().encode(data)),
+        ),
+      ),
   };
 }
 
@@ -107,7 +115,7 @@ export async function sampleReport(evidence: EvidenceZone = sampleEvidence()): P
   const hashes = await computeEvidenceHashes(evidence);
   const attestation: ReportAttestation = {
     format: 'blackbox-certified-report/v1',
-    alg: 'Ed25519',
+    alg: REPORT_SIGNATURE_ALG,
     eventId: evidence.event.eventId,
     evidenceHash: hashes.evidenceHash,
     renderedHash: hashes.renderedHash,

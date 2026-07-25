@@ -246,7 +246,7 @@ export function renderReportHtml(input: ReportDocumentInput): string {
 
 <section class="zone">
   <h2>Signature</h2>
-  <p class="note">Algorithm: Ed25519 over the canonical JSON of the attestation object below (RFC 8785-style: keys sorted by code point, no insignificant whitespace).</p>
+  <p class="note">Algorithm: ECDSA P-256 with SHA-256 over the canonical JSON of the attestation object below (RFC 8785-style: keys sorted by code point, no insignificant whitespace). The signature is raw r‖s (P1363), base64.</p>
   <p class="sig"><b>Public key (SPKI, base64):</b><br>${escapeHtml(input.publicKey)}</p>
   <p class="sig"><b>Signature (base64):</b><br>${escapeHtml(input.signature)}</p>
   <p class="sig"><b>Evidence hash (SHA-256):</b><br>${escapeHtml(input.attestation.evidenceHash)}</p>

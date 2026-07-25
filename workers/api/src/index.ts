@@ -180,6 +180,33 @@ app.get('/.well-known/blackbox-integrity-public-key.json', async (c) => {
   return c.json({ algorithm: 'Ed25519', format: 'spki-base64', publicKey }, 200);
 });
 
+// Brief 30 §1 — the PUBLISHED report-verification key. Deliberately a different key from the
+// integrity key above: that one signs custody export manifests for a named recipient, this
+// one signs survivor reports that go to courts and strangers.
+//
+// Published unconditionally and without auth, because the whole point is that a court's own
+// expert can verify a report WITHOUT this server and without the verification page. This
+// endpoint is NOT flag-gated: publishing a public key commits to nothing and reveals nothing,
+// and a report signed today must stay checkable years from now.
+app.get('/.well-known/blackbox-report-public-key.json', async (c) => {
+  const publicKey = c.env.REPORT_PUBLIC_KEY;
+  if (!publicKey) {
+    return c.json({ error: 'no_report_key' }, 503);
+  }
+  return c.json(
+    {
+      algorithm: 'ECDSA',
+      curve: 'P-256',
+      hash: 'SHA-256',
+      signatureFormat: 'raw-r||s (P1363), base64',
+      format: 'spki-base64',
+      publicKey,
+      specification: 'https://github.com/rparfait01/blackbox/blob/master/docs/brief29/VERIFICATION.md',
+    },
+    200,
+  );
+});
+
 // Convenience verifier: POST a signed export manifest, get back whether its
 // Ed25519 signature checks out against the manifest's published key. Stateless,
 // no auth, never throws — verification is a public, reproducible operation.
