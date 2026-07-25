@@ -1567,7 +1567,18 @@ interface LocationPayload {
 }
 app.post('/v1/events/:id/locations', async (c) => {
   const eventId = c.req.param('id');
-  const { points } = await c.req.json<LocationPayload>();
+  // Capture fails OPEN: a malformed body must never 500 a capture endpoint. Guard the
+  // parse and keep only well-formed points (numeric ts/lat/lon) so a partially-bad
+  // payload stores what it can rather than throwing mid-batch. A body with no valid
+  // points is a no-op 201, not an error.
+  const body = await c.req.json<LocationPayload>().catch(() => ({}) as Partial<LocationPayload>);
+  const points = (Array.isArray(body.points) ? body.points : []).filter(
+    (p) =>
+      p != null &&
+      typeof p.timestamp === 'number' &&
+      typeof p.lat === 'number' &&
+      typeof p.lon === 'number',
+  );
   if (points.length > 0) {
     const tz = await eventTzOffset(c.env, eventId);
     await c.env.DB.batch(

@@ -1415,6 +1415,22 @@ async function run() {
     assert(me.data.user.entitlement === 'activated', 'leaving the org deactivated the survivor — §0 violated');
   });
 
+  await check('67. capture fails OPEN on a MALFORMED body — the location endpoint never 500s (F1 regression)', async () => {
+    const u = await signup();
+    const ev = await api('POST', '/v1/events', { bearer: u.session, body: { source: 'acc-f1' } });
+    assert(ev.data?.eventId, 'trigger failed');
+    created.events.push(ev.data.eventId);
+    const path = `/v1/events/${ev.data.eventId}/locations`;
+    // A malformed body (no `points`) must be a graceful no-op 201, not a 500.
+    const bad = await signed('POST', path, ev.data.hmacSecret, ev.data.eventId, { garbage: true });
+    assert(bad.status === 201 && bad.data.count === 0, `malformed location body did not fail open: ${bad.status} ${JSON.stringify(bad.data)}`);
+    // A well-formed point still stores; a mixed array keeps only the valid points.
+    const mixed = await signed('POST', path, ev.data.hmacSecret, ev.data.eventId, {
+      points: [{ timestamp: Date.now(), lat: 35.6, lon: 139.7, accuracy: 5 }, { lat: 'bad' }, null],
+    });
+    assert(mixed.status === 201 && mixed.data.count === 1, `valid point not stored / bad points not filtered: ${mixed.status} ${JSON.stringify(mixed.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 
