@@ -10,7 +10,8 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "acceptance": "node test/acceptance.mjs"
+    "acceptance": "node test/acceptance.mjs",
+    "build:verifier": "node scripts/build-verifier.mjs"
   },
   "dependencies": {
     "@blackbox/shared": "workspace:*",
@@ -22,6 +23,7 @@
     "@cloudflare/workers-types": "^4.20250109.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.9",
-    "wrangler": "^3.99.0"
+    "wrangler": "^3.99.0",
+    "esbuild": "^0.21.5"
   }
 }

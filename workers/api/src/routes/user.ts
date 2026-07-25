@@ -27,6 +27,8 @@ import { normalizeSubmission, submitTally } from '../lib/tally';
 import { normalizeIntakeStat, submitIntakeStat } from '../lib/intake-stats';
 import { getAccountKeys, getRecoveryKey, getSurvivorCaptureEnvelope, setRecoveryKey, setUserPubkey } from '../lib/zk-custody';
 import { envelopeEnabled, getCaseFileSealed, listCaseFiles, storeCaseFile } from '../lib/case-files';
+import { signReportAttestation } from '../lib/report-attestation';
+import { getOwnChunkBytes, getReportMetadata, listOwnEvents } from '../lib/report-metadata';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
 
@@ -163,6 +165,109 @@ userRoutes.get('/case-files/:id', async (c) => {
   }
   await audit(c.env, null, 'case_file_read', c.get('userId'), { caseFileId: c.req.param('id') });
   return c.json({ sealedCaseFile: sealed }, 200);
+});
+
+// ---------------------------------------------------------------------------------------
+// Brief 29 — CERTIFIED REPORT. Additive, owner-scoped, and gated on zero-knowledge custody.
+//
+// With ENVELOPE_ENCRYPTION_ENABLED off, all four endpoints below 404: there are no capture-
+// time commitments to chain a certification to, so no report path exists at all (§5). The
+// report is the SURVIVOR'S — every route is scoped to the caller's own events, and there is
+// no org or operator route to any of it.
+// ---------------------------------------------------------------------------------------
+
+/** 404 (not 403) while the flag is down — the feature does not exist yet, rather than
+ *  existing-but-refusing. Keeps the dormant surface indistinguishable from absent. */
+function reportsOff(c: { env: Env; json: (body: unknown, status: 404) => Response }): Response | null {
+  return envelopeEnabled(c.env) ? null : c.json({ error: 'not_found' }, 404);
+}
+
+/** The owner's own events, so she can choose which one to build a report from. */
+userRoutes.get('/reports/events', async (c) => {
+  const off = reportsOff(c);
+  if (off) return off;
+  return c.json({ events: await listOwnEvents(c.env, c.get('userId')) }, 200);
+});
+
+/** The generic details that auto-populate the evidence zone (§1.2) — event metadata,
+ *  location, notifications, and the chunk index. Owner-scoped; null for anything else. */
+userRoutes.get('/reports/events/:id/metadata', async (c) => {
+  const off = reportsOff(c);
+  if (off) return off;
+  const metadata = await getReportMetadata(c.env, c.get('userId'), c.req.param('id'));
+  if (!metadata) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+  return c.json({ metadata }, 200);
+});
+
+/** One stored chunk, STILL ENCRYPTED. The decryption happens on her device with her key
+ *  (§1.3); this hands over ciphertext the server cannot open. Owner-scoped. */
+userRoutes.get('/reports/events/:id/chunks/:sequence', async (c) => {
+  const off = reportsOff(c);
+  if (off) return off;
+  const sequence = Number(c.req.param('sequence'));
+  if (!Number.isInteger(sequence) || sequence < 0) {
+    return c.json({ error: 'bad_sequence' }, 400);
+  }
+  const bytes = await getOwnChunkBytes(c.env, c.get('userId'), c.req.param('id'), sequence);
+  if (!bytes) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+  return new Response(bytes, { status: 200, headers: { 'content-type': 'application/octet-stream' } });
+});
+
+/**
+ * §2 — sign the evidence zone. THE BODY CARRIES TWO HASHES AND NOTHING ELSE: the server
+ * signs a fingerprint it cannot invert, so certification stays compatible with zero-
+ * knowledge custody. The server binds its own commitments hash and integrity-chain head
+ * into what it signs, so the certification attests to what BLACK BOX witnessed at capture
+ * time rather than to a claim the device made afterwards.
+ *
+ * Refusals are honest and specific: a report that cannot be truthfully certified is not
+ * certified at all.
+ */
+userRoutes.post('/reports/sign', async (c) => {
+  const off = reportsOff(c);
+  if (off) return off;
+  const body = await c.req
+    .json<{ eventId?: string; evidenceHash?: string; renderedHash?: string }>()
+    .catch(() => ({}) as { eventId?: string; evidenceHash?: string; renderedHash?: string });
+  const eventId = (body.eventId ?? '').trim();
+  const evidenceHash = (body.evidenceHash ?? '').trim();
+  const renderedHash = (body.renderedHash ?? '').trim();
+  // Shape-check the hashes here so a malformed value can never reach the signing key.
+  const isSha256Hex = (v: string): boolean => /^[0-9a-f]{64}$/.test(v);
+  if (!eventId || !isSha256Hex(evidenceHash) || !isSha256Hex(renderedHash)) {
+    return c.json({ error: 'evidence_hashes_required' }, 400);
+  }
+
+  const result = await signReportAttestation(c.env, {
+    userId: c.get('userId'),
+    eventId,
+    evidenceHash,
+    renderedHash,
+    now: Date.now(),
+  });
+
+  if (!result.ok) {
+    const status = result.reason === 'not_owner' ? 404 : 409;
+    const message =
+      result.reason === 'no_commitments'
+        ? 'This recording has no capture-time commitments, so it cannot be certified.'
+        : result.reason === 'no_signing_key'
+          ? 'Certification is not available on this deployment.'
+          : 'Not found.';
+    return c.json({ error: result.reason, message }, status);
+  }
+
+  // The decrypt/certify point is audited (who, what, when) — the content is not, and could
+  // not be: the server never held it.
+  await audit(c.env, eventId, 'report_certified', c.get('userId'), {
+    evidenceHash,
+    chainSeq: result.signed.attestation.chainSeq,
+  });
+  return c.json(result.signed, 200);
 });
 
 // Brief 27 §5 Destination 1 — the survivor's per-submission OPT-IN to contribute anonymized

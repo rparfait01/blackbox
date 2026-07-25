@@ -194,6 +194,32 @@ app.post('/v1/integrity/verify', async (c) => {
   return c.json({ valid }, 200);
 });
 
+// --- Brief 29 §3: the public certified-report verification page. A LEAF.
+//
+// Nothing in the running system imports this, routes through it, or waits on it. Deleting
+// the page leaves BLACK BOX unchanged and documents independently verifiable by the
+// published key — the page is a convenience, the mathematics is the trust.
+//
+// The visitor's file is NEVER uploaded: the page inlines the shared verifier and checks the
+// document in the browser. There is no upload endpoint here to store anything with, which
+// is why "the verifier never stores the uploaded document" needs no one's trust.
+//
+// DARK until zero-knowledge custody is armed. With the flag down no certified report can
+// exist, so publishing a verification promise (and pinning a key to it) would be a public
+// commitment to a thing that cannot yet happen. It 404s until there is something to verify.
+app.get('/verification', async (c) => {
+  if (c.env.ENVELOPE_ENCRYPTION_ENABLED !== 'true') {
+    return c.notFound();
+  }
+  const publicKey = publicKeyB64(c.env);
+  if (!publicKey) {
+    return c.notFound(); // no published key ⇒ nothing could be verified against it
+  }
+  const { verificationPage } = await import('./lib/verification-page');
+  const { VERIFIER_BUNDLE } = await import('./generated/verifier-bundle');
+  return c.html(verificationPage(publicKey, VERIFIER_BUNDLE));
+});
+
 // --- Create event (mints the per-event secret). Optional Bearer session ties
 // the event to a user account; legacy clients still send userHash. ---
 interface OpenEventBody {

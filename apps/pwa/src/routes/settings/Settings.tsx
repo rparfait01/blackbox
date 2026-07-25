@@ -12,11 +12,13 @@ import {
   type DisplayMode,
 } from '@/lib/auth';
 import { REGIONS } from '@/lib/regions';
+import { envelopeEncryptionEnabled } from '@/lib/env';
 import { useActiveAlert } from '@/lib/active-alert';
 import { enrollPasskey, passkeySupported } from '@/lib/passkey';
 import { ContactTabs } from './ContactTabs';
 import { AnonymousTally } from './AnonymousTally';
 import { GuidedIntake } from './GuidedIntake';
+import { CertifiedReport } from './CertifiedReport';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean; entitlement?: string; entitlementSource?: string | null };
@@ -69,6 +71,9 @@ export function Settings(): JSX.Element {
   // Brief 27: the guided intake (structured case file). Settings-only; filing is
   // fail-closed (blocked unless zero-knowledge storage is armed).
   const [intakeOpen, setIntakeOpen] = useState(false);
+  // Brief 29: the survivor-generated certified report. Settings-only, and gated on
+  // zero-knowledge custody — with the flag off the entry point is not rendered at all.
+  const [reportOpen, setReportOpen] = useState(false);
 
   const load = (): void => {
     void api<MeData>('/v1/me').then((r) => {
@@ -404,6 +409,25 @@ export function Settings(): JSX.Element {
           </button>
         </Group>
 
+        {/* Brief 29 — the survivor-generated certified report. Built on her device from her
+            own decrypted recording, signed so any third party can verify it independently.
+            Flag-gated: with zero-knowledge custody off there is nothing to certify against,
+            so the entry point does not exist at all. */}
+        {envelopeEncryptionEnabled ? (
+          <Group label="Certified report">
+            <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
+              A report you generate yourself, from your own recording, with a signature anyone can check —
+              independently of us. Your own words stay yours, in a separate section that is never signed or judged.
+            </p>
+            <button
+              onClick={() => setReportOpen(true)}
+              className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
+            >
+              Start a certified report
+            </button>
+          </Group>
+        ) : null}
+
         <button onClick={() => void signOut()} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
         </button>
@@ -430,6 +454,7 @@ export function Settings(): JSX.Element {
 
       {tallyOpen ? <AnonymousTally onClose={() => setTallyOpen(false)} /> : null}
       {intakeOpen ? <GuidedIntake onClose={() => setIntakeOpen(false)} /> : null}
+      {reportOpen ? <CertifiedReport onClose={() => setReportOpen(false)} /> : null}
     </main>
   );
 }

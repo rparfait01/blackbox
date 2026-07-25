@@ -1431,6 +1431,58 @@ async function run() {
     assert(mixed.status === 201 && mixed.data.count === 1, `valid point not stored / bad points not filtered: ${mixed.status} ${JSON.stringify(mixed.data)}`);
   });
 
+  // ---- Brief 29: certified report (dormant until zero-knowledge custody is armed) ----
+  //
+  // The report chains its certification to capture-time plaintext commitments, so it CANNOT
+  // exist while the envelope flag is off. These rows prove the dormancy is real on the live
+  // deployment — the same shape as row 58 for the case file. When the flag is armed, 68
+  // flips to 200s and the CERTIFIED/TAMPERED rows become live checks (final acceptance).
+
+  await check('68. certified report: DORMANT — every report endpoint 404s while the envelope flag is off', async () => {
+    const u = await signup();
+    // All four report routes must be indistinguishable from absent: not 403, not 409 — gone.
+    const routes = [
+      ['GET', '/v1/me/reports/events'],
+      ['GET', `/v1/me/reports/events/${'evt-' + uniq()}/metadata`],
+      ['GET', `/v1/me/reports/events/${'evt-' + uniq()}/chunks/0`],
+    ];
+    for (const [method, path] of routes) {
+      const res = await api(method, path, { bearer: u.session });
+      assert(res.status === 404, `${method} ${path} is reachable while the flag is off: ${res.status}`);
+    }
+    const sign = await api('POST', '/v1/me/reports/sign', {
+      bearer: u.session,
+      body: { eventId: 'evt-x', evidenceHash: 'a'.repeat(64), renderedHash: 'b'.repeat(64) },
+    });
+    assert(sign.status === 404, `the signing endpoint is reachable while the flag is off: ${sign.status}`);
+    // And the public verification page is not served either — no promise published early.
+    const page = await api('GET', '/verification');
+    assert(page.status === 404, `/verification is live while the flag is off: ${page.status}`);
+  });
+
+  await check('69. certified report: no anonymous access — a session is required before the gate', async () => {
+    // Even dormant, the report surface must never answer an unauthenticated caller. This
+    // proves requireSession runs FIRST, so arming the flag cannot expose an open endpoint.
+    for (const path of ['/v1/me/reports/events', '/v1/me/reports/events/evt-1/metadata']) {
+      const res = await api('GET', path, {});
+      assert(res.status === 401, `${path} answered without a session: ${res.status}`);
+    }
+    const sign = await api('POST', '/v1/me/reports/sign', { body: { eventId: 'evt-1' } });
+    assert(sign.status === 401, `signing answered without a session: ${sign.status}`);
+  });
+
+  await check('70. certified report: independent verification stays possible — the published key is still served', async () => {
+    // §3 [A]: the page is a convenience, the mathematics is the trust. The published
+    // Ed25519 key must remain fetchable without an account, and the shipped manifest
+    // verifier must keep working — this brief is additive and disturbed neither.
+    const key = await api('GET', '/.well-known/blackbox-integrity-public-key.json');
+    assert(key.status === 200 && key.data.algorithm === 'Ed25519' && typeof key.data.publicKey === 'string' && key.data.publicKey.length > 20,
+      `published verification key missing: ${key.status} ${JSON.stringify(key.data)}`);
+    // The pre-existing manifest verifier is untouched: garbage is rejected, never a 500.
+    const bogus = await api('POST', '/v1/integrity/verify', { body: { signature: 'x', publicKey: key.data.publicKey } });
+    assert(bogus.status === 200 && bogus.data.valid === false, `manifest verifier regressed: ${bogus.status} ${JSON.stringify(bogus.data)}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 
