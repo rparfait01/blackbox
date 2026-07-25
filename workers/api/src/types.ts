@@ -86,6 +86,12 @@ export interface Env {
    *  (no unverified payment can activate an account). Provider-agnostic: the payload
    *  is HMAC-SHA256(secret, rawBody), hex in x-activation-signature. Set via secret. */
   ACTIVATION_WEBHOOK_SECRET?: string;
+  /** Gumroad product identifier for the web purchase path. Read as a standard Worker
+   *  binding (`env.GUMROAD_PRODUCT_ID`) — never `process.env`, which does not exist in
+   *  the Workers runtime. Set in production with `wrangler secret put GUMROAD_PRODUCT_ID`,
+   *  and locally via workers/api/.dev.vars (gitignored). Optional, like every other
+   *  binding here: unset must degrade honestly rather than throw at module load. */
+  GUMROAD_PRODUCT_ID?: string;
 }
 
 /** Hono Variables set by the auth middlewares. */
