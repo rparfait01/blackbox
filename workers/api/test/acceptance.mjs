@@ -1538,8 +1538,13 @@ async function run() {
     assert(none.status === 400 && none.data.error === 'code_required', `missing code not refused: ${none.status} ${JSON.stringify(none.data)}`);
     assert(typeof none.data.message === 'string' && none.data.message.length > 15, `refusal is not an honest message: ${JSON.stringify(none.data)}`);
     // Unrecognised code.
+    // Brief 34 §1: a code we did not mint now falls through to Gumroad licence
+    // verification, so an unknown string is refused as invalid_license rather than
+    // not_found. Both are honest, named refusals — assert the REFUSAL and the honest
+    // message, not which of the two arms produced it.
     const bogus = await api('POST', '/v1/auth/signup/start', { body: { name: 'BadCode', email: mk(), regionId: 'jp', code: 'ZZZZZZZZZZ' } });
-    assert(bogus.status === 403 && bogus.data.error === 'not_found', `unknown code not refused: ${bogus.status} ${JSON.stringify(bogus.data)}`);
+    assert(bogus.status === 403, `unknown code not refused: ${bogus.status} ${JSON.stringify(bogus.data)}`);
+    assert(['not_found', 'invalid_license'].includes(bogus.data.error), `unexpected refusal reason: ${JSON.stringify(bogus.data)}`);
     assert(/not recognised/i.test(bogus.data.message ?? ''), `unknown-code message not honest: ${JSON.stringify(bogus.data)}`);
   });
 
