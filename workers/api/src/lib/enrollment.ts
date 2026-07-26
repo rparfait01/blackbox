@@ -227,22 +227,33 @@ export async function claimSignupCode(
   };
 }
 
-/** Reader-facing reason a signup code was refused. Says WHAT IS WRONG — never a generic
- *  error, never a silent success. Same honest-status rule as the alert path. */
-export function signupCodeMessage(reason: SignupCodeFailure): string {
+/**
+ * Reader-facing reason a credential was refused. Says WHAT IS WRONG — never a generic
+ * error, never a silent success. Same honest-status rule as the alert path.
+ *
+ * `kind` names the credential the person actually holds. A buyer reusing their Gumroad
+ * key was previously told "that ACCESS CODE has already been used" — true, but it does
+ * not match the thing in their hand, so they check the wrong thing. Institutional users
+ * hold an access code; consumers hold a licence key. Say whichever they have.
+ */
+export type CredentialKind = 'code' | 'licence';
+
+export function signupCodeMessage(reason: SignupCodeFailure, kind: CredentialKind = 'code'): string {
+  const noun = kind === 'licence' ? 'licence key' : 'access code';
+  const Noun = kind === 'licence' ? 'A licence key' : 'An access code';
   switch (reason) {
     case 'code_required':
-      return 'An access code is required to create an account.';
+      return `${Noun} is required to create an account.`;
     case 'not_found':
-      return 'That access code was not recognised. Check it and try again.';
+      return `That ${noun} was not recognised. Check it and try again.`;
     case 'revoked':
-      return 'That access code has been cancelled. Contact whoever issued it.';
+      return `That ${noun} has been cancelled. Contact whoever issued it.`;
     case 'expired':
-      return 'That access code has expired. Contact whoever issued it for a new one.';
+      return `That ${noun} has expired. Contact whoever issued it for a new one.`;
     case 'exhausted':
-      return 'That access code has already been used.';
+      return `That ${noun} has already been used.`;
     default:
-      return 'That access code cannot be used.';
+      return `That ${noun} cannot be used.`;
   }
 }
 

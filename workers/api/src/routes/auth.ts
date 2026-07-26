@@ -56,6 +56,15 @@ import {
   verifyGumroadLicense as verifyGumroadLicence,
 } from '../lib/gumroad-license';
 import { normalizeCode } from '../lib/readable-code';
+
+/** Which credential is this string, from OUR ledger? A row minted by the Gumroad path is
+ *  a licence key; anything else is an access code. Used only to word a refusal. */
+async function credentialKindFor(env: Env, raw: string | undefined): Promise<'code' | 'licence'> {
+  const row = await env.DB.prepare('SELECT createdBy FROM enrollment_codes WHERE code = ?')
+    .bind(normalizeCode((raw ?? '').trim()))
+    .first<{ createdBy: string | null }>();
+  return row?.createdBy === 'gumroad_license' ? 'licence' : 'code';
+}
 import { grantEntitlement } from '../lib/entitlement';
 import { consumeRecoveryCode, issueRecoveryCodes } from '../lib/recovery-code';
 import {
@@ -153,8 +162,12 @@ authRoutes.post('/signup/start', async (c) => {
     claim = claimed.claim;
   } else if (claimed.reason !== 'not_found') {
     // Known to us and refusable on its own terms (missing / revoked / expired / used).
+    // Name the credential the PERSON holds: a consumer row came from a Gumroad licence
+    // key, so telling that buyer their "access code" was used sends them to check the
+    // wrong thing. `createdBy` records which issuance path minted the row.
+    const kind = await credentialKindFor(c.env, body.code);
     const status = claimed.reason === 'code_required' ? 400 : 403;
-    return c.json({ error: claimed.reason, message: signupCodeMessage(claimed.reason) }, status);
+    return c.json({ error: claimed.reason, message: signupCodeMessage(claimed.reason, kind) }, status);
   } else {
     // Not one of ours — try it as a Gumroad licence key.
     const raw = (body.code ?? '').trim();

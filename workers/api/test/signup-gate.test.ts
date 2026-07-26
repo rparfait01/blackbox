@@ -178,6 +178,18 @@ describe('refusals say WHAT IS WRONG — never generic, never silent', () => {
     expect(r).toEqual({ ok: false, reason: 'exhausted' });
   });
 
+  it('names the credential the PERSON holds — licence key vs access code', () => {
+    // A buyer reusing their Gumroad key must be told about a LICENCE KEY; telling them
+    // their "access code" was used sends them to check the wrong thing.
+    expect(signupCodeMessage('exhausted', 'licence')).toMatch(/licence key has already been used/i);
+    expect(signupCodeMessage('exhausted', 'code')).toMatch(/access code has already been used/i);
+    expect(signupCodeMessage('expired', 'licence')).toMatch(/licence key has expired/i);
+    expect(signupCodeMessage('code_required', 'licence')).toMatch(/^A licence key is required/);
+    expect(signupCodeMessage('code_required', 'code')).toMatch(/^An access code is required/);
+    // Default stays 'code' so every existing caller is unchanged.
+    expect(signupCodeMessage('exhausted')).toMatch(/access code/i);
+  });
+
   it('every refusal has a message that names the problem', () => {
     for (const reason of ['code_required', 'not_found', 'revoked', 'expired', 'exhausted'] as const) {
       const msg = signupCodeMessage(reason);
