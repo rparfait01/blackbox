@@ -104,6 +104,10 @@ export interface Vars {
    *  (NEVER from the token — the session token shape is load-bearing and unextended).
    *  NULL = individual account. Set by requireSession. */
   orgId: string | null;
+  /** Brief 33a: when an ADMIN route was reached by an OPERATOR SESSION rather than by
+   *  ADMIN_TOKEN, this is that operator's userId — so the action is attributable to a
+   *  person. Null when the bearer token was used (scripts/CI have no person behind them). */
+  operatorUserId?: string | null;
   /** Brief 23: the account's STAFF role in its org, set by requireOrgRole on the
    *  /v1/org/* portal routes. Absent for individuals and enrolled survivors. */
   orgRole?: 'admin' | 'coordinator';

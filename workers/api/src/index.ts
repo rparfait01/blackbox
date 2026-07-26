@@ -489,12 +489,46 @@ app.route('/v1/org-register', orgRegisterRoutes);
 app.route('/v1/org', orgRoutes);
 
 // --- Admin (pilot-only; Bearer ADMIN_TOKEN). Onboarding moves to W9. ---
+// Brief 33a — TWO ways to be the operator, and the difference matters.
+//
+//   ADMIN_TOKEN  — a bearer secret. Kept for scripts, CI, and the acceptance suite, which
+//                  have no session and no person behind them.
+//   OPERATOR SESSION — an account whose users.platform_role = 'operator'. This is what the
+//                  console uses, so an operator never pastes a token into a browser, and
+//                  every action they take is ATTRIBUTABLE to a person rather than to
+//                  whoever holds a secret.
+//
+// The token path is checked first because it is a constant-time string compare with no DB
+// hit; the session path costs a lookup and only runs when there is no matching token.
+// Either satisfies the gate — neither weakens it, because both are all-or-nothing and
+// there is no third way in.
 app.use('/v1/admin/*', async (c, next) => {
   const expected = c.env.ADMIN_TOKEN;
   const provided = (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  if (!expected || provided !== expected) {
+
+  let authorized = !!expected && provided === expected;
+  let actorUserId: string | null = null;
+
+  if (!authorized && provided) {
+    // Not the token — try it as a session belonging to an operator account.
+    const secret = sessionSecret(c.env);
+    const session = secret ? await verifySession(secret, provided) : null;
+    if (session?.userId) {
+      const row = await c.env.DB.prepare('SELECT platform_role FROM users WHERE id = ?')
+        .bind(session.userId)
+        .first<{ platform_role: string | null }>();
+      if (row?.platform_role === 'operator') {
+        authorized = true;
+        actorUserId = session.userId;
+      }
+    }
+  }
+
+  if (!authorized) {
     return c.json({ error: 'unauthorized' }, 401);
   }
+  // Downstream handlers audit with this, so an operator action names the operator.
+  c.set('operatorUserId', actorUserId);
   await next();
   return undefined;
 });
