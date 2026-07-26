@@ -27,6 +27,7 @@ import { scheduled } from './scheduled';
 import { getContactForEvent, listCascadeContacts, listContacts, listFollows, upsertContact } from './lib/contacts';
 import { hasDeliverableRecipient } from './lib/roles';
 import { advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
+import { purgeOrphanedMedia } from './lib/media-purge';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -703,6 +704,39 @@ app.post('/v1/admin/investigations/:id/resolve', async (c) => {
 });
 
 // --- Operator failsafe (Bearer ADMIN_TOKEN): list + force-close orphaned active
+// --- Orphaned-capture purge (Bearer ADMIN_TOKEN). Clears R2 residue by IDENTITY, not
+// by a lifecycle rule. A lifecycle rule CANNOT express "never delete a new capture" —
+// --expire-date kills them at once, --expire-days N kills them N days later, and prefix
+// scoping cannot separate old from new because keys carry a UUID, not a timestamp. A
+// standing rule that eventually eats live captures is a suspended safety guarantee.
+//
+// This deletes only objects that are BOTH older than the cutoff taken at invocation AND
+// unreferenced by chunks_index, and it leaves nothing behind: when it finishes, no rule
+// anywhere is scheduled to delete anything.
+//
+// DRY RUN BY DEFAULT — pass {"confirm": true} to actually delete. Resumable: re-invoke
+// while `done` is false.
+app.post('/v1/admin/media/purge-orphans', async (c) => {
+  const body = await c.req
+    .json<{ confirm?: boolean; maxObjects?: number }>()
+    .catch(() => ({}) as { confirm?: boolean; maxObjects?: number });
+  const result = await purgeOrphanedMedia(c.env, {
+    confirm: body.confirm === true,
+    maxObjects: typeof body.maxObjects === 'number' ? body.maxObjects : undefined,
+  });
+  // Audited: a mass storage deletion is an operator action and leaves a record.
+  if (!result.dryRun) {
+    await audit(c.env, null, 'admin.media_purge', null, {
+      deleted: result.deleted,
+      scanned: result.scanned,
+      skippedTooNew: result.skippedTooNew,
+      skippedReferenced: result.skippedReferenced,
+      done: result.done,
+    });
+  }
+  return c.json(result, 200);
+});
+
 // events. A defined, audited admin action so a truly orphaned event (no reachable
 // coordinator, all links expired) can always be closed without trapping the user.
 // This is an OPERATOR action, not a user self-close — the user still cannot close
