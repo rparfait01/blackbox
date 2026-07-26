@@ -93,6 +93,26 @@ async function issueSignupCode() {
   return code;
 }
 
+/**
+ * Brief 30 §C changed the front door: signup now REQUIRES a code, and redeeming one
+ * GRANTS entitlement (§D — otherwise a buyer lands signed-up-but-unarmable). So a fresh
+ * account is no longer 'unactivated' — that state is now only reachable by an operator
+ * revoke.
+ *
+ * The §28 checks below still have to prove what they always proved — above all that an
+ * UNACTIVATED account can still FIRE THE TRIGGER — so they establish that state
+ * explicitly instead of assuming signup leaves them in it. The guarantee is unchanged;
+ * only the route into the state is.
+ */
+async function makeUnactivated(u) {
+  if (!ADMIN) return false;
+  const r = await api('POST', '/v1/admin/entitlement/revoke', {
+    bearer: ADMIN,
+    body: { email: u.email, reason: 'acceptance: establish unactivated state (Brief 30 §C)' },
+  });
+  return r.status === 200;
+}
+
 async function signup(mode = 'direct', name = 'Acc') {
   const email = `smoke+acc-${uniq()}@example.com`;
   const code = await issueSignupCode();
@@ -160,6 +180,11 @@ async function bootstrapOrgWithTwoAdmins(name, lane = 'zero_fee', seatsTotal = 3
 // A fresh throwaway account that redeems an ENROLLMENT code → { acc, red }.
 async function enrollWith(code, mode = 'direct') {
   const acc = await signup(mode);
+  // §C entitles at signup with source purchase_web, and grantEntitlement NEVER overwrites
+  // an existing source (Brief 28: first source wins, permanently). So to observe an org
+  // enrolment as the activating event — which is what the §28 checks assert — the account
+  // must start unactivated. Revoking is the only route into that state post-§C.
+  await makeUnactivated(acc);
   const red = await api('POST', '/v1/me/org/redeem', { bearer: acc.session, body: { code } });
   return { acc, red };
 }
@@ -1356,10 +1381,12 @@ async function run() {
   await check('61. §28 gate at ARM, never the trigger: an unactivated account cannot arm but STILL fires; operator grant arms it', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
     const u = await signup();
+    // §C entitles at signup, so drop this account back to unactivated to test the gate.
+    assert(await makeUnactivated(u), 'could not establish the unactivated state');
     await addEmail(u.session, 'primary', 'P'); // a deliverable recipient
     let got = await api('GET', '/v1/me/contacts', { bearer: u.session });
     assert(got.data.armReasons?.hasDeliverableRecipient === true, 'recipient precondition not met');
-    assert(got.data.armReasons?.entitled === false, 'a fresh account must be unactivated');
+    assert(got.data.armReasons?.entitled === false, 'revoked account must read unactivated');
     assert(got.data.armable === false, 'unactivated account must NOT be armable — the gate is at ARM');
     // THE BUTTON ALWAYS FIRES: the paywall never gates the trigger (§0).
     const ev = await trigger(u.session, 'acc-unactivated');
@@ -1380,6 +1407,8 @@ async function run() {
     assert(unsigned.status === 401, `unsigned activation webhook not refused: ${unsigned.status}`);
     // A signed-in account with NO verified receipt cannot self-activate (no client-granted entitlement).
     const u = await signup();
+    // §C entitles at signup; revoke so "no receipt ⇒ no activation" is actually testable.
+    if (ADMIN) assert(await makeUnactivated(u), 'could not establish the unactivated state');
     const confirm = await api('POST', '/v1/me/activation/confirm', { bearer: u.session, body: {} });
     assert(confirm.status === 200 && confirm.data.entitlement === 'unactivated', `confirm client-granted entitlement: ${JSON.stringify(confirm.data)}`);
     const me = await api('GET', '/v1/me', { bearer: u.session });
@@ -1429,6 +1458,9 @@ async function run() {
   await check('64. §28 operator entitlement: grant is idempotent + sourced; the ONE revoke path needs a reason + deactivates; both are ADMIN-only', async () => {
     if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
     const u = await signup();
+    // §C entitles at signup, so revoke first — otherwise the grant is a no-op and its
+    // "did this call activate?" contract cannot be observed at all.
+    assert(await makeUnactivated(u), 'could not establish the unactivated state');
     const g = await api('POST', '/v1/admin/entitlement/grant', { bearer: ADMIN, body: { email: u.email, reason: 'acc' } });
     assert(g.status === 200 && g.data.activated === true, `grant failed: ${JSON.stringify(g.data)}`);
     let me = await api('GET', '/v1/me', { bearer: u.session });
