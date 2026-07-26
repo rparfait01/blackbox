@@ -45,6 +45,7 @@ import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
 import { orgRoutes } from './routes/org';
+import { consoleRoutes } from './routes/console';
 import { orgRegisterRoutes } from './routes/org-register';
 import { createOrg, recordLicense } from './lib/org';
 import { createAdminRegistrationCode, reissueRegistrationCode, revokeRegistrationCode } from './lib/org-registration';
@@ -487,6 +488,13 @@ app.route('/v1/org-register', orgRegisterRoutes);
 // Brief 23 — the org portal surface. Every route inside is session + org-role gated
 // and scoped to the caller's own org; individual accounts never reach it.
 app.route('/v1/org', orgRoutes);
+
+// Brief 33b — THE CONSOLE. One surface, four levels (operator / admin / coordinator /
+// unmarked), every one of them decided SERVER-SIDE per request from the session. It is
+// registered as its own router rather than folded into /v1/org because its scope rule is
+// different in kind: /v1/org is always exactly one org, while the console must also serve
+// the one role that legitimately crosses orgs. Nothing inside can read incident content.
+app.route('/v1/console', consoleRoutes);
 
 // --- Admin (pilot-only; Bearer ADMIN_TOKEN). Onboarding moves to W9. ---
 // Brief 33a — TWO ways to be the operator, and the difference matters.

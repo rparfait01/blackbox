@@ -9,6 +9,7 @@ import { SignIn } from '@/routes/signin/SignIn';
 import { MagicLink } from '@/routes/signin/MagicLink';
 import { OrgSignIn } from '@/routes/org/OrgSignIn';
 import { OrgRegister } from '@/routes/org/OrgRegister';
+import { Console } from '@/routes/console/Console';
 import { GuardianAccept } from '@/routes/guardian/GuardianAccept';
 import { ClosurePinGate } from '@/components/ClosurePinGate';
 import { RootGate } from './RootGate';
@@ -30,6 +31,10 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
   // The code is entered manually on the page (never in the URL) and consumed only on
   // explicit submit. Registered before the catch-all, like /org.
   { path: '/org/register', element: <OrgRegister />, errorElement: <MeditationHome /> },
+  // Brief 33b — the console. Behind login on the PWA domain, reachable only by typing
+  // /console: nothing in the survivor skin links here, so it never appears in the Hidden
+  // facade (§0a). Registered explicitly, before the catch-all, exactly like /org.
+  { path: '/console', element: <Console />, errorElement: <MeditationHome /> },
   {
     path: '/blackbox',
     element: (

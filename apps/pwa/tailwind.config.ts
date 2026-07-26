@@ -54,6 +54,12 @@ export default {
           text: '#E8E8E8',
           'text-secondary': '#888888',
           'text-tertiary': '#555555',
+          // Instrument teal — the custody/boundary accent used by the console
+          // (docs/BLACKBOX_dashboard_mockup.html). DELIBERATELY its own token and NOT
+          // med.text: that one is the facade's soft aqua, and painting an instrument
+          // surface with a facade token is the palette bleed facade-palette.guard.test.ts
+          // exists to catch (it classifies any file using `med-*` as a facade surface).
+          teal: '#4FB8A8',
         },
         // The single semantic status colors (only one visible at a time)
         status: {

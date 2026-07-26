@@ -111,6 +111,15 @@ export interface Vars {
   /** Brief 23: the account's STAFF role in its org, set by requireOrgRole on the
    *  /v1/org/* portal routes. Absent for individuals and enrolled survivors. */
   orgRole?: 'admin' | 'coordinator';
+  /** Brief 33b: the console level, DERIVED server-side per request from
+   *  users.platform_role + the active org_members row. Never sent by the client and
+   *  never read from the token. Set by the /v1/console/* identity middleware. */
+  consoleLevel?: 'operator' | 'admin' | 'coordinator' | 'unmarked';
+  /** Brief 33b: the ONE org a console request may touch. Null for operator (all orgs)
+   *  and for unmarked (none) — `consoleLevel` disambiguates which. */
+  consoleOrgId?: string | null;
+  /** Brief 33b: the acting person's display name, for the console identity line. */
+  consoleName?: string | null;
 }
 
 // --- Brief 23 org tenancy rows (see migration 0031_org_tenancy.sql) ---

@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>BLACK BOX — Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg-page:#0a0a0a; --bg-surface:#0f0f0f; --bg-elevated:#1a1a1a;
+  --border-subtle:#222; --border-defined:#333;
+  --text-primary:#e8e8e8; --text-secondary:#888; --text-tertiary:#555;
+  --amber:#e89a00; --red:#ff3b30; --green:#34c759; --teal:#4fb8a8;
+  --font-display:"IBM Plex Sans Condensed",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg-page);color:var(--text-primary);font-family:var(--font-body);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;background:none;border:none;color:inherit}
+input,select{font:inherit}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px;border-bottom:1px solid var(--border-subtle);position:sticky;top:0;background:var(--bg-page);z-index:20;flex-wrap:wrap}
+.wordmark{font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--text-secondary)}
+.wordmark b{color:var(--text-primary);font-weight:700}
+.wordmark .amber{color:var(--amber)}
+.identity{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-tertiary)}
+.identity b{color:var(--text-secondary);font-weight:500}
+
+.roleswitch{display:flex;border:1px solid var(--border-defined)}
+.roleswitch button{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:8px 14px;color:var(--text-secondary);border-right:1px solid var(--border-defined)}
+.roleswitch button:last-child{border-right:none}
+.roleswitch button[aria-pressed="true"]{background:var(--amber);color:#0a0a0a;font-weight:700}
+.roleswitch button:focus-visible{outline:2px solid var(--amber);outline-offset:-2px}
+
+.demonote{font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-tertiary);text-align:center;padding:6px;background:#14100a;border-bottom:1px solid var(--border-subtle)}
+.demonote b{color:var(--amber)}
+
+.scopebar{display:flex;align-items:center;gap:12px;padding:10px 24px;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);flex-wrap:wrap}
+.scopebar .dot{width:7px;height:7px;background:var(--amber);flex:0 0 auto;border-radius:50%}
+.scopebar .scope{color:var(--text-primary)}
+.scopebar .lock{margin-left:auto;color:var(--teal);display:flex;align-items:center;gap:6px}
+.scopebar select{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border-defined);font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:4px 8px}
+
+.page{max-width:1180px;margin:0 auto;padding:28px 24px 80px}
+h1{font-family:var(--font-display);font-weight:700;font-size:30px;letter-spacing:-.01em;margin-bottom:4px}
+.sub{color:var(--text-secondary);font-size:13px;margin-bottom:24px;max-width:74ch}
+
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px}
+@media(max-width:820px){.metrics{grid-template-columns:repeat(2,1fr)}}
+.metric{background:var(--bg-surface);border:1px solid var(--border-subtle);padding:16px}
+.metric .k{font-family:var(--font-mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px}
+.metric .v{font-family:var(--font-display);font-size:34px;font-weight:700;line-height:1}
+.metric .v small{font-size:16px;color:var(--text-tertiary);font-weight:500}
+.metric.warn .v{color:var(--amber)}
+.metric.hot .v{color:var(--red)}
+.metric.ok .v{color:var(--green)}
+
+.sec{border:1px solid var(--border-subtle);margin-bottom:16px;background:var(--bg-surface)}
+.sec>summary{list-style:none;display:flex;align-items:center;gap:12px;padding:16px 20px;cursor:pointer;user-select:none}
+.sec>summary::-webkit-details-marker{display:none}
+.sec>summary .caret{font-size:9px;color:var(--text-tertiary);transition:transform .15s}
+.sec[open]>summary .caret{transform:rotate(90deg)}
+.sec h2{font-family:var(--font-display);font-size:17px;font-weight:600;letter-spacing:.01em}
+.sec .count{margin-left:auto;font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;color:var(--text-tertiary);text-transform:uppercase}
+.sec-body{padding:0 20px 20px}
+
+.sub-d{border:1px solid var(--border-subtle);margin-bottom:12px;background:var(--bg-page)}
+.sub-d>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer}
+.sub-d>summary::-webkit-details-marker{display:none}
+.sub-d>summary .caret{font-size:8px;color:var(--text-tertiary);transition:transform .15s}
+.sub-d[open]>summary .caret{transform:rotate(90deg)}
+.sub-d h3{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-secondary);font-weight:600}
+.sub-body{padding:0 14px 14px}
+
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--font-mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-tertiary);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border-defined);white-space:nowrap}
+td{padding:11px 10px;border-bottom:1px solid var(--border-subtle);vertical-align:middle}
+tbody tr:hover{background:var(--bg-elevated)}
+.mono{font-family:var(--font-mono);font-size:12px;letter-spacing:.04em}
+.muted{color:var(--text-tertiary)}
+.num{text-align:right;font-family:var(--font-mono);font-size:12px}
+th.num{text-align:right}
+
+.pill{display:inline-block;font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;border:1px solid;white-space:nowrap}
+.pill.amber{color:var(--amber);border-color:var(--amber)}
+.pill.green{color:var(--green);border-color:var(--green)}
+.pill.red{color:var(--red);border-color:var(--red)}
+.pill.grey{color:var(--text-tertiary);border-color:var(--border-defined)}
+.pill.teal{color:var(--teal);border-color:var(--teal)}
+
+.btn{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border:1px solid var(--border-defined);color:var(--text-primary);background:var(--bg-elevated);white-space:nowrap}
+.btn:hover{border-color:var(--text-secondary)}
+.btn.primary{background:var(--amber);color:#0a0a0a;border-color:var(--amber);font-weight:700}
+.btn.danger{color:var(--red);border-color:var(--red);background:transparent}
+.btn.small{padding:4px 10px;font-size:9px}
+.btn:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+.formrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:4px 0 0}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-family:var(--font-mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary)}
+.field input,.field select{background:var(--bg-elevated);border:1px solid var(--border-defined);color:var(--text-primary);padding:7px 10px;font-size:13px;min-width:170px}
+.field input:focus,.field select:focus{outline:1px solid var(--amber);border-color:var(--amber)}
+
+.codechip{font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;color:var(--amber)}
+.newcode{background:#14100a;border:1px dashed var(--amber);padding:12px 14px;margin-top:12px;font-family:var(--font-mono);font-size:13px;color:var(--amber);letter-spacing:.1em;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.newcode .lbl{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary)}
+
+.seatbar{height:5px;background:var(--bg-elevated);min-width:90px;position:relative;display:inline-block;vertical-align:middle}
+.seatbar i{position:absolute;left:0;top:0;bottom:0;background:var(--amber);display:block}
+.seatbar.full i{background:var(--red)}
+
+.wall{background:#0d0f0e;border:1px solid var(--border-subtle);border-left:2px solid var(--teal);padding:12px 16px;margin:14px 0;font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--text-secondary);line-height:1.7}
+.wall b{color:var(--teal)}
+.deny{background:#140a0a;border:1px solid var(--red);border-left:2px solid var(--red);padding:14px 16px;font-family:var(--font-mono);font-size:11px;letter-spacing:.05em;color:var(--red);line-height:1.7;display:flex;gap:12px;align-items:flex-start}
+.deny .x{font-size:16px;line-height:1}
+
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--bg-elevated);border:1px solid var(--amber);color:var(--text-primary);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;padding:10px 18px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:50;max-width:90vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.custody{margin-top:44px;border-top:1px solid var(--border-subtle);padding-top:16px;font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;color:var(--text-tertiary);line-height:1.9;text-transform:uppercase}
+.custody b{color:var(--teal);font-weight:500}
+
+.hidden{display:none!important}
+@media (prefers-reduced-motion:reduce){#toast,.caret{transition:none}}
+@media (max-width:640px){body{font-size:13px}.page{padding:20px 14px 60px}h1{font-size:24px}.metrics{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<div class="demonote">Interactive mockup — the role switch below simulates three <b>separate logins</b>. In production each person only ever sees their own role; the switch does not exist. Data shown is illustrative.</div>
+
+<div class="topbar">
+  <div class="wordmark"><b>BLACK BOX</b> <span class="amber">■</span> CONSOLE</div>
+  <div class="roleswitch" role="group" aria-label="Simulate login as">
+    <button data-role="operator" aria-pressed="true">Operator</button>
+    <button data-role="admin" aria-pressed="false">Org Admin</button>
+    <button data-role="coordinator" aria-pressed="false">Coordinator</button>
+  </div>
+  <div class="identity" id="identity"></div>
+</div>
+
+<div class="scopebar">
+  <span class="dot"></span>
+  <span>Scope</span>
+  <span class="scope" id="scopeLabel"></span>
+  <span id="orgPickWrap" class="hidden"><select id="orgPick" aria-label="Acting organization"></select></span>
+  <span class="lock">🔒 <span id="lockText">SERVER-ENFORCED</span></span>
+</div>
+
+<div class="page">
+  <h1 id="pageTitle"></h1>
+  <p class="sub" id="pageSub"></p>
+
+  <div class="metrics" id="metrics"></div>
+
+  <!-- OPERATOR: organizations -->
+  <details class="sec" id="sec-orgs" open>
+    <summary><span class="caret">▶</span><h2>Organizations</h2><span class="count" id="orgCount"></span></summary>
+    <div class="sec-body">
+      <details class="sub-d" id="sub-create">
+        <summary><span class="caret">▶</span><h3>Vet &amp; create organization</h3></summary>
+        <div class="sub-body">
+          <div class="wall"><b>OPERATOR ONLY.</b> Orgs are never self-serve. You vet out-of-band, create the record, and issue a one-time admin code. A stolen code can only claim admin on this pre-created org — it cannot create one.</div>
+          <div class="formrow">
+            <div class="field"><label>Organization name</label><input id="f-orgname" placeholder="e.g. Kanto Campus Safety" /></div>
+            <div class="field"><label>Type</label>
+              <select id="f-orgtype">
+                <option value="dv">DV shelter / coalition — $0</option>
+                <option value="campus">Campus safety</option>
+                <option value="tribal">Tribal authority</option>
+                <option value="senior">Senior services</option>
+                <option value="refugee">Refugee resettlement</option>
+              </select>
+            </div>
+            <div class="field"><label>Seat cap</label><input id="f-seats" type="number" value="100" min="1" /></div>
+            <button class="btn primary" id="btnCreateOrg">Create + issue admin code</button>
+          </div>
+          <div id="newOrgCode"></div>
+        </div>
+      </details>
+
+      <details class="sub-d" open>
+        <summary><span class="caret">▶</span><h3>All organizations</h3><span class="count" id="orgTblCount"></span></summary>
+        <div class="sub-body">
+          <div class="tablewrap"><table>
+            <thead><tr><th>Org</th><th>Location</th><th>License</th><th>Seats</th><th class="num">Enrolled</th><th class="num">Act·30d</th><th>Status</th></tr></thead>
+            <tbody id="orgRows"></tbody>
+          </table></div>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- SEATS: admin -->
+  <details class="sec hidden" id="sec-seats" open>
+    <summary><span class="caret">▶</span><h2>Seats &amp; coordinators</h2><span class="count" id="seatCount"></span></summary>
+    <div class="sec-body">
+      <div class="wall"><b>ORG ADMIN.</b> Minimum two admins enforced — the system refuses to drop below two, so a departing admin can never strand the org. Removing a seat revokes access immediately.</div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Member</th><th>Role</th><th>Status</th><th></th></tr></thead>
+        <tbody id="seatRows"></tbody>
+      </table></div>
+    </div>
+  </details>
+
+  <!-- CODES: all roles, scoped -->
+  <details class="sec" id="sec-codes" open>
+    <summary><span class="caret">▶</span><h2 id="codesTitle">Access codes</h2><span class="count" id="codeCount"></span></summary>
+    <div class="sec-body">
+      <details class="sub-d" id="sub-issue" open>
+        <summary><span class="caret">▶</span><h3>Issue a code</h3></summary>
+        <div class="sub-body">
+          <div class="formrow">
+            <div class="field" id="codeTypeWrap"><label>Code type</label>
+              <select id="f-codetype"></select>
+            </div>
+            <div class="field"><label>Quantity</label><input id="f-codeqty" type="number" value="1" min="1" max="25" /></div>
+            <button class="btn primary" id="btnIssue">Issue</button>
+          </div>
+          <div id="newCode"></div>
+        </div>
+      </details>
+      <details class="sub-d" open>
+        <summary><span class="caret">▶</span><h3 id="codeListTitle">Code list</h3></summary>
+        <div class="sub-body">
+          <div class="tablewrap"><table>
+            <thead><tr><th>Code</th><th>Type</th><th id="th-org">Org</th><th>Issued by</th><th>Uses</th><th>Status</th><th></th></tr></thead>
+            <tbody id="codeRows"></tbody>
+          </table></div>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- SURVIVOR ROSTER: admin + coordinator -->
+  <details class="sec hidden" id="sec-survivors" open>
+    <summary><span class="caret">▶</span><h2 id="survTitle">Enrollments</h2><span class="count" id="survCount"></span></summary>
+    <div class="sec-body">
+      <div class="wall"><b>READINESS ONLY.</b> Enrollment code, app state, and confirmed-contact count — the operational signals a coordinator needs to help someone reach <i>Armed</i>. No name, no number, no location, no incident content.</div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Enrollment code</th><th>Redeemed</th><th>App state</th><th class="num">Confirmed contacts</th><th class="num">Act·30d</th></tr></thead>
+        <tbody id="survRows"></tbody>
+      </table></div>
+    </div>
+  </details>
+
+  <!-- THE WALL demonstration -->
+  <details class="sec" id="sec-wall">
+    <summary><span class="caret">▶</span><h2>The wall</h2><span class="count">TRY IT</span></summary>
+    <div class="sec-body">
+      <p class="sub" style="margin-bottom:14px">The separation is enforced on the server, not by hiding buttons. Below is what happens when a role reaches for something outside its scope — the server refuses. This is a live demonstration of the boundary, not a screenshot.</p>
+      <div class="formrow" style="margin-bottom:14px">
+        <button class="btn" id="btnCrossOrg">Org Admin → read another org's data</button>
+        <button class="btn" id="btnContent">Any role → open incident content</button>
+        <button class="btn" id="btnEscalate">Coordinator → issue an admin code</button>
+      </div>
+      <div id="wallResult"></div>
+    </div>
+  </details>
+
+  <div class="custody">
+    <b>Data custody.</b> This console shows operational counters only — enrollments, code status, activation counts.<br/>
+    Incident records are zero-knowledge encrypted and belong to the survivor. No role here — including Operator — can view, unlock, or export incident content.<br/>
+    Survivors appear as an enrollment code only. No names, no numbers, no locations.
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+// ---------- illustrative data (in production: server-returned, server-scoped) ----------
+const orgs = [
+  {id:"org-oki",name:"Okinawa DV Pilot",loc:"JP · Okinawa",type:"dv",seats:50,enrolled:31,act30:6,status:"active"},
+  {id:"org-owf",name:"Okinawa Women's Foundation",loc:"JP · Okinawa",type:"dv",seats:100,enrolled:0,act30:0,status:"pending"},
+  {id:"org-ark",name:"Arkansas Coalition — Tier 1",loc:"US · Arkansas",type:"dv",seats:100,enrolled:12,act30:2,status:"active"},
+  {id:"org-nond",name:"Not Our Native Daughters",loc:"US · South Dakota",type:"tribal",seats:100,enrolled:0,act30:0,status:"pending"},
+];
+const LICENSE = t => t==="dv" ? {label:"$0 — always",pill:"teal"} : {label:"$5,000 / yr",pill:"grey"};
+
+let codes = [
+  {code:"ADM-7K2F-QX91",type:"admin",org:"org-oki",by:"Royce (Operator)",uses:"1 / 1",status:"redeemed"},
+  {code:"CRD-M4P8-JW20",type:"coordinator",org:"org-oki",by:"Ikumi (Org Admin)",uses:"1 / 1",status:"redeemed"},
+  {code:"ENR-B6TQ-55RD",type:"enrollment",org:"org-oki",by:"Advocate A (Coordinator)",uses:"1 / 1",status:"redeemed"},
+  {code:"ENR-9XLC-K0MA",type:"enrollment",org:"org-oki",by:"Advocate A (Coordinator)",uses:"0 / 1",status:"unused"},
+  {code:"CRD-2ZR0-HHV4",type:"coordinator",org:"org-oki",by:"Ikumi (Org Admin)",uses:"0 / 1",status:"unused"},
+  {code:"ENR-QF44-P2NB",type:"enrollment",org:"org-ark",by:"Advocate B (Coordinator)",uses:"1 / 1",status:"redeemed"},
+];
+const seats = [
+  {org:"org-oki",who:"Ikumi",role:"admin",status:"active"},
+  {org:"org-oki",who:"Director K.",role:"admin",status:"active"},
+  {org:"org-oki",who:"Advocate A",role:"coordinator",status:"active"},
+  {org:"org-oki",who:"Advocate C",role:"coordinator",status:"invited"},
+];
+const survivors = [
+  {code:"ENR-B6TQ-55RD",org:"org-oki",by:"Advocate A (Coordinator)",redeemed:"2026-07-03",state:"armed",contacts:2,act30:1},
+  {code:"ENR-K1DW-33ZO",org:"org-oki",by:"Advocate A (Coordinator)",redeemed:"2026-06-21",state:"notready",contacts:0,act30:0},
+  {code:"ENR-QF44-P2NB",org:"org-ark",by:"Advocate B (Coordinator)",redeemed:"2026-07-19",state:"armed",contacts:1,act30:1},
+];
+
+let role="operator", actingOrg="org-oki";
+const ME={operator:"Royce · Operator",admin:"Ikumi · Org Admin",coordinator:"Advocate A · Coordinator"};
+const CODE_TYPES={
+  operator:[["admin","Org admin"]],
+  admin:[["coordinator","Coordinator"],["enrollment","Enrollment (survivor)"]],
+  coordinator:[["enrollment","Enrollment (survivor)"]],
+};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const orgName=id=>(orgs.find(o=>o.id===id)||{}).name||"—";
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove("show"),2400);}
+function gen(t){const p={admin:"ADM",coordinator:"CRD",enrollment:"ENR"}[t];const c=()=>Array.from({length:4},()=>"ABCDEFGHJKLMNPQRTUVWXYZ0123456789"[Math.floor(Math.random()*33)]).join("");return `${p}-${c()}-${c()}`;}
+const STATE_PILL={armed:["green","Armed"],notready:["red","Not ready"]};
+
+function render(){
+  const isOp=role==="operator", isAdm=role==="admin", isCrd=role==="coordinator";
+  const org=orgs.find(o=>o.id===actingOrg);
+
+  $("identity").innerHTML=`Signed in as <b>${esc(ME[role])}</b>`;
+  $("scopeLabel").textContent=isOp?"SYSTEM-WIDE — ALL ORGANIZATIONS":`ORG — ${org.name.toUpperCase()}`;
+  $("lockText").textContent=isOp?"OPERATOR — FULL SCOPE":"SCOPED TO YOUR ORG — SERVER-ENFORCED";
+  $("orgPickWrap").classList.toggle("hidden",isOp);
+  if(!isOp) $("orgPick").innerHTML=orgs.map(o=>`<option value="${o.id}" ${o.id===actingOrg?"selected":""}>${esc(o.name)}</option>`).join("");
+
+  $("pageTitle").textContent=isOp?"Operator":isAdm?"Org Admin":"Coordinator";
+  $("pageSub").textContent=isOp
+    ?"Full system view. Vet and create organizations, issue admin codes, monitor coverage across every org. The only role that crosses org boundaries."
+    :isAdm
+    ?"Your organization only. Manage seats, issue coordinator and enrollment codes, review every code and enrollment under your org."
+    :"Your organization only. Issue enrollment codes and track the enrollments you personally issued.";
+
+  // metrics
+  const myCodes=codes.filter(c=>isOp||c.org===actingOrg).filter(c=>!isCrd||c.by===ME.coordinator);
+  const mySurv=survivors.filter(s=>(isOp||s.org===actingOrg)&&(!isCrd||s.by===ME.coordinator));
+  const notReady=mySurv.filter(s=>s.state==="notready").length;
+  let M=[];
+  if(isOp) M=[["Organizations",orgs.length,""],["Total enrolled",orgs.reduce((a,o)=>a+o.enrolled,0),""],["Activations · 30d",orgs.reduce((a,o)=>a+o.act30,0),"warn"],["Open codes",codes.filter(c=>c.status==="unused").length,""]];
+  else if(isAdm) M=[["Seats used",`${org.enrolled}<small> / ${org.seats}</small>`,""],["Activations · 30d",org.act30,"warn"],["Coordinators",seats.filter(s=>s.org===actingOrg&&s.role==="coordinator").length,""],["Open codes",myCodes.filter(c=>c.status==="unused").length,""]];
+  else M=[["Codes issued by you",myCodes.length,""],["Your enrollments",mySurv.length,""],["Not ready",notReady,notReady?"hot":"ok"],["Activations · 30d",mySurv.reduce((a,s)=>a+s.act30,0),"warn"]];
+  $("metrics").innerHTML=M.map(([k,v,c])=>`<div class="metric ${c}"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+  // section visibility by role — in production these are server-gated, not just hidden
+  $("sec-orgs").classList.toggle("hidden",!isOp);
+  $("sec-seats").classList.toggle("hidden",!isAdm);
+  $("sec-survivors").classList.toggle("hidden",isOp);
+
+  // orgs table (operator)
+  if(isOp){
+    $("orgCount").textContent=`${orgs.length} ORGS`;
+    $("orgTblCount").textContent=`${orgs.length}`;
+    $("orgRows").innerHTML=orgs.map(o=>{
+      const L=LICENSE(o.type),pct=Math.round(o.enrolled/o.seats*100),full=o.enrolled>=o.seats;
+      const st=o.status==="active"?["green","Active"]:["amber","Pending"];
+      return `<tr>
+        <td>${esc(o.name)}</td>
+        <td class="mono muted">${esc(o.loc)}</td>
+        <td><span class="pill ${L.pill}">${L.label}</span></td>
+        <td><span class="seatbar ${full?"full":""}"><i style="width:${Math.min(pct,100)}%"></i></span> <span class="mono muted">${o.enrolled}/${o.seats}</span></td>
+        <td class="num">${o.enrolled}</td>
+        <td class="num">${o.act30}</td>
+        <td><span class="pill ${st[0]}">${st[1]}</span></td>
+      </tr>`;
+    }).join("");
+  }
+
+  // seats (admin)
+  if(isAdm){
+    const rows=seats.filter(s=>s.org===actingOrg);
+    const admins=rows.filter(s=>s.role==="admin").length;
+    $("seatCount").textContent=`${rows.length} SEATS`;
+    $("seatRows").innerHTML=rows.map(s=>{
+      const canRemove=!(s.role==="admin"&&admins<=2);
+      const st=s.status==="active"?["green","Active"]:["amber","Invited"];
+      return `<tr>
+        <td>${esc(s.who)}</td>
+        <td><span class="pill grey">${s.role}</span></td>
+        <td><span class="pill ${st[0]}">${st[1]}</span></td>
+        <td style="text-align:right">${canRemove?`<button class="btn danger small" data-remove="${esc(s.who)}">Remove</button>`:`<span class="mono muted" title="Minimum two admins enforced">LOCKED · MIN 2</span>`}</td>
+      </tr>`;
+    }).join("");
+    $("seatRows").querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>toast(`Server would revoke ${b.dataset.remove}'s access immediately.`));
+  }
+
+  // code type options by role
+  $("f-codetype").innerHTML=CODE_TYPES[role].map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+  $("codeTypeWrap").style.display=CODE_TYPES[role].length>1?"":"none";
+
+  // codes table
+  $("codesTitle").textContent=isOp?"All access codes":isAdm?"Your org's codes":"Codes you issued";
+  $("codeListTitle").textContent=isOp?"Every code, every org":isAdm?"Every code under your org":"Only the codes you issued";
+  $("th-org").style.display=isOp?"":"none";
+  $("codeCount").textContent=`${myCodes.length}`;
+  $("codeRows").innerHTML=myCodes.map(c=>{
+    const st=c.status==="redeemed"?["grey","Redeemed"]:["amber","Unused"];
+    const tp={admin:"Admin",coordinator:"Coordinator",enrollment:"Enrollment"}[c.type];
+    return `<tr>
+      <td><span class="codechip">${esc(c.code)}</span></td>
+      <td class="mono muted">${tp}</td>
+      ${isOp?`<td class="mono muted">${esc(orgName(c.org))}</td>`:``}
+      <td class="mono muted">${esc(c.by)}</td>
+      <td class="mono muted">${c.uses}</td>
+      <td><span class="pill ${st[0]}">${st[1]}</span></td>
+      <td style="text-align:right">${c.status==="unused"?`<button class="btn danger small" data-revoke="${esc(c.code)}">Revoke</button>`:``}</td>
+    </tr>`;
+  }).join("");
+  $("codeRows").querySelectorAll("[data-revoke]").forEach(b=>b.onclick=()=>{codes=codes.map(c=>c.code===b.dataset.revoke?{...c,status:"revoked"}:c);toast(`${b.dataset.revoke} revoked. It can never be redeemed.`);render();});
+
+  // survivor roster (admin + coordinator)
+  if(!isOp){
+    $("survTitle").textContent=isAdm?"Enrollments — org-wide":"Your enrollments";
+    $("survCount").textContent=`${mySurv.length}`;
+    $("survRows").innerHTML=mySurv.length?mySurv.map(s=>{
+      const st=STATE_PILL[s.state];
+      return `<tr>
+        <td><span class="codechip">${esc(s.code)}</span></td>
+        <td class="mono muted">${s.redeemed}</td>
+        <td><span class="pill ${st[0]}">${st[1]}</span></td>
+        <td class="num">${s.contacts}</td>
+        <td class="num">${s.act30}</td>
+      </tr>`;
+    }).join(""):`<tr><td colspan="5" class="muted mono" style="padding:20px">No enrollments yet.</td></tr>`;
+  }
+}
+
+// role switch
+document.querySelectorAll(".roleswitch button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".roleswitch button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  role=b.dataset.role;
+  $("wallResult").innerHTML="";
+  render();
+});
+$("orgPick").onchange=e=>{actingOrg=e.target.value;render();};
+
+// create org (operator)
+$("btnCreateOrg").onclick=()=>{
+  const name=$("f-orgname").value.trim();
+  if(!name){toast("Enter an organization name.");return;}
+  const c=gen("admin");
+  $("newOrgCode").innerHTML=`<div class="newcode"><span class="lbl">One-time admin code</span> <b>${c}</b> <span class="lbl">— deliver out-of-band. Consumed on first admin registration.</span></div>`;
+  $("f-orgname").value="";
+  toast("Org record created. Admin code issued.");
+};
+
+// issue code
+$("btnIssue").onclick=()=>{
+  const t=$("f-codetype").value, q=Math.max(1,Math.min(25,+$("f-codeqty").value||1));
+  const made=Array.from({length:q},()=>gen(t));
+  $("newCode").innerHTML=`<div class="newcode"><span class="lbl">${q} ${t} code${q>1?"s":""}</span> ${made.map(c=>`<b>${c}</b>`).join("&nbsp;&nbsp;")}</div>`;
+  made.forEach(c=>codes.unshift({code:c,type:t,org:role==="operator"?actingOrg:actingOrg,by:ME[role],uses:`0 / 1`,status:"unused"}));
+  toast(`${q} code${q>1?"s":""} issued.`);
+  render();
+};
+
+// THE WALL — the point of the whole thing
+$("btnCrossOrg").onclick=()=>deny("GET /v1/orgs/org-ark/survivors","Org Admin of Okinawa requesting Arkansas data","403 — scope mismatch. The server derives your org from your session and refuses any query outside it. Client cannot override this.");
+$("btnContent").onclick=()=>deny("GET /v1/events/evt-8837/capture","Any console role requesting incident content","403 — no decryption key exists on any console role. Captures are encrypted to the survivor. There is nothing here to return.");
+$("btnEscalate").onclick=()=>deny("POST /v1/codes { type: admin }","Coordinator attempting to mint an admin code","403 — role mismatch. Code type is authorized server-side against your role. A coordinator may issue enrollment codes only.");
+function deny(req,who,verdict){
+  $("wallResult").innerHTML=`<div class="deny"><span class="x">✕</span><div><b>${esc(req)}</b><br/><span style="color:var(--text-secondary)">${esc(who)}</span><br/><br/>${esc(verdict)}</div></div>`;
+}
+
+render();
+</script>
+</body>
+</html>

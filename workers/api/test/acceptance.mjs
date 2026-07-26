@@ -1641,6 +1641,279 @@ async function run() {
     assert(bogus.status === 200 && bogus.data.valid === false, `manifest verifier regressed: ${bogus.status} ${JSON.stringify(bogus.data)}`);
   });
 
+  // ---- Brief 33b/33c: THE CONSOLE — the boundary, proven on the deployed surface ----
+  //
+  // The console's whole claim is that role and org scope are decided by the SERVER from
+  // the session. These rows attack that claim from the outside: they hold a real session
+  // for each level and try to reach what that level must not have. A hidden button would
+  // pass none of them, because none of them goes near the UI.
+  //
+  // The OPERATOR level is deliberately absent from this suite: there is no endpoint that
+  // grants platform_role (adding one would make "operator" mintable by whoever holds
+  // ADMIN_TOKEN, which is the exact coupling Brief 33a removed). Operator is proven by a
+  // real sign-in on the real surface. What IS proven here is the operator boundary from
+  // the other side: every non-operator level is refused every operator route.
+
+  await check('71. console: an UNMARKED account gets an honest level and is refused every scoped route', async () => {
+    const u = await signup();
+    const me = await api('GET', '/v1/console/me', { bearer: u.session });
+    assert(me.status === 200, `console/me refused a valid session: ${me.status}`);
+    assert(me.data.level === 'unmarked' && me.data.levelLabel === 'UNMARKED', `level not unmarked: ${JSON.stringify(me.data)}`);
+    assert(me.data.orgId === null, `unmarked account carries an org: ${JSON.stringify(me.data)}`);
+    // may.* is the server's own statement of what it will answer — all false.
+    assert(Object.values(me.data.may).filter((v) => v === true).length === 0, `unmarked account may do something: ${JSON.stringify(me.data.may)}`);
+    // And every scoped route actually refuses — the `may` object is a description, not the gate.
+    for (const path of ['/v1/console/overview', '/v1/console/orgs', '/v1/console/accounts', '/v1/console/codes', '/v1/console/seats', '/v1/console/roster', '/v1/console/maintenance/health']) {
+      const res = await api('GET', path, { bearer: u.session });
+      assert(res.status === 403, `${path} answered an unmarked account: ${res.status}`);
+    }
+    // No session at all is 401 BEFORE any level logic — the gate cannot be reached anonymously.
+    const anon = await api('GET', '/v1/console/me');
+    assert(anon.status === 401, `console answered without a session: ${anon.status}`);
+  });
+
+  await check('72. console: an ADMIN sees their own org and is refused every operator route', async () => {
+    const O = await bootstrapOrgWithTwoAdmins(`Console Admin ${uniq()}`);
+    const me = await api('GET', '/v1/console/me', { bearer: O.admin.session });
+    assert(me.data.level === 'admin' && me.data.levelLabel === 'ADMIN', `level not admin: ${JSON.stringify(me.data)}`);
+    assert(me.data.orgId === O.orgId, `admin scoped to the wrong org: ${me.data.orgId} != ${O.orgId}`);
+    // Own-org surfaces answer.
+    const seats = await api('GET', '/v1/console/seats', { bearer: O.admin.session });
+    assert(seats.status === 200 && seats.data.orgId === O.orgId, `seats refused: ${seats.status}`);
+    assert(seats.data.adminCount === 2, `admin count wrong: ${JSON.stringify(seats.data.adminCount)}`);
+    const overview = await api('GET', '/v1/console/overview', { bearer: O.admin.session });
+    assert(overview.status === 200 && overview.data.scope === 'org', `overview scope wrong: ${JSON.stringify(overview.data)}`);
+    // Operator surfaces are refused — and the refusal NAMES the level, never a bare 403.
+    for (const path of ['/v1/console/orgs', '/v1/console/accounts', '/v1/console/maintenance/health', '/v1/console/maintenance/audit']) {
+      const res = await api('GET', path, { bearer: O.admin.session });
+      assert(res.status === 403 && res.data.error === 'level_forbidden' && res.data.level === 'admin',
+        `${path} not refused for admin: ${res.status} ${JSON.stringify(res.data)}`);
+    }
+    // …including the destructive ones. An admin cannot even preview a purge.
+    const purge = await api('POST', '/v1/console/maintenance/purge-media', { bearer: O.admin.session, body: {} });
+    assert(purge.status === 403, `an admin reached the R2 purge: ${purge.status}`);
+    const del = await api('POST', '/v1/console/maintenance/delete-account', { bearer: O.admin.session, body: { email: O.admin.email } });
+    assert(del.status === 403, `an admin reached account deletion: ${del.status}`);
+  });
+
+  await check('73. console: a COORDINATOR sees only what they issued, and cannot staff their org', async () => {
+    const O = await bootstrapOrgWithTwoAdmins(`Console Coord ${uniq()}`, 'zero_fee', 5);
+    // The admin mints a coordinator code THROUGH THE CONSOLE (unified table, one minter).
+    const crd = await api('POST', '/v1/console/codes', { bearer: O.admin.session, body: { role: 'coordinator' } });
+    assert(crd.status === 201 && crd.data.codes?.length === 1, `admin could not issue a coordinator code: ${crd.status} ${JSON.stringify(crd.data)}`);
+    const coord = await enrollWith(crd.data.codes[0]);
+    assert(coord.red.status === 200, `coordinator redeem failed: ${coord.red.status} ${JSON.stringify(coord.red.data)}`);
+
+    const me = await api('GET', '/v1/console/me', { bearer: coord.acc.session });
+    assert(me.data.level === 'coordinator' && me.data.levelLabel === 'COORD', `level not coordinator: ${JSON.stringify(me.data)}`);
+    assert(JSON.stringify(me.data.may.issueRoles) === JSON.stringify(['survivor']), `coordinator offered the wrong roles: ${JSON.stringify(me.data.may.issueRoles)}`);
+
+    // A coordinator cannot mint a coordinator code — refused server-side, not hidden.
+    const escalate = await api('POST', '/v1/console/codes', { bearer: coord.acc.session, body: { role: 'coordinator' } });
+    assert(escalate.status === 403 && escalate.data.error === 'role_forbidden', `coordinator escalated to staff codes: ${escalate.status} ${JSON.stringify(escalate.data)}`);
+    // …nor an admin code, which no level may mint through the enrollment table.
+    const toAdmin = await api('POST', '/v1/console/codes', { bearer: coord.acc.session, body: { role: 'admin' } });
+    assert(toAdmin.status === 403, `coordinator minted an admin enrollment code: ${toAdmin.status}`);
+    // …nor reach seat management at all.
+    const seats = await api('GET', '/v1/console/seats', { bearer: coord.acc.session });
+    assert(seats.status === 403, `coordinator reached seats: ${seats.status}`);
+
+    // Their own survivor code appears; the admin's coordinator code does NOT.
+    const mine = await api('POST', '/v1/console/codes', { bearer: coord.acc.session, body: { role: 'survivor' } });
+    assert(mine.status === 201, `coordinator could not issue a survivor code: ${mine.status} ${JSON.stringify(mine.data)}`);
+    const list = await api('GET', '/v1/console/codes', { bearer: coord.acc.session });
+    assert(list.data.scope === 'own', `coordinator scope not 'own': ${JSON.stringify(list.data.scope)}`);
+    const codes = list.data.codes.map((c) => c.code);
+    assert(codes.includes(mine.data.codes[0]), 'coordinator cannot see the code they issued');
+    assert(!codes.includes(crd.data.codes[0]), 'coordinator sees a code issued by someone else');
+    // The admin, by contrast, sees BOTH — org scope is wider than own scope, by design.
+    const adminList = await api('GET', '/v1/console/codes', { bearer: O.admin.session });
+    assert(adminList.data.scope === 'org', `admin scope not 'org': ${JSON.stringify(adminList.data.scope)}`);
+    const adminCodes = adminList.data.codes.map((c) => c.code);
+    assert(adminCodes.includes(mine.data.codes[0]) && adminCodes.includes(crd.data.codes[0]), 'admin cannot see every code under their own org');
+  });
+
+  await check('74. console: cross-org is refused ADVERSARIALLY — org A cannot reach org B by any route', async () => {
+    const A = await bootstrapOrgWithTwoAdmins(`Console Org A ${uniq()}`, 'zero_fee', 5);
+    const B = await bootstrapOrgWithTwoAdmins(`Console Org B ${uniq()}`, 'zero_fee', 5);
+    // B issues a code and enrols someone, so there IS something in B worth reaching.
+    const bCode = await api('POST', '/v1/console/codes', { bearer: B.admin.session, body: { role: 'survivor' } });
+    assert(bCode.status === 201, `org B could not issue: ${bCode.status}`);
+    const bSurvivor = await enrollWith(bCode.data.codes[0]);
+    assert(bSurvivor.red.status === 200, `org B enrolment failed: ${JSON.stringify(bSurvivor.red.data)}`);
+
+    // 1. A's code list never contains B's code, whatever A does.
+    const aCodes = await api('GET', '/v1/console/codes', { bearer: A.admin.session });
+    assert(!aCodes.data.codes.some((c) => c.code === bCode.data.codes[0]), 'org A can see org B’s code');
+    assert(aCodes.data.codes.every((c) => c.orgId == null || c.orgId === A.orgId), 'org A’s code list leaked another org');
+
+    // 2. A cannot REVOKE B's code — out of scope is indistinguishable from non-existent.
+    const revoke = await api('POST', `/v1/console/codes/${bCode.data.codes[0]}/revoke`, { bearer: A.admin.session, body: {} });
+    assert(revoke.status === 404 && revoke.data.error === 'code_not_found', `org A revoked into org B: ${revoke.status} ${JSON.stringify(revoke.data)}`);
+    // …and the code is still live, which is what makes that a refusal rather than a lie.
+    const stillLive = await api('GET', '/v1/console/codes', { bearer: B.admin.session });
+    const bRow = stillLive.data.codes.find((c) => c.code === bCode.data.codes[0]);
+    assert(bRow && bRow.status === 'active', `org A actually revoked org B’s code: ${JSON.stringify(bRow)}`);
+
+    // 3. A cannot remove a seat in B, nor change a role in B.
+    const rm = await api('POST', `/v1/console/seats/${B.admin.userId}/remove`, { bearer: A.admin.session, body: {} });
+    assert(rm.status === 404, `org A removed a seat in org B: ${rm.status}`);
+    const role = await api('POST', `/v1/console/seats/${bSurvivor.acc.userId}/role`, { bearer: A.admin.session, body: { role: 'admin' } });
+    assert(role.status === 404, `org A changed a role in org B: ${role.status}`);
+
+    // 4. A's roster is A's only — B's enrolment never appears.
+    const roster = await api('GET', '/v1/console/roster', { bearer: A.admin.session });
+    assert(roster.status === 200, `roster refused: ${roster.status}`);
+    assert(!roster.data.roster.some((r) => r.code === bCode.data.codes[0]), 'org A’s roster contains an org B enrolment');
+
+    // 5. A cannot name B's org id anywhere — the operator route that takes one is closed to A.
+    const byId = await api('GET', `/v1/console/orgs/${B.orgId}/admin-codes`, { bearer: A.admin.session });
+    assert(byId.status === 403, `org A read org B’s admin codes: ${byId.status} ${JSON.stringify(byId.data)}`);
+    const issueInto = await api('POST', '/v1/console/codes', { bearer: A.admin.session, body: { role: 'survivor', orgId: B.orgId } });
+    assert(issueInto.status === 201, `issuing with a foreign orgId errored instead of ignoring it: ${issueInto.status}`);
+    assert(issueInto.data.orgId === A.orgId, `a client-supplied orgId reached the insert: ${JSON.stringify(issueInto.data)}`);
+  });
+
+  await check('75. console: NO level reads incident content — the capture endpoints refuse every console session', async () => {
+    const O = await bootstrapOrgWithTwoAdmins(`Console Content ${uniq()}`, 'zero_fee', 5);
+    const code = await api('POST', '/v1/console/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
+    const survivor = await enrollWith(code.data.codes[0]);
+    await addEmail(survivor.acc.session, 'primary', 'P');
+    const ev = await trigger(survivor.acc.session, 'console-content');
+    assert(ev.eventId, 'could not open an event to attempt reading');
+
+    const unmarked = await signup();
+    const sessions = [
+      ['admin', O.admin.session],
+      ['unmarked', unmarked.session],
+      ['the survivor’s own org admin', O.admin2.session],
+    ];
+    // The capture bytes live behind a per-event coordinator magic token, never behind an
+    // account session — so no console level, at any scope, can reach them.
+    for (const [who, session] of sessions) {
+      for (const path of [`/v1/c/${ev.eventId}/audio/latest`, `/v1/c/${ev.eventId}/audio/full`, `/v1/c/${ev.eventId}/audio/0`]) {
+        const res = await api('GET', path, { bearer: session });
+        assert(res.status === 401, `${who} read capture bytes at ${path}: ${res.status}`);
+      }
+    }
+    // And the console itself has no content route at all — not a 403, an absence.
+    for (const [who, session] of sessions) {
+      const res = await api('GET', '/v1/console/incidents/content', { bearer: session });
+      assert(res.status === 404, `a console content route exists for ${who}: ${res.status}`);
+    }
+  });
+
+  await check('76. console: code issue + revoke run on the unified table, atomically', async () => {
+    const O = await bootstrapOrgWithTwoAdmins(`Console Codes ${uniq()}`, 'zero_fee', 5);
+    const issued = await api('POST', '/v1/console/codes', { bearer: O.admin.session, body: { role: 'survivor', count: 3 } });
+    assert(issued.status === 201 && issued.data.codes.length === 3, `bulk issue failed: ${issued.status} ${JSON.stringify(issued.data)}`);
+    const [live, toRevoke, toRace] = issued.data.codes;
+
+    // A console-issued code is a REAL enrollment code: it redeems through the same path.
+    const enrolled = await enrollWith(live);
+    assert(enrolled.red.status === 200, `console-issued code did not redeem: ${JSON.stringify(enrolled.red.data)}`);
+
+    // Revoke is immediate and final — the code can never be redeemed afterwards.
+    const rev = await api('POST', `/v1/console/codes/${toRevoke}/revoke`, { bearer: O.admin.session, body: {} });
+    assert(rev.status === 200 && rev.data.revoked === true, `revoke failed: ${rev.status}`);
+    const dead = await enrollWith(toRevoke);
+    assert(dead.red.status !== 200, `a revoked code still redeemed: ${JSON.stringify(dead.red.data)}`);
+
+    // Atomicity: two accounts racing the LAST use of a single-use code — exactly one wins.
+    const racerA = await signup();
+    const racerB = await signup();
+    await makeUnactivated(racerA);
+    await makeUnactivated(racerB);
+    const [ra, rb] = await Promise.all([
+      api('POST', '/v1/me/org/redeem', { bearer: racerA.session, body: { code: toRace } }),
+      api('POST', '/v1/me/org/redeem', { bearer: racerB.session, body: { code: toRace } }),
+    ]);
+    const winners = [ra, rb].filter((r) => r.status === 200).length;
+    assert(winners === 1, `a single-use code was claimed ${winners} times: ${ra.status}/${rb.status}`);
+
+    // The list reports honest derived status for each outcome.
+    const list = await api('GET', '/v1/console/codes', { bearer: O.admin.session });
+    const byCode = Object.fromEntries(list.data.codes.map((c) => [c.code, c.status]));
+    assert(byCode[toRevoke] === 'revoked', `revoked code reads as ${byCode[toRevoke]}`);
+    assert(byCode[live] === 'exhausted', `redeemed single-use code reads as ${byCode[live]}`);
+  });
+
+  await check('77. console: min-2-admins holds for BOTH removal and demotion; removal revokes access at once', async () => {
+    const O = await bootstrapOrgWithTwoAdmins(`Console Seats ${uniq()}`, 'zero_fee', 5);
+    const seats = await api('GET', '/v1/console/seats', { bearer: O.admin.session });
+    assert(seats.data.adminCount === 2, `expected 2 admins, got ${seats.data.adminCount}`);
+    assert(seats.data.seats.every((s) => s.removable === false), 'a seat is marked removable while the org holds exactly two admins');
+
+    // Removal is refused at two admins…
+    const rm = await api('POST', `/v1/console/seats/${O.admin2.userId}/remove`, { bearer: O.admin.session, body: {} });
+    assert(rm.status === 409 && rm.data.error === 'min_admins', `second-to-last admin was removable: ${rm.status} ${JSON.stringify(rm.data)}`);
+    // …and so is DEMOTION, which drops the count identically. A rule enforced on one
+    // route and not its twin is not enforced.
+    const demote = await api('POST', `/v1/console/seats/${O.admin2.userId}/role`, { bearer: O.admin.session, body: { role: 'coordinator' } });
+    assert(demote.status === 409 && demote.data.error === 'min_admins', `an admin was demoted below the floor: ${demote.status} ${JSON.stringify(demote.data)}`);
+
+    // A coordinator seat is removable, and access ends on the very next request.
+    const crd = await api('POST', '/v1/console/codes', { bearer: O.admin.session, body: { role: 'coordinator' } });
+    const coord = await enrollWith(crd.data.codes[0]);
+    const before = await api('GET', '/v1/console/me', { bearer: coord.acc.session });
+    assert(before.data.level === 'coordinator', `coordinator not seated: ${JSON.stringify(before.data)}`);
+    const rmCoord = await api('POST', `/v1/console/seats/${coord.acc.userId}/remove`, { bearer: O.admin.session, body: {} });
+    assert(rmCoord.status === 200, `coordinator removal refused: ${rmCoord.status} ${JSON.stringify(rmCoord.data)}`);
+    const after = await api('GET', '/v1/console/me', { bearer: coord.acc.session });
+    assert(after.data.level === 'unmarked', `removed seat kept console access: ${JSON.stringify(after.data)}`);
+    const codesAfter = await api('GET', '/v1/console/codes', { bearer: coord.acc.session });
+    assert(codesAfter.status === 403, `removed seat still reads codes: ${codesAfter.status}`);
+  });
+
+  await check('78. console: the roster is READINESS ONLY — no name, number, location or content, ever', async () => {
+    const O = await bootstrapOrgWithTwoAdmins(`Console Roster ${uniq()}`, 'zero_fee', 5);
+    const code = await api('POST', '/v1/console/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
+    const survivor = await enrollWith(code.data.codes[0]);
+    assert(survivor.red.status === 200, `enrolment failed: ${JSON.stringify(survivor.red.data)}`);
+    // Give the account a real, identifiable contact — so if the roster leaked identity,
+    // there would be something recognisable to leak.
+    await addEmail(survivor.acc.session, 'primary', 'Recognisable Name');
+
+    const roster = await api('GET', '/v1/console/roster', { bearer: O.admin.session });
+    assert(roster.status === 200, `roster refused: ${roster.status}`);
+    const row = roster.data.roster.find((r) => r.code === code.data.codes[0]);
+    assert(row, `the enrolment is missing from the roster: ${JSON.stringify(roster.data.roster)}`);
+    // Exactly these fields, and no others. A new field is a decision, not an accident.
+    const keys = Object.keys(row).sort();
+    assert(JSON.stringify(keys) === JSON.stringify(['activations30d', 'code', 'confirmedContacts', 'redeemedAt', 'state']),
+      `roster row shape changed: ${JSON.stringify(keys)}`);
+    // Nothing identifying survives anywhere in the payload.
+    const raw = JSON.stringify(roster.data);
+    for (const leak of [survivor.acc.email, survivor.acc.userId, 'Recognisable Name']) {
+      assert(!raw.includes(leak), `the roster leaked "${leak}"`);
+    }
+    // Readiness is real, not decorative: an enrolled account with a contact but no
+    // entitlement is NOT armed, and the state says which.
+    assert(['armed', 'not_ready'].includes(row.state), `unexpected readiness state: ${row.state}`);
+    assert(typeof row.confirmedContacts === 'number', 'confirmed contact count missing');
+  });
+
+  await check('79. console: the level indicator is derived, and matches what the gate enforces', async () => {
+    // §1 — the label an account shows and the powers it holds come from ONE derivation.
+    const O = await bootstrapOrgWithTwoAdmins(`Console Levels ${uniq()}`, 'zero_fee', 5);
+    const crd = await api('POST', '/v1/console/codes', { bearer: O.admin.session, body: { role: 'coordinator' } });
+    const coord = await enrollWith(crd.data.codes[0]);
+    const plain = await signup();
+
+    const expected = [
+      [O.admin.session, 'ADMIN', 'admin'],
+      [coord.acc.session, 'COORD', 'coordinator'],
+      [plain.session, 'UNMARKED', 'unmarked'],
+    ];
+    for (const [session, label, level] of expected) {
+      const me = await api('GET', '/v1/console/me', { bearer: session });
+      assert(me.data.levelLabel === label && me.data.level === level, `level mismatch: expected ${label}, got ${JSON.stringify(me.data)}`);
+    }
+    // The admin's seat list labels its own members with the same vocabulary.
+    const seats = await api('GET', '/v1/console/seats', { bearer: O.admin.session });
+    assert(seats.data.seats.every((s) => ['ADMIN', 'COORD', 'DEV'].includes(s.level)), `seat levels wrong: ${JSON.stringify(seats.data.seats.map((s) => s.level))}`);
+  });
+
   // ---- cleanup ----
   await cleanup();
 
