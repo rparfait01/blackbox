@@ -47,7 +47,15 @@ import {
   markRedeemed,
   releaseOneUse,
   signupCodeMessage,
+  type SignupCodeClaim,
 } from '../lib/enrollment';
+import {
+  claimGumroadLicense,
+  licenseAlreadyRedeemed,
+  licenseMessage,
+  verifyGumroadLicense as verifyGumroadLicence,
+} from '../lib/gumroad-license';
+import { normalizeCode } from '../lib/readable-code';
 import { grantEntitlement } from '../lib/entitlement';
 import { consumeRecoveryCode, issueRecoveryCodes } from '../lib/recovery-code';
 import {
@@ -132,12 +140,40 @@ authRoutes.post('/signup/start', async (c) => {
   //
   // Failures say what is wrong (unrecognised / expired / cancelled / already used) rather
   // than a generic error, and never a silent 200. Same honest-status rule as the alert path.
-  const claimed = await claimSignupCode(c.env, body.code, Date.now());
-  if (!claimed.ok) {
+  //
+  // TWO KINDS OF CREDENTIAL, ONE FIELD. An INSTITUTIONAL code is one we minted, so it is
+  // already a row and is claimed with the shared conditional UPDATE. A CONSUMER credential
+  // is the buyer's GUMROAD LICENCE KEY — we mint nothing on sale, so the row does not
+  // exist until the first person redeems it, and the claim is the INSERT (code is the
+  // PRIMARY KEY, so two racers cannot both land).
+  const now = Date.now();
+  let claim: SignupCodeClaim;
+  const claimed = await claimSignupCode(c.env, body.code, now);
+  if (claimed.ok) {
+    claim = claimed.claim;
+  } else if (claimed.reason !== 'not_found') {
+    // Known to us and refusable on its own terms (missing / revoked / expired / used).
     const status = claimed.reason === 'code_required' ? 400 : 403;
     return c.json({ error: claimed.reason, message: signupCodeMessage(claimed.reason) }, status);
+  } else {
+    // Not one of ours — try it as a Gumroad licence key.
+    const raw = (body.code ?? '').trim();
+    if (await licenseAlreadyRedeemed(c.env, raw)) {
+      return c.json({ error: 'already_redeemed', message: licenseMessage('already_redeemed') }, 403);
+    }
+    const verdict = await verifyGumroadLicence(c.env, raw);
+    if (!verdict.ok) {
+      // 'verify_unavailable' is OUR outage, not the buyer's fault — 503 so it reads as
+      // "try again", and so it is distinguishable in logs from a bad key.
+      const status = verdict.reason === 'verify_unavailable' || verdict.reason === 'not_configured' ? 503 : 403;
+      return c.json({ error: verdict.reason, message: licenseMessage(verdict.reason!) }, status);
+    }
+    if (!(await claimGumroadLicense(c.env, raw, verdict.buyerEmail ?? null, now))) {
+      // Lost the race, or redeemed between the check above and here.
+      return c.json({ error: 'already_redeemed', message: licenseMessage('already_redeemed') }, 403);
+    }
+    claim = { storedCode: normalizeCode(raw), source: 'consumer', orgId: null, role: 'survivor' };
   }
-  const claim = claimed.claim;
   // PASSWORDLESS (§1): no password is required or requested. The field is accepted
   // only so an older client build mid-rollout still signs up successfully; new
   // accounts are created with passwordHash NULL and authenticate by passkey. A

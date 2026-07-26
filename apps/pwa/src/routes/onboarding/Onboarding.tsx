@@ -341,15 +341,15 @@ export function Onboarding(): JSX.Element {
               label="Access code"
               value={accessCode}
               onChange={(e) => setAccessCode(e.target.value)}
-              placeholder="XXXX-XXXX-XX"
+              placeholder="Licence key or access code"
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}
               inputMode="text"
             />
             <p className="mt-1 font-sans text-[12px] leading-relaxed text-med-text/45">
-              From your purchase email, or from the organisation that referred you. Upper or
-              lower case and the dashes don’t matter.
+              Your licence key from the purchase receipt, or the code the organisation that
+              referred you gave you. Upper or lower case and the dashes don’t matter.
             </p>
           </div>
           {/* §1: NO password field. There is nothing to remember and nothing to

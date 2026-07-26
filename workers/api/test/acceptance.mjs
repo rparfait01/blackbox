@@ -1568,21 +1568,20 @@ async function run() {
     assert(contacts.data.armReasons?.entitled === true, `entitled flag not set for arming: ${JSON.stringify(contacts.data.armReasons)}`);
   });
 
-  await check('75. §C Gumroad webhook is FAIL-CLOSED — no signature, no code', async () => {
-    const body = JSON.stringify({ sale_id: `acc-${uniq()}`, email: `smoke+buyer-${uniq()}@example.com` });
-    // Absent signature.
-    const bare = await api('POST', '/webhooks/gumroad/sale', { body: JSON.parse(body) });
-    assert(bare.status === 401, `unsigned sale was accepted: ${bare.status} ${JSON.stringify(bare.data)}`);
-    assert(!bare.data?.code, `an unsigned sale minted a code: ${JSON.stringify(bare.data)}`);
-    // Wrong signature.
-    const wrong = await fetch(ORIGIN + '/webhooks/gumroad/sale', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-activation-signature': 'deadbeef' },
-      body,
+  await check('75. §1 consumer path: an unrecognised licence key is refused honestly; no mint webhook exists', async () => {
+    // The buyer's Gumroad LICENCE KEY is the code — there is no webhook that mints one.
+    const gone = await api('POST', '/webhooks/gumroad/sale', { body: { sale_id: 'x' } });
+    assert(gone.status === 404, `the consumer-mint webhook still exists: ${gone.status}`);
+    // A key that is not ours and not a valid Gumroad licence is refused, and the refusal
+    // NAMES the problem rather than shrugging.
+    const bogus = await api('POST', '/v1/auth/signup/start', {
+      body: { name: 'BadKey', email: `smoke+badkey-${uniq()}@example.com`, regionId: 'jp', code: 'NOT-A-REAL-LICENCE-KEY' },
     });
-    assert(wrong.status === 401, `badly-signed sale was accepted: ${wrong.status}`);
-    const wd = await wrong.json().catch(() => ({}));
-    assert(!wd.code, `a badly-signed sale minted a code: ${JSON.stringify(wd)}`);
+    assert([403, 503].includes(bogus.status), `bogus licence not refused: ${bogus.status} ${JSON.stringify(bogus.data)}`);
+    assert(typeof bogus.data.message === 'string' && bogus.data.message.length > 15, `refusal is not honest: ${JSON.stringify(bogus.data)}`);
+    // ...and it created NO account.
+    const list = await api('GET', '/v1/me', { bearer: 'nope' });
+    assert(list.status === 401, 'sanity: unauthenticated /v1/me should be 401');
   });
 
   // ---- Brief 29: certified report (dormant until zero-knowledge custody is armed) ----

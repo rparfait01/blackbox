@@ -44,7 +44,6 @@ import { handleActivationWebhook } from './routes/activation';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
-import { gumroadRoutes } from './routes/gumroad';
 import { orgRoutes } from './routes/org';
 import { orgRegisterRoutes } from './routes/org-register';
 import { createOrg, recordLicense } from './lib/org';
@@ -475,10 +474,12 @@ app.post('/v1/events', async (c) => {
 app.route('/v1/auth', authRoutes);
 app.route('/v1/guardians', guardianRoutes);
 app.route('/v1/me', userRoutes);
-// Brief 30 §C — the consumer purchase callback. PUBLIC by necessity (Gumroad calls it
-// server-to-server) and authenticated ENTIRELY by its HMAC signature. Fail-closed: an
-// unverified callback never mints an access code.
-app.route('/webhooks/gumroad', gumroadRoutes);
+// Brief 34 §1 — there is NO consumer-mint webhook any more. The buyer's Gumroad LICENCE
+// KEY is the access code, verified server-to-server against Gumroad at signup. That
+// removed the unsigned-Ping problem (Gumroad's native Ping cannot be HMAC-verified, so a
+// fail-closed webhook rejected every real sale) and removed a delivery that could bounce,
+// be spam-filtered, or be suppressed — a buyer could pay and receive nothing. See
+// lib/gumroad-license.ts.
 // Brief 24 — org admin registration at its OWN base path (distinct from the
 // session-gated /v1/org portal group): the public read-only GET /v1/org-register/:code
 // is reachable without a session; the completion POST applies requireSession itself.
