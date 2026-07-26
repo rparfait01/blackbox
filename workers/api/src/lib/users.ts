@@ -217,18 +217,132 @@ export async function hasActiveEvent(env: Env, userId: string): Promise<boolean>
  * records are intentionally retained — they are append-only chain-of-custody, not
  * account data, and keyed independently.
  */
-export async function deleteAccount(env: Env, userId: string): Promise<void> {
+export interface DeleteAccountResult {
+  /** True when nothing was deleted — a preview of what WOULD go. */
+  dryRun: boolean;
+  events: number;
+  chunks: number;
+  /** R2 objects actually removed (0 on a dry run). */
+  r2Deleted: number;
+  contacts: number;
+  deleted: boolean;
+}
+
+/**
+ * Delete an account and EVERYTHING it owns (Brief 33 §4).
+ *
+ * ROOT CAUSE THIS FIXES: the previous implementation deleted contacts, endpoints,
+ * guardian invites and the user row — and nothing else. It left the account's EVENTS
+ * behind, and with them every chunks_index row and every R2 capture object. That is
+ * precisely how ~10,700 orphaned recordings accumulated: a survivor "deleted their
+ * account" and their audio stayed in storage indefinitely, unreachable and unattributable.
+ * Deleting the index without first deleting the bytes also makes the orphans permanently
+ * un-enumerable, because the index is the only thing that names them.
+ *
+ * SO THE ORDER IS LOAD-BEARING: read the R2 keys from chunks_index FIRST, delete the R2
+ * objects, and only then delete the rows. Reversing it strands the audio forever — which
+ * is exactly what happened before.
+ *
+ * DRY-RUN BY DEFAULT. `confirm` must be explicitly true. A malformed or empty request
+ * previews and deletes nothing — an account deletion is irreversible and must never be
+ * triggered by a mistake.
+ */
+export async function deleteAccount(
+  env: Env,
+  userId: string,
+  opts: { confirm?: boolean } = {},
+): Promise<DeleteAccountResult> {
+  const empty: DeleteAccountResult = {
+    dryRun: opts.confirm !== true,
+    events: 0,
+    chunks: 0,
+    r2Deleted: 0,
+    contacts: 0,
+    deleted: false,
+  };
   if (!userId) {
-    return;
+    return empty;
   }
+
+  // Enumerate BEFORE deleting anything — this is the only moment the account's R2
+  // objects can still be named.
+  const { results: eventRows } = await env.DB.prepare('SELECT id FROM events WHERE userId = ?')
+    .bind(userId)
+    .all<{ id: string }>();
+  const eventIds = (eventRows ?? []).map((r) => r.id);
+
+  const { results: chunkRows } = await env.DB.prepare(
+    'SELECT r2Key FROM chunks_index WHERE eventId IN (SELECT id FROM events WHERE userId = ?)',
+  )
+    .bind(userId)
+    .all<{ r2Key: string }>();
+  const r2Keys = (chunkRows ?? []).map((r) => r.r2Key);
+
+  const { results: contactRows } = await env.DB.prepare('SELECT id FROM contacts WHERE userId = ?')
+    .bind(userId)
+    .all<{ id: string }>();
+
+  const preview: DeleteAccountResult = {
+    dryRun: opts.confirm !== true,
+    events: eventIds.length,
+    chunks: r2Keys.length,
+    r2Deleted: 0,
+    contacts: (contactRows ?? []).length,
+    deleted: false,
+  };
+  if (opts.confirm !== true) {
+    return preview;
+  }
+
+  // 1. The BYTES first. R2 accepts up to 1000 keys per bulk delete.
+  let r2Deleted = 0;
+  if (env.MEDIA && r2Keys.length > 0) {
+    for (let i = 0; i < r2Keys.length; i += 1000) {
+      const batch = r2Keys.slice(i, i + 1000);
+      await env.MEDIA.delete(batch);
+      r2Deleted += batch.length;
+    }
+  }
+
+  // 2. Then every row keyed to those events, then the events, then the account. Scoped
+  //    by subquery so an account with zero events deletes nothing extra.
+  const byEvent = (table: string) =>
+    env.DB.prepare(
+      `DELETE FROM ${table} WHERE eventId IN (SELECT id FROM events WHERE userId = ?)`,
+    ).bind(userId);
+
   await env.DB.batch([
+    byEvent('chunks_index'),
+    byEvent('locations_index'),
+    byEvent('transcripts_index'),
+    byEvent('classifications_index'),
+    byEvent('closure_reports'),
+    byEvent('event_origin'),
+    byEvent('integrity_records'),
+    byEvent('integrity_heads'),
+    byEvent('delivery_records'),
+    byEvent('wrapped_keys'),
+    byEvent('plaintext_commitments'),
+    byEvent('custody_transfers'),
+    byEvent('vault_objects'),
+    byEvent('investigations'),
+    byEvent('audit_log'),
+    env.DB.prepare('DELETE FROM events WHERE userId = ?').bind(userId),
     env.DB.prepare(
       'DELETE FROM contact_endpoints WHERE contactId IN (SELECT id FROM contacts WHERE userId = ?)',
     ).bind(userId),
     env.DB.prepare('DELETE FROM contacts WHERE userId = ?').bind(userId),
     env.DB.prepare('DELETE FROM guardian_invites WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM webauthn_credentials WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM recovery_codes WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM account_magic_links WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM checkins WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM case_files WHERE userId = ?').bind(userId),
+    env.DB.prepare('DELETE FROM org_members WHERE userId = ?').bind(userId),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId),
   ]);
+
+  return { ...preview, dryRun: false, r2Deleted, deleted: true };
 }
 
 /** Claim pre-existing pilot rows (keyed by userHash) into the new user account. */

@@ -687,8 +687,17 @@ userRoutes.delete('/account', async (c) => {
   if (await lockedDuringAlert(c)) {
     return c.json({ error: 'locked_during_active_alert' }, 423);
   }
-  await deleteAccount(c.env, c.get('userId'));
-  return c.json({ ok: true }, 200);
+  // The user asked for this explicitly, so confirm is set here — without it the call
+  // would preview and delete NOTHING, turning "delete my account" into a silent no-op.
+  const result = await deleteAccount(c.env, c.get('userId'), { confirm: true });
+  // Audited who/what/when. The row is written BEFORE the account row disappears.
+  await audit(c.env, null, 'account.deleted', c.get('userId'), {
+    events: result.events,
+    chunks: result.chunks,
+    r2Deleted: result.r2Deleted,
+    via: 'self_service',
+  });
+  return c.json({ ok: true, ...result }, 200);
 });
 
 // Check-in ("I'm OK") — Brief 10. NON-emergency: no event, no capture. NOT
