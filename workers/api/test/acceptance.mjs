@@ -287,15 +287,24 @@ async function run() {
       fired = await adminFires(ev.eventId);
     }
     assert(fired.length === 5, `expected 5 cascade_fired, got ${fired.length}`);
-    // The DURABLE OBJECT ALARM is the feature under test (Brief 17). The 1-minute
-    // cron backstop will eventually advance any step the alarm missed — which keeps
-    // the survivor covered, and is exactly why a count-and-timing check alone can be
-    // fooled. A cron-rescued step means the alarm ran late: name it and FAIL, rather
-    // than averaging it away.
-    const rescued = fired.map((f, i) => ({ i, via: f.via })).filter((f) => f.via !== 'alarm');
+    // WHICH driver fired each step. Two drivers are healthy and both are real-time:
+    //   stagger — the in-request waitUntil chain, which covers T+0..T+30;
+    //   alarm   — the Durable Object, which exists precisely because waitUntil is
+    //             reclaimed ~35s and so cannot reach the T+40 emergency step.
+    // A healthy run therefore reads stagger,stagger,stagger,stagger,alarm — NOT all
+    // alarm; the two race and advanceStep atomically claims the winner.
+    //
+    // The signal is the 1-minute CRON backstop. If it fired a step, both real-time
+    // drivers missed their window and the survivor's step landed up to 60s late. The
+    // capture still went out, so it is not a survivor-facing failure — but it is a
+    // genuine degradation and it is named and FAILED here, never averaged away.
+    const HEALTHY = ['alarm', 'stagger'];
+    const late = fired.map((f, i) => ({ i, via: f.via })).filter((f) => !HEALTHY.includes(f.via));
     assert(
-      rescued.length === 0,
-      `cascade step(s) not fired by the DO alarm: ${rescued.map((r) => `step ${r.i} via ${r.via ?? 'unknown'}`).join(', ')}`,
+      late.length === 0,
+      `cascade step(s) not fired by a real-time driver: ${late
+        .map((r) => `step ${r.i} via ${r.via ?? 'unknown'}`)
+        .join(', ')} (drivers: ${fired.map((f) => f.via ?? 'unknown').join(',')})`,
     );
     const targets = [0, 10, 20, 30, 40];
     for (let i = 0; i < 5; i += 1) {
@@ -1372,7 +1381,12 @@ async function run() {
     const O = await bootstrapOrgWithTwoAdmins('Org-N-' + uniq(), 'zero_fee', 3);
     const c = await api('POST', '/v1/org/codes', { bearer: O.admin.session, body: { role: 'survivor' } });
     const code = c.data.code;
-    assert(typeof code === 'string' && !/[ILOU01]/.test(code), `issued code is not the readable alphabet: ${code}`);
+    // The generator's alphabet is Crockford base32 minus I/L/O/U — the confusable
+    // LETTERS are dropped and the digits 0 and 1 are KEPT (readable-code.ts). This
+    // assertion previously also banned 0 and 1, so it failed whenever a random code
+    // happened to contain one: a ~48% coin-flip on a 10-char code, and nothing to do
+    // with the diff under test. Assert the alphabet the generator actually defines.
+    assert(typeof code === 'string' && !/[ILOU]/.test(code), `issued code is not the readable alphabet: ${code}`);
     // A survivor types it lower-case, dash-grouped → still redeems (normalization).
     const messy = code.toLowerCase().replace(/(.{4})/g, '$1-').replace(/-$/, '');
     const surv = await signup();
