@@ -103,6 +103,16 @@ export function Onboarding(): JSX.Element {
   const [nationality, setNationality] = useState('');
   const [signupId, setSignupId] = useState('');
   const [emailExists, setEmailExists] = useState(false);
+  // Brief 30 §C — the access code that opens the front door. Pre-filled from ?code= so
+  // the Gumroad success redirect lands the buyer on a form they only have to confirm;
+  // they never have to copy a code out of an email that may not have arrived yet.
+  const [accessCode, setAccessCode] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('code')?.trim() ?? '';
+    } catch {
+      return '';
+    }
+  });
 
   // support person captured at signup (Brief: persists to the SAME slots model
   // Settings + the cascade use — primary contact or guardian).
@@ -148,14 +158,25 @@ export function Onboarding(): JSX.Element {
       setError('That email does not look right — please check it.');
       return;
     }
+    if (!accessCode.trim()) {
+      setError('An access code is required to create an account.');
+      return;
+    }
     setBusy(true);
     // Brief 14: create the account immediately. No email is sent and no email
     // delivery can fail here — we go straight on to display mode.
     // §1: no password is sent. The account is created with passwordHash NULL and
     // authenticates by passkey (enrolled at step 7).
-    const res = await api<{ signupId: string }>('/v1/auth/signup/start', {
+    const res = await api<{ signupId?: string; error?: string; message?: string }>('/v1/auth/signup/start', {
       auth: false,
-      body: { name: name.trim(), email: email.trim(), phone: phoneE164(), regionId, nationality },
+      body: {
+        name: name.trim(),
+        email: email.trim(),
+        phone: phoneE164(),
+        regionId,
+        nationality,
+        code: accessCode.trim(),
+      },
     });
     setBusy(false);
     if (res.ok && res.data?.signupId) {
@@ -165,6 +186,11 @@ export function Onboarding(): JSX.Element {
       setEmailExists(true);
     } else if (res.status === 0) {
       setError('No connection — we couldn’t create your account. Check your signal and try again.');
+    } else if (res.data?.message) {
+      // The server names exactly what is wrong with the code (missing / not recognised /
+      // expired / cancelled / already used). Show THAT, never a generic shrug — a buyer
+      // who mistypes one character must be told so, not left guessing.
+      setError(res.data.message);
     } else {
       setError('Something went wrong creating your account. Please try again.');
     }
@@ -308,6 +334,24 @@ export function Onboarding(): JSX.Element {
         <div className="space-y-5">
           <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name or alias" />
           <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" />
+          {/* Brief 30 §C — the access code. Case and separators are normalized server-side
+              (Brief 28 §4), so a buyer may type it however they read it. */}
+          <div>
+            <Field
+              label="Access code"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+              placeholder="XXXX-XXXX-XX"
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              inputMode="text"
+            />
+            <p className="mt-1 font-sans text-[12px] leading-relaxed text-med-text/45">
+              From your purchase email, or from the organisation that referred you. Upper or
+              lower case and the dashes don’t matter.
+            </p>
+          </div>
           {/* §1: NO password field. There is nothing to remember and nothing to
               write down — so there is no credential an abuser can find. */}
           <div className="flex gap-3">
