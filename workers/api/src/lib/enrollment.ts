@@ -180,6 +180,73 @@ export async function bindAccountToOrg(
 }
 
 /**
+ * THE SIGNUP GATE's claim (Brief 30 §C).
+ *
+ * Claims one use of a code so an account may be created. Deliberately does NOT bind to an
+ * org or grant entitlement — the caller sequences those AFTER the account exists, and
+ * releases the claim if account creation fails, so a buyer's paid code is never burned by
+ * a failed signup.
+ *
+ * Uses the SAME conditional-UPDATE primitive as org redemption (consumeOneUse), so there
+ * is exactly one definition of "already used" in the system. Two requests racing the last
+ * use of a code cannot both win: SQLite applies the UPDATEs serially, the first moves
+ * usedCount to maxUses, and the second matches zero rows.
+ */
+export type SignupCodeFailure = 'code_required' | RedeemFailure;
+
+export interface SignupCodeClaim {
+  /** The RESOLVED stored code — always use this for follow-up writes, never raw input,
+   *  which may differ in case/dashes (Brief 28 §4 normalization). */
+  storedCode: string;
+  source: 'consumer' | 'institutional';
+  orgId: string | null;
+  role: 'survivor' | 'coordinator' | 'admin';
+}
+
+export async function claimSignupCode(
+  env: Env,
+  rawCode: string | undefined | null,
+  now: number,
+): Promise<{ ok: true; claim: SignupCodeClaim } | { ok: false; reason: SignupCodeFailure }> {
+  const input = (rawCode ?? '').trim();
+  if (!input) {
+    return { ok: false, reason: 'code_required' };
+  }
+  const row = await loadCode(env, input);
+  const verdict = codeRedeemable(row, now);
+  if (!verdict.ok) {
+    return { ok: false, reason: verdict.reason };
+  }
+  if (!(await consumeOneUse(env, row!.code, now))) {
+    // Lost the race for the last use — indistinguishable from exhausted, and honest.
+    return { ok: false, reason: 'exhausted' };
+  }
+  return {
+    ok: true,
+    claim: { storedCode: row!.code, source: row!.source, orgId: row!.orgId, role: row!.role },
+  };
+}
+
+/** Reader-facing reason a signup code was refused. Says WHAT IS WRONG — never a generic
+ *  error, never a silent success. Same honest-status rule as the alert path. */
+export function signupCodeMessage(reason: SignupCodeFailure): string {
+  switch (reason) {
+    case 'code_required':
+      return 'An access code is required to create an account.';
+    case 'not_found':
+      return 'That access code was not recognised. Check it and try again.';
+    case 'revoked':
+      return 'That access code has been cancelled. Contact whoever issued it.';
+    case 'expired':
+      return 'That access code has expired. Contact whoever issued it for a new one.';
+    case 'exhausted':
+      return 'That access code has already been used.';
+    default:
+      return 'That access code cannot be used.';
+  }
+}
+
+/**
  * THE atomic consume — the ONE statement that claims a use of a code. Both redemption
  * paths (org enrollment and the signup gate) call this; there is deliberately no second
  * implementation, because two of these could disagree about what "already used" means.

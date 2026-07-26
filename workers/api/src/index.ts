@@ -28,6 +28,7 @@ import { getContactForEvent, listCascadeContacts, listContacts, listFollows, ups
 import { hasDeliverableRecipient } from './lib/roles';
 import { advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
 import { purgeOrphanedMedia } from './lib/media-purge';
+import { createEnrollmentCode } from './lib/org';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -43,6 +44,7 @@ import { handleActivationWebhook } from './routes/activation';
 import { authRoutes } from './routes/auth';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
+import { gumroadRoutes } from './routes/gumroad';
 import { orgRoutes } from './routes/org';
 import { orgRegisterRoutes } from './routes/org-register';
 import { createOrg, recordLicense } from './lib/org';
@@ -473,6 +475,10 @@ app.post('/v1/events', async (c) => {
 app.route('/v1/auth', authRoutes);
 app.route('/v1/guardians', guardianRoutes);
 app.route('/v1/me', userRoutes);
+// Brief 30 §C — the consumer purchase callback. PUBLIC by necessity (Gumroad calls it
+// server-to-server) and authenticated ENTIRELY by its HMAC signature. Fail-closed: an
+// unverified callback never mints an access code.
+app.route('/webhooks/gumroad', gumroadRoutes);
 // Brief 24 — org admin registration at its OWN base path (distinct from the
 // session-gated /v1/org portal group): the public read-only GET /v1/org-register/:code
 // is reachable without a session; the completion POST applies requireSession itself.
@@ -704,6 +710,46 @@ app.post('/v1/admin/investigations/:id/resolve', async (c) => {
 });
 
 // --- Operator failsafe (Bearer ADMIN_TOKEN): list + force-close orphaned active
+// --- Code issuance (Bearer ADMIN_TOKEN) — Brief 30 §C, the INSTITUTIONAL path.
+//
+// This is the DV-shelter route: an operator mints codes and hands them to an organisation
+// (or, with source=consumer, replaces a buyer's lost code). It touches NO payment provider
+// and shares no code path with the Gumroad webhook — the only thing the two have in common
+// is the ONE generator, which is the point of the unified model (§B).
+app.post('/v1/admin/codes/issue', async (c) => {
+  const body = await c.req
+    .json<{ count?: number; orgId?: string; org_id?: string; role?: string; source?: string; maxUses?: number; expiresAt?: number }>()
+    .catch(() => ({}) as Record<string, never>);
+  const count = Math.max(1, Math.min(Number(body.count ?? 1) || 1, 500));
+  const orgId = (body.orgId ?? body.org_id ?? '').trim() || null;
+  const source = body.source === 'consumer' ? 'consumer' : orgId ? 'institutional' : 'consumer';
+  const role =
+    body.role === 'coordinator' || body.role === 'admin' ? body.role : 'survivor';
+
+  // The model's invariant, surfaced as a clear 400 rather than a DB CHECK failure.
+  if (source === 'institutional' && !orgId) {
+    return c.json({ error: 'orgId_required_for_institutional' }, 400);
+  }
+  if (source === 'consumer' && orgId) {
+    return c.json({ error: 'consumer_codes_carry_no_org' }, 400);
+  }
+
+  const codes: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const row = await createEnrollmentCode(c.env, {
+      orgId: source === 'institutional' ? orgId : null,
+      source,
+      role,
+      maxUses: typeof body.maxUses === 'number' && body.maxUses > 0 ? body.maxUses : 1,
+      expiresAt: typeof body.expiresAt === 'number' ? body.expiresAt : null,
+      createdBy: 'operator',
+    });
+    codes.push(row.code);
+  }
+  await audit(c.env, null, 'admin.codes_issued', null, { count: codes.length, source, orgId, role });
+  return c.json({ ok: true, source, orgId, role, codes }, 201);
+});
+
 // --- Orphaned-capture purge (Bearer ADMIN_TOKEN). Clears R2 residue by IDENTITY, not
 // by a lifecycle rule. A lifecycle rule CANNOT express "never delete a new capture" —
 // --expire-date kills them at once, --expire-days N kills them N days later, and prefix

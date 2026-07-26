@@ -41,6 +41,14 @@ import {
   verifyRegistration,
 } from '../lib/passkey';
 import { createMagicLink, consumeMagicLink } from '../lib/account-magic-link';
+import {
+  bindAccountToOrg,
+  claimSignupCode,
+  markRedeemed,
+  releaseOneUse,
+  signupCodeMessage,
+} from '../lib/enrollment';
+import { grantEntitlement } from '../lib/entitlement';
 import { consumeRecoveryCode, issueRecoveryCodes } from '../lib/recovery-code';
 import {
   claimByUserHash,
@@ -107,11 +115,29 @@ authRoutes.post('/signup/start', async (c) => {
       password?: string;
       regionId?: string;
       nationality?: string;
+      code?: string;
     }>()
     .catch(() => ({}) as Record<string, string>);
   if (!body.name || !body.email) {
     return c.json({ error: 'name and email are required' }, 400);
   }
+
+  // THE SIGNUP GATE (Brief 30 §C). An account cannot be created without a valid,
+  // unredeemed access code — consumer (bought) or institutional (issued by a shelter).
+  //
+  // ATOMIC BY CONSTRUCTION: claimSignupCode consumes the use with the same conditional
+  // UPDATE the org path uses, so two requests racing the last use cannot both win. The
+  // claim happens BEFORE the account is created and is RELEASED below if creation fails —
+  // a buyer's paid code is never burned by a signup that did not produce an account.
+  //
+  // Failures say what is wrong (unrecognised / expired / cancelled / already used) rather
+  // than a generic error, and never a silent 200. Same honest-status rule as the alert path.
+  const claimed = await claimSignupCode(c.env, body.code, Date.now());
+  if (!claimed.ok) {
+    const status = claimed.reason === 'code_required' ? 400 : 403;
+    return c.json({ error: claimed.reason, message: signupCodeMessage(claimed.reason) }, status);
+  }
+  const claim = claimed.claim;
   // PASSWORDLESS (§1): no password is required or requested. The field is accepted
   // only so an older client build mid-rollout still signs up successfully; new
   // accounts are created with passwordHash NULL and authenticate by passkey. A
@@ -126,7 +152,38 @@ authRoutes.post('/signup/start', async (c) => {
     passwordHash: isPassword(body.password) ? await hashSecret(body.password) : null,
   });
   if (!result.ok || !result.userId) {
+    // The account was NOT created, so the code was not actually used. Give it back.
+    await releaseOneUse(c.env, claim.storedCode);
     return c.json({ error: result.reason ?? 'signup_failed' }, 409);
+  }
+
+  // The code is now genuinely spent — record BY WHOM, for support and refunds.
+  await markRedeemed(c.env, claim.storedCode, result.userId, Date.now());
+
+  // ENTITLEMENT (Brief 28). A redeemed code means the account can ARM, not merely exist —
+  // otherwise a buyer completes a purchase and lands signed-up-but-unarmable, which is a
+  // protection loss dressed as a paywall. Consumer bought it; institutional was issued.
+  await grantEntitlement(
+    c.env,
+    result.userId,
+    claim.source === 'consumer' ? 'purchase_web' : 'org_code',
+  );
+
+  // An institutional code also enrolls into its org. FAIL-OPEN: if the bind is refused
+  // (seats full, say) the account still exists and is still entitled — a full seat pool
+  // must never block someone from creating an account. They can enrol later.
+  if (claim.source === 'institutional' && claim.orgId) {
+    const bound = await bindAccountToOrg(c.env, {
+      userId: result.userId,
+      orgId: claim.orgId,
+      role: claim.role,
+    });
+    if (!bound.ok) {
+      await audit(c.env, null, 'signup.org_bind_deferred', result.userId, {
+        orgId: claim.orgId,
+        reason: bound.reason,
+      });
+    }
   }
   return c.json({ signupId: result.userId }, 201);
 });

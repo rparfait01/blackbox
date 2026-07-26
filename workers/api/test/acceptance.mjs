@@ -82,9 +82,21 @@ async function signed(method, path, eventSecret, eventId, body) {
   return { status: res.status, data };
 }
 
+/** Brief 30 §C — signup is GATED on a code, so the suite mints one per account through
+ *  the operator issuance endpoint. Needs ADMIN; without it signup cannot be exercised at
+ *  all, which is itself the gate working. */
+async function issueSignupCode() {
+  if (!ADMIN) throw new Error('BBX_ADMIN_TOKEN required: signup is code-gated (Brief 30 §C)');
+  const r = await api('POST', '/v1/admin/codes/issue', { bearer: ADMIN, body: { count: 1, source: 'consumer' } });
+  const code = r.data?.codes?.[0];
+  if (!code) throw new Error('code issuance failed: ' + JSON.stringify(r.data));
+  return code;
+}
+
 async function signup(mode = 'direct', name = 'Acc') {
   const email = `smoke+acc-${uniq()}@example.com`;
-  const s1 = await api('POST', '/v1/auth/signup/start', { body: { name, email, password: PW, regionId: 'jp' } });
+  const code = await issueSignupCode();
+  const s1 = await api('POST', '/v1/auth/signup/start', { body: { name, email, password: PW, regionId: 'jp', code } });
   if (!s1.data?.signupId) throw new Error('signup/start failed: ' + JSON.stringify(s1.data));
   const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: mode } });
   if (!s2.data?.sessionToken) throw new Error('finalize failed: ' + JSON.stringify(s2.data));
@@ -678,7 +690,8 @@ async function run() {
     // A passwordless signup is the new normal path — no password field exists in
     // the app, so the server must not require one.
     const email = `smoke+acc-${uniq()}@example.com`;
-    const s1 = await api('POST', '/v1/auth/signup/start', { body: { name: 'Passwordless', email, regionId: 'jp' } });
+    const code = await issueSignupCode();
+    const s1 = await api('POST', '/v1/auth/signup/start', { body: { name: 'Passwordless', email, regionId: 'jp', code } });
     assert(s1.status === 201 && s1.data?.signupId, `passwordless signup refused: ${s1.status} ${JSON.stringify(s1.data)}`);
     created.emails.push(email);
     const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: 'direct' } });
@@ -1483,6 +1496,61 @@ async function run() {
       points: [{ timestamp: Date.now(), lat: 35.6, lon: 139.7, accuracy: 5 }, { lat: 'bad' }, null],
     });
     assert(mixed.status === 201 && mixed.data.count === 1, `valid point not stored / bad points not filtered: ${mixed.status} ${JSON.stringify(mixed.data)}`);
+  });
+
+  await check('72. §C signup gate: no code / bad code is REFUSED with an honest reason', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const mk = () => `smoke+acc-${uniq()}@example.com`;
+    // No code at all.
+    const none = await api('POST', '/v1/auth/signup/start', { body: { name: 'NoCode', email: mk(), regionId: 'jp' } });
+    assert(none.status === 400 && none.data.error === 'code_required', `missing code not refused: ${none.status} ${JSON.stringify(none.data)}`);
+    assert(typeof none.data.message === 'string' && none.data.message.length > 15, `refusal is not an honest message: ${JSON.stringify(none.data)}`);
+    // Unrecognised code.
+    const bogus = await api('POST', '/v1/auth/signup/start', { body: { name: 'BadCode', email: mk(), regionId: 'jp', code: 'ZZZZZZZZZZ' } });
+    assert(bogus.status === 403 && bogus.data.error === 'not_found', `unknown code not refused: ${bogus.status} ${JSON.stringify(bogus.data)}`);
+    assert(/not recognised/i.test(bogus.data.message ?? ''), `unknown-code message not honest: ${JSON.stringify(bogus.data)}`);
+  });
+
+  await check('73. §C signup gate: a code is SINGLE-USE — the second signup is refused', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const code = await issueSignupCode();
+    const e1 = `smoke+acc-${uniq()}@example.com`;
+    const first = await api('POST', '/v1/auth/signup/start', { body: { name: 'First', email: e1, regionId: 'jp', code } });
+    assert(first.status === 201, `first use refused: ${first.status} ${JSON.stringify(first.data)}`);
+    created.emails.push(e1);
+    // The SAME code again must not create a second account.
+    const second = await api('POST', '/v1/auth/signup/start', { body: { name: 'Second', email: `smoke+acc-${uniq()}@example.com`, regionId: 'jp', code } });
+    assert(second.status === 403 && second.data.error === 'exhausted', `code reused: ${second.status} ${JSON.stringify(second.data)}`);
+  });
+
+  await check('74. §C redemption GRANTS ENTITLEMENT — no signed-up-but-unarmable state', async () => {
+    if (!ADMIN) { console.log('        (note: needs ADMIN — skipped)'); return; }
+    const u = await signup();
+    const me = await api('GET', '/v1/me', { bearer: u.session });
+    assert(me.status === 200, `session unusable: ${me.status}`);
+    assert(me.data.user?.entitlement === 'activated', `a redeemed code did not entitle the account: ${JSON.stringify(me.data.user)}`);
+    assert(me.data.user?.entitlementSource === 'purchase_web', `wrong entitlement source: ${JSON.stringify(me.data.user)}`);
+    // ...and that is what makes it armable once a recipient exists.
+    await addEmail(u.session, 'primary', 'P');
+    const contacts = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    assert(contacts.data.armReasons?.entitled === true, `entitled flag not set for arming: ${JSON.stringify(contacts.data.armReasons)}`);
+  });
+
+  await check('75. §C Gumroad webhook is FAIL-CLOSED — no signature, no code', async () => {
+    const body = JSON.stringify({ sale_id: `acc-${uniq()}`, email: `smoke+buyer-${uniq()}@example.com` });
+    // Absent signature.
+    const bare = await api('POST', '/webhooks/gumroad/sale', { body: JSON.parse(body) });
+    assert(bare.status === 401, `unsigned sale was accepted: ${bare.status} ${JSON.stringify(bare.data)}`);
+    assert(!bare.data?.code, `an unsigned sale minted a code: ${JSON.stringify(bare.data)}`);
+    // Wrong signature.
+    const wrong = await fetch(ORIGIN + '/webhooks/gumroad/sale', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-activation-signature': 'deadbeef' },
+      body,
+    });
+    assert(wrong.status === 401, `badly-signed sale was accepted: ${wrong.status}`);
+    const wd = await wrong.json().catch(() => ({}));
+    assert(!wd.code, `a badly-signed sale minted a code: ${JSON.stringify(wd)}`);
   });
 
   // ---- Brief 29: certified report (dormant until zero-knowledge custody is armed) ----
