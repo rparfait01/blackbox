@@ -83,24 +83,46 @@ export async function recordLicense(
   return row;
 }
 
-/** Mint an enrollment code (unguessable, usage-bounded). Shared by the operator
- *  bootstrap (admin code) and the coordinator issue-code endpoint. A leaked code
- *  grants MEMBERSHIP ONLY — never read access to any survivor's data. */
+/**
+ * THE code minter (Brief 30 §B). Unguessable, usage-bounded, and the ONLY place a code
+ * is generated — shared by the operator bootstrap, the coordinator issue-code endpoint,
+ * the institutional admin issuance, and the consumer (Gumroad) path. One generator, so
+ * two issuance paths cannot drift into two alphabets or two length policies.
+ *
+ * `source` selects which kind of code this is, and the DB CHECK enforces the pairing:
+ *   institutional → orgId REQUIRED  (enrolls into that org; a leaked code grants
+ *                                    MEMBERSHIP ONLY, never data access)
+ *   consumer      → orgId MUST be null (a buyer belongs to no organisation)
+ */
 export async function createEnrollmentCode(
   env: Env,
   input: {
-    orgId: string;
+    orgId: string | null;
     role: 'survivor' | 'coordinator' | 'admin';
+    source?: 'consumer' | 'institutional';
     maxUses?: number;
     expiresAt?: number | null;
     createdBy?: string | null;
+    /** Consumer only — where the code was delivered, for support and refunds. */
+    buyerEmail?: string | null;
   },
 ): Promise<EnrollmentCodeRow> {
+  const source = input.source ?? 'institutional';
+  // Fail loudly rather than let the DB CHECK reject an insert we could have caught: a
+  // consumer code with an org, or an institutional code without one, is a programming
+  // error at the call site, not a user error.
+  if (source === 'institutional' && !input.orgId) {
+    throw new Error('createEnrollmentCode: institutional code requires an orgId');
+  }
+  if (source === 'consumer' && input.orgId) {
+    throw new Error('createEnrollmentCode: consumer code must not carry an orgId');
+  }
   const row: EnrollmentCodeRow = {
     // Brief 28 §4 — readable Crockford code (no 0/O/1/I/L confusables), stored
     // normalized. Redeemed after normalization, so dashes/case on entry don't matter;
     // legacy hex codes still redeem by exact match. Rate-limited at redemption.
     code: generateReadableCode(10),
+    source,
     orgId: input.orgId,
     role: input.role,
     expiresAt: input.expiresAt ?? null,
@@ -111,10 +133,11 @@ export async function createEnrollmentCode(
     createdAt: Date.now(),
   };
   await env.DB.prepare(
-    'INSERT INTO enrollment_codes (code, orgId, role, expiresAt, maxUses, usedCount, revoked, createdBy, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO enrollment_codes (code, source, orgId, role, expiresAt, maxUses, usedCount, revoked, createdBy, createdAt, buyerEmail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
     .bind(
       row.code,
+      row.source,
       row.orgId,
       row.role,
       row.expiresAt,
@@ -123,6 +146,7 @@ export async function createEnrollmentCode(
       row.revoked,
       row.createdBy,
       row.createdAt,
+      input.buyerEmail ?? null,
     )
     .run();
   return row;

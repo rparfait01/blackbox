@@ -203,7 +203,12 @@ export interface OrgMemberRow {
  *  membership only, never data access. */
 export interface EnrollmentCodeRow {
   code: string;
-  orgId: string;
+  /** Which issuance path minted this code (Brief 30 §B). 'institutional' codes carry
+   *  an orgId and enroll into that org; 'consumer' codes carry NO org and gate a
+   *  self-serve signup. Enforced as a DB-level CHECK, not by convention. */
+  source: 'consumer' | 'institutional';
+  /** NULL for consumer codes — a buyer belongs to no organisation. */
+  orgId: string | null;
   role: 'survivor' | 'coordinator' | 'admin';
   expiresAt: number | null;
   maxUses: number;

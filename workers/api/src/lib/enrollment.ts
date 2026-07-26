@@ -95,9 +95,9 @@ export function codeRedeemable(
  * Returns the row with its actual stored `code`, which the caller uses for the atomic
  * consume — never the raw input.
  */
-async function loadCode(env: Env, code: string): Promise<EnrollmentCodeRow | null> {
+export async function loadCode(env: Env, code: string): Promise<EnrollmentCodeRow | null> {
   const cols =
-    'SELECT code, orgId, role, expiresAt, maxUses, usedCount, revoked, createdBy, createdAt FROM enrollment_codes WHERE code = ?';
+    'SELECT code, source, orgId, role, expiresAt, maxUses, usedCount, revoked, createdBy, createdAt FROM enrollment_codes WHERE code = ?';
   const exact = await env.DB.prepare(cols).bind(code).first<EnrollmentCodeRow>();
   if (exact) return exact;
   const normalized = normalizeCode(code);
@@ -180,6 +180,45 @@ export async function bindAccountToOrg(
 }
 
 /**
+ * THE atomic consume — the ONE statement that claims a use of a code. Both redemption
+ * paths (org enrollment and the signup gate) call this; there is deliberately no second
+ * implementation, because two of these could disagree about what "already used" means.
+ *
+ * It is a CONDITIONAL update, never a read-then-write: every condition is re-checked
+ * inside the same statement, so two concurrent requests racing on the last use of a code
+ * cannot both win. SQLite applies the UPDATEs serially, the first moves usedCount to
+ * maxUses, and the second matches zero rows. `changes === 1` is therefore the claim.
+ */
+export async function consumeOneUse(env: Env, storedCode: string, now: number): Promise<boolean> {
+  const res = await env.DB.prepare(
+    'UPDATE enrollment_codes SET usedCount = usedCount + 1 WHERE code = ? AND revoked = 0 AND usedCount < maxUses AND (expiresAt IS NULL OR expiresAt > ?)',
+  )
+    .bind(storedCode, now)
+    .run();
+  return res.meta.changes === 1;
+}
+
+/** Give a claimed use back when the work it was claimed FOR did not complete. Without
+ *  this, a failed signup would silently burn a code the buyer paid for. */
+export async function releaseOneUse(env: Env, storedCode: string): Promise<void> {
+  await env.DB.prepare(
+    'UPDATE enrollment_codes SET usedCount = usedCount - 1 WHERE code = ? AND usedCount > 0',
+  )
+    .bind(storedCode)
+    .run();
+}
+
+/** Record WHO consumed a code. usedCount already says whether; support and refunds
+ *  need by-whom. Best-effort: never fails a completed redemption. */
+export async function markRedeemed(env: Env, storedCode: string, userId: string, now: number): Promise<void> {
+  await env.DB.prepare(
+    'UPDATE enrollment_codes SET redeemedBy = COALESCE(redeemedBy, ?), redeemedAt = COALESCE(redeemedAt, ?) WHERE code = ?',
+  )
+    .bind(userId, now, storedCode)
+    .run();
+}
+
+/**
  * Redeem a code for an account: validate, atomically consume one use, then bind. The
  * atomic `usedCount` increment is the race barrier — if two redemptions land at once
  * only one consumes the last use.
@@ -199,24 +238,22 @@ export async function redeemCode(
   // Use the RESOLVED stored code for every write — the user's raw input may differ in
   // case/dashes from the normalized stored form (Brief 28 §4).
   const storedCode = row!.code;
-  // Consume one use atomically — re-checks every condition so a concurrent redeem
-  // can't push usedCount past maxUses.
-  const consumed = await env.DB.prepare(
-    'UPDATE enrollment_codes SET usedCount = usedCount + 1 WHERE code = ? AND revoked = 0 AND usedCount < maxUses AND (expiresAt IS NULL OR expiresAt > ?)',
-  )
-    .bind(storedCode, now)
-    .run();
-  if (consumed.meta.changes !== 1) return { ok: false, reason: 'exhausted' };
+  if (!(await consumeOneUse(env, storedCode, now))) return { ok: false, reason: 'exhausted' };
 
+  if (!row!.orgId) {
+    // A consumer code has no org to bind to and must never reach the org path. Give the
+    // use back so a mis-routed consumer code is not silently burned.
+    await releaseOneUse(env, storedCode);
+    return { ok: false, reason: 'not_found' };
+  }
   const bind = await bindAccountToOrg(env, { userId, orgId: row!.orgId, role: row!.role });
   if (!bind.ok) {
     // Give the use back — the bind was refused (seats full / already in another org),
     // so this redemption did not actually enroll anyone.
-    await env.DB.prepare('UPDATE enrollment_codes SET usedCount = usedCount - 1 WHERE code = ?')
-      .bind(storedCode)
-      .run();
+    await releaseOneUse(env, storedCode);
     return { ok: false, reason: bind.reason };
   }
+  await markRedeemed(env, storedCode, userId, now);
   return { ok: true, orgId: row!.orgId, role: row!.role };
 }
 
