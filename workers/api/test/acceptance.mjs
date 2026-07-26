@@ -276,9 +276,27 @@ async function run() {
     for (const slot of ['primary', 'secondary', 'tertiary', 'guardian', 'emergency']) await addEmail(u.session, slot, slot);
     const ev = await trigger(u.session, 'acc-cascade');
     assert(ev.eventId, 'no event');
-    await sleep(46000); // DO alarm drives the tail; no heartbeats sent
-    const fired = await adminFires(ev.eventId);
+    // POLL for the 5 steps rather than sleeping a fixed 46s. A fixed sleep left ~6s
+    // of headroom on the T+40 step and failed as "got 4" whenever the platform was
+    // momentarily slow — a read-too-early artefact, not a cascade fault. Polling
+    // costs nothing in rigor: the timing assertion below is on each row's OWN
+    // timestamp, not on when we happened to look.
+    let fired = [];
+    for (let i = 0; i < 35 && fired.length < 5; i += 1) {
+      await sleep(2000);
+      fired = await adminFires(ev.eventId);
+    }
     assert(fired.length === 5, `expected 5 cascade_fired, got ${fired.length}`);
+    // The DURABLE OBJECT ALARM is the feature under test (Brief 17). The 1-minute
+    // cron backstop will eventually advance any step the alarm missed — which keeps
+    // the survivor covered, and is exactly why a count-and-timing check alone can be
+    // fooled. A cron-rescued step means the alarm ran late: name it and FAIL, rather
+    // than averaging it away.
+    const rescued = fired.map((f, i) => ({ i, via: f.via })).filter((f) => f.via !== 'alarm');
+    assert(
+      rescued.length === 0,
+      `cascade step(s) not fired by the DO alarm: ${rescued.map((r) => `step ${r.i} via ${r.via ?? 'unknown'}`).join(', ')}`,
+    );
     const targets = [0, 10, 20, 30, 40];
     for (let i = 0; i < 5; i += 1) {
       const rel = (fired[i].t - ev.createdAt) / 1000;
@@ -311,8 +329,19 @@ async function run() {
     await sleep(15000); // emergency is step index 1 here → ~T+10s
     const fired = await adminFires(ev.eventId);
     assert(fired.length >= 2, `tail did not fire past the gap: only ${fired.length} steps`);
-    const delivered = await adminDelivered(ev.eventId, 'email');
-    assert(delivered >= 2, `emergency not delivered (${delivered})`);
+    // COUNT ONLY — no timing assertion here; this check is about fall-through past a
+    // gap, not schedule precision (check 8 owns that). Poll like check 8 does: the
+    // delivery record is written AFTER the provider round-trip, so a single read at
+    // T+15s gave the emergency step's send ~5s to complete and flaked as "(1)".
+    // Deliberately status-agnostic: a `failed` record still proves the step was
+    // attempted, which is the guarantee under test. Filtering status='delivered'
+    // would make this a test of SendGrid's reliability instead.
+    let delivered = 0;
+    for (let i = 0; i < 12 && delivered < 2; i += 1) {
+      delivered = await adminDelivered(ev.eventId, 'email');
+      if (delivered < 2) await sleep(2500);
+    }
+    assert(delivered >= 2, `emergency step produced no delivery record (${delivered})`);
   });
 
   // ---- CLOSURE GATE — the tripwire (#2). Requires MAGIC_LINK_SECRET. ----
@@ -1508,7 +1537,9 @@ async function adminEvent(eventId) {
 // endpoint (added for the suite). Falls back to empty if unavailable.
 async function adminFires(eventId) {
   const r = await api('GET', `/v1/admin/events/${eventId}/audit?action=cascade_fired`, { bearer: ADMIN });
-  return Array.isArray(r.data?.rows) ? r.data.rows.map((x) => ({ t: x.timestamp, step: x.step })) : [];
+  // `via` names the driver that fired the step (alarm | cron | stagger | heartbeat) —
+  // the only way to tell a precise DO schedule from a cron rescue.
+  return Array.isArray(r.data?.rows) ? r.data.rows.map((x) => ({ t: x.timestamp, step: x.step, via: x.via })) : [];
 }
 async function adminDelivered(eventId, channel, status) {
   const q = status ? `?channel=${channel}&status=${status}` : `?channel=${channel}`;

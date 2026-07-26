@@ -122,6 +122,24 @@ async function activationCtx(
   };
 }
 
+/**
+ * Which mechanism actually fired a cascade step. Four drivers can advance the chain,
+ * and they are NOT interchangeable when judging health:
+ *
+ *   alarm     — the Durable Object alarm. The precise, intended driver (Brief 17).
+ *   stagger   — the in-request waitUntil stagger. Fine for early steps; reclaimed
+ *               ~35s, so it cannot be relied on for the tail.
+ *   heartbeat — a device heartbeat opportunistically advanced a due step.
+ *   cron      — the 1-minute backstop caught a step the others missed. The capture
+ *               still went out, so this is NOT a survivor-facing failure — but it
+ *               means the alarm ran late, and that is a real signal worth surfacing
+ *               rather than averaging away.
+ *
+ * Recorded on every cascade_fired row so "did the schedule work?" can be answered
+ * exactly, instead of inferred from timestamps that cannot distinguish the drivers.
+ */
+export type CascadeDriver = 'alarm' | 'cron' | 'stagger' | 'heartbeat';
+
 async function dispatchStep(
   env: Env,
   eventId: string,
@@ -129,10 +147,12 @@ async function dispatchStep(
   contact: { id: string; displayName: string },
   actorHash: string | null,
   step: number,
+  via: CascadeDriver,
 ): Promise<void> {
   // Audit the moment the step FIRES (before the provider round-trip), so the
   // cascade schedule is observable independent of per-channel send latency.
-  await audit(env, eventId, 'cascade_fired', actorHash, { step });
+  // `via` records WHICH driver fired it (see CascadeDriver).
+  await audit(env, eventId, 'cascade_fired', actorHash, { step, via });
   const result = await dispatch(
     env,
     contact.id,
@@ -222,7 +242,7 @@ export async function notifyActivation(
     // schedule keeps advancing no matter what (dispatch already records the
     // per-channel failure; this guards an unexpected throw too).
     try {
-      await dispatchStep(env, eventId, ctx, contacts[step]!, event.userHash, step);
+      await dispatchStep(env, eventId, ctx, contacts[step]!, event.userHash, step, 'stagger');
     } catch (e) {
       await audit(env, eventId, 'cascade_step_error', event.userHash, { step, detail: String(e).slice(0, 160) });
     }
@@ -242,6 +262,7 @@ export async function advanceEventCascade(
   env: Env,
   ev: { id: string; userId: string | null; userHash: string | null; createdAt: number; cascadeStep: number },
   workerOrigin: string,
+  via: CascadeDriver,
   now: number = Date.now(),
 ): Promise<void> {
   if (!env.MAGIC_LINK_SECRET) {
@@ -264,7 +285,7 @@ export async function advanceEventCascade(
       break; // claimed / closed / raced with another driver — halt
     }
     try {
-      await dispatchStep(env, ev.id, ctx, contacts[step]!, ev.userHash, step);
+      await dispatchStep(env, ev.id, ctx, contacts[step]!, ev.userHash, step, via);
     } catch (e) {
       await audit(env, ev.id, 'cascade_step_error', ev.userHash, { step, detail: String(e).slice(0, 160) });
     }
@@ -301,7 +322,7 @@ export async function cascadeTick(
   if (!ev || ev.status !== 'active' || ev.coordinatorClaimedAt != null) {
     return null; // claimed / closed / gone — stop the schedule
   }
-  await advanceEventCascade(env, ev, workerOrigin);
+  await advanceEventCascade(env, ev, workerOrigin, 'alarm');
   const contacts = await listCascadeContacts(env, { userId: ev.userId, userHash: ev.userHash });
   const fresh = await env.DB.prepare('SELECT cascadeStep FROM events WHERE id = ?')
     .bind(eventId)
@@ -358,7 +379,7 @@ export async function advanceCascades(env: Env, workerOrigin: string): Promise<v
   const now = Date.now();
   for (const ev of results ?? []) {
     try {
-      await advanceEventCascade(env, ev, workerOrigin, now);
+      await advanceEventCascade(env, ev, workerOrigin, 'cron', now);
     } catch (e) {
       await audit(env, ev.id, 'cascade_step_error', ev.userHash, { detail: String(e).slice(0, 160) });
     }

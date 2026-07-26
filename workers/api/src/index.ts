@@ -759,12 +759,20 @@ app.get('/v1/admin/events/:id/audit', async (c) => {
   const { results } = await stmt.all<{ timestamp: number; action: string; metadataJson: string | null }>();
   const rows = (results ?? []).map((r) => {
     let step: number | undefined;
+    // `via` (cascade_fired only) names the driver that actually fired the step —
+    // alarm | cron | stagger | heartbeat. Surfaced so the acceptance suite can tell
+    // a precise Durable-Object schedule from a cron-rescued one, which timestamps
+    // alone cannot distinguish.
+    let via: string | undefined;
     try {
-      step = r.metadataJson ? (JSON.parse(r.metadataJson).step as number | undefined) : undefined;
+      const meta = r.metadataJson ? (JSON.parse(r.metadataJson) as { step?: number; via?: string }) : null;
+      step = meta?.step;
+      via = meta?.via;
     } catch {
       step = undefined;
+      via = undefined;
     }
-    return { timestamp: r.timestamp, action: r.action, step };
+    return { timestamp: r.timestamp, action: r.action, step, via };
   });
   return c.json({ rows }, 200);
 });
@@ -1432,7 +1440,7 @@ app.post('/v1/events/:id/heartbeat', async (c) => {
           .bind(eventId)
           .first<{ id: string; userId: string | null; userHash: string | null; createdAt: number; cascadeStep: number }>();
         if (ev) {
-          await advanceEventCascade(c.env, ev, new URL(c.req.url).origin);
+          await advanceEventCascade(c.env, ev, new URL(c.req.url).origin, 'heartbeat');
         }
       } catch {
         // swallow — the 1-min cron backstops any tick that errors here
