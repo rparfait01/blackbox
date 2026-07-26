@@ -224,3 +224,50 @@ describe('§2 the WhatsApp seam is present but unbuilt', () => {
     expect(r.attempts.length).toBeGreaterThan(0);
   });
 });
+
+describe('Brief 31 — quota severance composes with fallback, and never fakes a delivery', () => {
+  it('a RESERVED primary is skipped without a provider call, and the fallback still delivers', async () => {
+    stubFetch([]); // nothing is "down" — the point is that email is never even attempted
+    const { env } = fakeEnv([
+      { channel: 'email', channelIdentifier: 'smoke+p@example.com', priority: 1 },
+      { channel: 'line', channelIdentifier: 'U123', priority: 2 },
+    ]);
+    const r = await dispatch(env, 'c1', message);
+
+    // The chain did NOT stop at the suppressed endpoint — this is the fallback
+    // guarantee holding even when the preferred channel is bypassed entirely.
+    expect(r.delivered).toBe(true);
+    expect(r.channel).toBe('line');
+    expect(r.fellBack).toBe(true);
+    expect(r.attempts).toHaveLength(2);
+    expect(r.attempts[0]).toEqual({
+      channel: 'email',
+      ok: false,
+      reason: 'reserved_address_not_deliverable',
+    });
+    // And SendGrid was never called: the only provider fetch was LINE.
+    const calls = (fetch as unknown as { mock: { calls: unknown[][] } }).mock?.calls ?? [];
+    expect(calls.every((c) => !String(c[0]).includes('sendgrid'))).toBe(true);
+  });
+
+  it('a contact reachable ONLY at a reserved address is reported unreachable, never ok', async () => {
+    stubFetch([]);
+    const { env } = fakeEnv([{ channel: 'email', channelIdentifier: 'smoke+only@example.com', priority: 1 }]);
+    const r = await dispatch(env, 'c1', message);
+
+    // Honest status: suppression is not a delivery. Claiming otherwise would tell a
+    // survivor someone was notified when nothing was sent — the one lie this system
+    // must never tell, and the reason suppression is its own status.
+    expect(r.delivered).toBe(false);
+    expect(r.channel).toBeNull();
+    expect(r.attempts[0].reason).toBe('reserved_address_not_deliverable');
+  });
+
+  it('a REAL address is still dispatched to the provider — production is unchanged', async () => {
+    stubFetch([]);
+    const { env } = fakeEnv([{ channel: 'email', channelIdentifier: 'dominick.parfait@icloud.com', priority: 1 }]);
+    const r = await dispatch(env, 'c1', message);
+    expect(r.delivered).toBe(true);
+    expect(r.channel).toBe('email');
+  });
+});

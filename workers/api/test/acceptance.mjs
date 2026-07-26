@@ -311,18 +311,29 @@ async function run() {
       const rel = (fired[i].t - ev.createdAt) / 1000;
       assert(Math.abs(rel - targets[i]) <= 3.5, `step ${i} fired at T+${rel.toFixed(1)}s, want ~${targets[i]}`);
     }
-    // The cascade guarantee is the 5 cascade_fired at their windows above — that is
-    // deterministic (DO alarm) and proves every step dispatched + no halt. Delivery
-    // is provider-dependent: assert the email channel genuinely DELIVERS (>=1, polled
-    // to absorb SendGrid latency) but do NOT require all 5 records within a window —
-    // that tests SendGrid's reliability/throughput, not the cascade, and flakes the
-    // gate under load.
-    let delivered = 0;
-    for (let i = 0; i < 12 && delivered < 1; i += 1) {
-      delivered = await adminDelivered(ev.eventId, 'email', 'delivered');
-      if (delivered < 1) await sleep(2500);
+    // DISPATCH, not vendor delivery (Brief 31). This previously asserted that a real
+    // email physically landed — which made a genuine SendGrid outage read as a "test
+    // flake", and, worse, made the gate itself consume the finite quota the alert
+    // path depends on. What the system controls, and therefore what a gate should
+    // verify, is that it ATTEMPTED the right channel for every step. Whether a
+    // third-party vendor then delivered is monitoring, not acceptance.
+    //
+    // Suite recipients are @example.com (RFC 2606), so the provider is deliberately
+    // never called and these record as 'suppressed' — a real dispatch, zero quota.
+    let dispatched = 0;
+    for (let i = 0; i < 12 && dispatched < 5; i += 1) {
+      dispatched = await adminDelivered(ev.eventId, 'email');
+      if (dispatched < 5) await sleep(2500);
     }
-    assert(delivered >= 1, `email channel delivered ${delivered} — channel not actually delivering`);
+    assert(dispatched >= 5, `expected 5 email dispatch records (one per step), got ${dispatched}`);
+    // ...and every one of them must be the quota-free path. A 'delivered' or 'failed'
+    // row here would mean the suite reached the real provider after all — the exact
+    // coupling this brief severed — so assert it explicitly rather than assume it.
+    const suppressed = await adminDelivered(ev.eventId, 'email', 'suppressed');
+    assert(
+      suppressed >= 5,
+      `suite dispatch spent production quota: only ${suppressed}/${dispatched} email records were suppressed`,
+    );
   });
 
   await check('9. cascade does NOT halt across a gap: emergency fires past empty middle slots', async () => {

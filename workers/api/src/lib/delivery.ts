@@ -14,7 +14,14 @@ export interface DeliveryRecordInput {
   eventId: string;
   messageKind: string;
   channel: string;
-  status: 'delivered' | 'failed' | 'skipped';
+  /** delivered  — the provider accepted it.
+   *  failed     — the provider rejected it (detail carries the real reason).
+   *  skipped    — the channel was unconfigured, so nothing was attempted.
+   *  suppressed — the address is reserved and cannot receive mail, so the provider
+   *               was deliberately not called and NO production quota was spent
+   *               (Brief 31). Distinct from all three above on purpose: nothing was
+   *               delivered, nothing went wrong, and nothing was silently dropped. */
+  status: 'delivered' | 'failed' | 'skipped' | 'suppressed';
   providerMessageId?: string | null;
   detail?: string | null;
 }

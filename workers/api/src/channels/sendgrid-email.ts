@@ -30,6 +30,7 @@ import type {
   StandDownConfirmationPayload,
 } from './types';
 import type { Env } from '../types';
+import { isReservedEmail, SUPPRESSED_REASON } from './reserved';
 
 const SEND_ENDPOINT = 'https://api.sendgrid.com/v3/mail/send';
 
@@ -59,6 +60,10 @@ export interface SendResult {
   body: string;
   /** SendGrid X-Message-Id (links to the Activity Feed), when present. */
   messageId?: string | null;
+  /** True when the provider was deliberately NOT called because the address is
+   *  reserved and cannot receive mail (Brief 31). Distinct from a failure: nothing
+   *  went wrong, and — critically — no production quota was spent. */
+  suppressed?: boolean;
 }
 
 /**
@@ -71,6 +76,18 @@ export async function sendEmail(
   message: { to: string; subject: string; html: string; text: string },
   messageType = 'email',
 ): Promise<SendResult> {
+  // THE SEVERANCE (Brief 31). Every email in the system — alerts, magic links, OTP,
+  // guardian invites, integrity alarms — funnels through here, so this is the ONE
+  // boundary at which production delivery quota is spent. A reserved address can
+  // never receive mail from anyone, so spending a real send on it is pure waste of a
+  // finite, life-safety resource. Return before the provider call.
+  //
+  // This is checked BEFORE the config check so the behaviour is identical whether or
+  // not SendGrid is configured — a reserved address is undeliverable either way.
+  if (isReservedEmail(message.to)) {
+    console.log(`[SendGrid] SUPPRESSED ${messageType} — reserved address, no quota spent`);
+    return { ok: false, status: 0, body: SUPPRESSED_REASON, suppressed: true };
+  }
   const config = sendgridConfig(env);
   if (!config) {
     console.log('[SendGrid] NOT configured — missing SENDGRID_API_KEY or SENDGRID_FROM_EMAIL');
@@ -120,6 +137,9 @@ export class SendGridEmailChannel implements NotificationChannel {
   /** SendGrid's actual rejection (status + body) so an email failure is never
    *  recorded as a bare "send_failed" — the delivery log carries the real reason. */
   lastError: string | null = null;
+  /** True when the last send was deliberately not handed to the provider because the
+   *  address is reserved (Brief 31) — recorded distinctly from a real failure. */
+  lastSuppressed = false;
 
   constructor(
     private readonly env: Env,
@@ -133,7 +153,12 @@ export class SendGridEmailChannel implements NotificationChannel {
       messageType,
     ).then((r) => {
       this.lastProviderMessageId = r.messageId ?? null;
-      this.lastError = r.ok ? null : `sendgrid_${r.status}: ${(r.body || '(empty)').slice(0, 180)}`;
+      this.lastSuppressed = r.suppressed === true;
+      this.lastError = r.ok
+        ? null
+        : r.suppressed
+          ? SUPPRESSED_REASON
+          : `sendgrid_${r.status}: ${(r.body || '(empty)').slice(0, 180)}`;
       return r.ok;
     });
   }

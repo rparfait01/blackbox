@@ -15,6 +15,7 @@ import { LineChannel } from './line';
 import { SendGridEmailChannel } from './sendgrid-email';
 import { TwilioSmsChannel, twilioConfig } from './twilio-sms';
 import { StubChannel } from './stub';
+import { isReservedDestination, SUPPRESSED_REASON, SUPPRESSED_STATUS } from './reserved';
 import type {
   ActivationAlertPayload,
   ChannelName,
@@ -212,6 +213,21 @@ export async function dispatch(
       // it must show up in the result, not vanish. Silent skips are how a survivor
       // ends up believing someone was told.
       attempts.push({ channel: channelName, ok: false, reason: 'unconfigured' });
+      continue;
+    }
+    // Brief 31 — a reserved address (RFC 2606) cannot receive anything, so the
+    // provider is never called and no production quota is spent. Recorded as its own
+    // status: it is NOT a delivery (nothing arrived) and NOT a failure (nothing went
+    // wrong), and conflating it with either would make the delivery log lie.
+    if (isReservedDestination(channelName, endpoint.channelIdentifier)) {
+      await recordDelivery(env, {
+        eventId: message.eventId,
+        messageKind: message.kind,
+        channel: channelName,
+        status: SUPPRESSED_STATUS,
+        detail: SUPPRESSED_REASON,
+      });
+      attempts.push({ channel: channelName, ok: false, reason: SUPPRESSED_REASON });
       continue;
     }
     const ok = await sendMessage(channel, message);
