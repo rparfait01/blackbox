@@ -35,6 +35,13 @@ REPORT_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXqmajlR2iQOxIrPfF4AE8kT
 # StillPoint Official Account basic id (public, @-prefixed) for the QR-connect LINE
 # pairing deep link (Brief 18). Not a secret — it is the OA's public handle.
 LINE_OA_BASIC_ID = "@346hrzaa"
+# Gumroad product identifier for the consumer licence-key path (Brief 34 §1). A VAR, not
+# a secret: this id is PUBLIC (it appears in Gumroad's own embed code), and storing it as
+# a secret bought no confidentiality while creating a silent failure mode — an empty
+# secret is invisible, and the licence check simply answered "purchases cannot be
+# verified" with nothing to diagnose. As a var it is printed in every deploy's binding
+# list, so an empty or wrong value is visible before it reaches a buyer.
+GUMROAD_PRODUCT_ID = "E8v_RiJkV5Tyjwryd5rMCg=="
 
 # Secrets are NOT defined here — set them with `wrangler secret put` (see
 # README.md): LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,

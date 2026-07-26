@@ -86,11 +86,12 @@ export interface Env {
    *  (no unverified payment can activate an account). Provider-agnostic: the payload
    *  is HMAC-SHA256(secret, rawBody), hex in x-activation-signature. Set via secret. */
   ACTIVATION_WEBHOOK_SECRET?: string;
-  /** Gumroad product identifier for the web purchase path. Read as a standard Worker
-   *  binding (`env.GUMROAD_PRODUCT_ID`) — never `process.env`, which does not exist in
-   *  the Workers runtime. Set in production with `wrangler secret put GUMROAD_PRODUCT_ID`,
-   *  and locally via workers/api/.dev.vars (gitignored). Optional, like every other
-   *  binding here: unset must degrade honestly rather than throw at module load. */
+  /** Gumroad product identifier for the consumer licence-key path (Brief 34 §1). A VAR in
+   *  wrangler.toml, deliberately NOT a secret: the id is public (it is in Gumroad's own
+   *  embed code), so secrecy bought nothing while an empty secret failed INVISIBLY — the
+   *  licence check answered "purchases cannot be verified" with nothing to diagnose. As a
+   *  var it appears in every deploy's binding list. Read as a standard Worker binding —
+   *  never `process.env`, which does not exist in the Workers runtime. */
   GUMROAD_PRODUCT_ID?: string;
 }
 
