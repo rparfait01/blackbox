@@ -53,17 +53,49 @@ describe('the console is reachable only by typing its path', () => {
     expect(catchAll).toBeGreaterThan(consoleAt);
   });
 
-  it('nothing in the survivor app navigates to it', () => {
+  it('nothing in the survivor app navigates to it except the gated Settings door', () => {
     const survivorSurfaces = [
-      './routes/settings/Settings.tsx',
       './routes/blackbox/BlackBoxHome.tsx',
       './routes/onboarding/Onboarding.tsx',
       './routes/signin/SignIn.tsx',
       './app/RootGate.tsx',
+      // The meditation facade is covered separately and must never link it at all.
+      './routes/meditation/MeditationHome.tsx',
     ];
     for (const f of survivorSurfaces) {
       expect(read(f), `${f} must not link the console`).not.toMatch(/['"]\/console['"]/);
     }
+  });
+});
+
+describe('§0a the Settings door is gated on BOTH the server role and the Visible skin', () => {
+  const settings = read('./routes/settings/Settings.tsx');
+
+  it('the level is fetched from the server, never inferred on the client', () => {
+    expect(settings).toMatch(/api<\{ level: string; levelLabel: string \}>\('\/v1\/console\/me'\)/);
+    // No client-side derivation of a role from the cached user or the token.
+    expect(settings).not.toMatch(/platform_role|org_members|isOperator/);
+  });
+
+  it('fails CLOSED — an unmarked level, or any failed request, yields no door', () => {
+    expect(settings).toMatch(/r\.ok && r\.data && r\.data\.level !== 'unmarked' \? r\.data\.levelLabel : null/);
+    // The state starts null, so nothing renders before the server has answered.
+    expect(settings).toMatch(/useState<string \| null>\(null\)/);
+  });
+
+  it('renders ONLY in the Visible skin — Settings is reachable from the Hidden gear', () => {
+    // The covert facade's gear opens THIS screen, so a door gated on role alone would
+    // put the word "Console" in front of a covert user. Both conditions, one expression.
+    expect(settings).toMatch(/\{present && consoleLevel \? \(/);
+    // …and `present` is the Visible-skin flag, not something else that happens to be true.
+    expect(settings).toMatch(/const present = selectedMode === 'direct';/);
+  });
+
+  it('the door is a Link to /console — no client-side permission logic behind it', () => {
+    const door = settings.slice(settings.indexOf('{present && consoleLevel ?'), settings.indexOf(') : null}', settings.indexOf('{present && consoleLevel ?')));
+    expect(door).toMatch(/to="\/console"/);
+    // It renders the level the SERVER returned; it does not compute a label.
+    expect(door).toMatch(/\{consoleLevel\}/);
   });
 });
 

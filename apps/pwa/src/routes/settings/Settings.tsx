@@ -74,8 +74,21 @@ export function Settings(): JSX.Element {
   // Brief 29: the survivor-generated certified report. Settings-only, and gated on
   // zero-knowledge custody — with the flag off the entry point is not rendered at all.
   const [reportOpen, setReportOpen] = useState(false);
+  // Brief 33b — THE DOOR to the console. `null` until the server answers, and null is
+  // rendered as "no door": this fails CLOSED, so a slow or failed request shows nothing
+  // rather than a link that would only 403.
+  //
+  // Deliberately a SEPARATE call to /v1/console/me rather than a new field on /v1/me.
+  // /v1/me is on the alert-reconcile hot path (foreground, close), and adding two role
+  // lookups to every one of those calls would tax the safety path to render a nav link.
+  const [consoleLevel, setConsoleLevel] = useState<string | null>(null);
 
   const load = (): void => {
+    // The console level is decided SERVER-SIDE from the session. The client never infers
+    // it, and never reads a role out of the token — it renders whatever the server says.
+    void api<{ level: string; levelLabel: string }>('/v1/console/me').then((r) => {
+      setConsoleLevel(r.ok && r.data && r.data.level !== 'unmarked' ? r.data.levelLabel : null);
+    });
     void api<MeData>('/v1/me').then((r) => {
       if (r.ok && r.data) {
         setMe(r.data);
@@ -239,6 +252,39 @@ export function Settings(): JSX.Element {
           {/* Brief 28 §2 — activation status (arms the device; never gates the trigger). */}
           <Row k="Activation" v={me?.user.entitlement === 'activated' ? 'Activated' : me ? 'Not activated' : '—'} />
         </Group>
+
+        {/* Brief 33b — THE DOOR to the console, and it is gated TWICE on purpose.
+
+            1. `consoleLevel` — the SERVER decided this account holds a role. An UNMARKED
+               account gets null and no door; /console would answer "No console access"
+               even if this block were forced to render, because the boundary is the
+               server, not this condition.
+            2. `present` — the VISIBLE skin only. Settings is reachable from the Hidden
+               facade's gear, and it wears the Stillpoint palette in both modes. A
+               "Console" link sitting in a covert user's preferences is exactly the kind
+               of tell §0a exists to prevent, so the door does not exist in that skin.
+               The URL still works if typed — that is a deliberate choice, not a gap:
+               someone who knows to type it is not being told anything.
+
+            Both real console accounts run the Visible skin, so this costs the operator
+            nothing. */}
+        {present && consoleLevel ? (
+          <Link
+            to="/console"
+            className="mb-8 flex items-center justify-between rounded-lg border border-med-text/20 bg-black/20 p-4"
+          >
+            <span>
+              <span className="mb-1 block text-[12px] font-medium leading-relaxed text-med-text">Console</span>
+              <span className="block text-[11px] leading-relaxed text-med-text/60">
+                Organisations, access codes and enrolment readiness.
+              </span>
+            </span>
+            {/* The level the SERVER returned — so the door names the scope it opens. */}
+            <span className="ml-3 shrink-0 rounded border border-med-text/40 px-2 py-[2px] font-mono text-[9px] uppercase tracking-[0.1em] text-med-text/70">
+              {consoleLevel}
+            </span>
+          </Link>
+        ) : null}
 
         {/* Brief 28 §2 — activation prompt for a covert user (whose only route to the
             app is here). Non-blocking; the trigger works regardless. Never shows a
