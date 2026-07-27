@@ -348,6 +348,7 @@ function CodesPanel({ me, notify }: { me: ConsoleMe; notify: (m: string) => void
   const orgsLoader = useLoader<{ orgs: OrgRow[] }>('/v1/console/orgs', me.may.orgs);
   const [role, setRole] = useState<string>(me.may.issueRoles[0] ?? 'survivor');
   const [count, setCount] = useState('1');
+  const [expiresInHours, setExpiresInHours] = useState('');
   const [orgId, setOrgId] = useState('');
   const [issued, setIssued] = useState<string[] | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -363,6 +364,9 @@ function CodesPanel({ me, notify }: { me: ConsoleMe; notify: (m: string) => void
       body: {
         role,
         count: Math.max(1, Math.min(25, Number(count) || 1)),
+        // Omitted entirely when blank — the server reads "no expiry" from an absent
+        // field, and sending 0 would be a different (and wrong) instruction.
+        ...(Number(expiresInHours) > 0 ? { expiresInHours: Number(expiresInHours) } : {}),
         ...(me.level === 'operator' ? { orgId } : {}),
       },
     });
@@ -421,6 +425,15 @@ function CodesPanel({ me, notify }: { me: ConsoleMe; notify: (m: string) => void
           <Field label="Quantity">
             <TextInput type="number" min={1} max={25} value={count} onChange={(e) => setCount(e.target.value)} />
           </Field>
+          <Field label="Expires in (hours)">
+            <TextInput
+              type="number"
+              min={1}
+              value={expiresInHours}
+              placeholder="never"
+              onChange={(e) => setExpiresInHours(e.target.value)}
+            />
+          </Field>
           <Btn variant="primary" disabled={busy} onClick={() => void issue()}>
             {busy ? 'Issuing…' : 'Issue'}
           </Btn>
@@ -439,13 +452,14 @@ function CodesPanel({ me, notify }: { me: ConsoleMe; notify: (m: string) => void
               {me.level === 'operator' ? <Th>Org</Th> : null}
               <Th>Issued by</Th>
               <Th>Uses</Th>
+              <Th>Expires</Th>
               <Th>Status</Th>
               <Th />
             </tr>
           </thead>
           <tbody>
             {codes.length === 0 ? (
-              <EmptyRow colSpan={me.level === 'operator' ? 7 : 6}>No codes yet.</EmptyRow>
+              <EmptyRow colSpan={me.level === 'operator' ? 8 : 7}>No codes yet.</EmptyRow>
             ) : (
               codes.map((c) => (
                 <tr key={c.code} className="hover:bg-bb-elevated">
@@ -465,6 +479,11 @@ function CodesPanel({ me, notify }: { me: ConsoleMe; notify: (m: string) => void
                   </Td>
                   <Td mono muted>
                     {c.usedCount} / {c.maxUses}
+                  </Td>
+                  {/* "Never" is the honest word for a null expiry — an em dash would read
+                      as "unknown", and these codes genuinely do not expire unless asked to. */}
+                  <Td mono muted>
+                    {c.expiresAt ? formatDate(c.expiresAt) : 'never'}
                   </Td>
                   <Td>
                     <Pill tone={CODE_STATUS_TONE[c.status] ?? 'grey'}>{c.status}</Pill>
