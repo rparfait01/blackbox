@@ -1,19 +1,44 @@
 /**
  * BLACK BOX standing acceptance suite (Brief 19). Runs the full known-good flow
- * against the DEPLOYED worker on every commit/deploy. A change is not committable
- * unless this whole suite is green — it is the tripwire so a fixed bug can never
- * silently regress. Every bug found from here adds a check BEFORE its fix lands.
+ * against the deployed STAGING worker on every commit/deploy. A change is not
+ * committable unless this whole suite is green — it is the tripwire so a fixed bug can
+ * never silently regress. Every bug found from here adds a check BEFORE its fix lands.
  *
  *   node workers/api/test/acceptance.mjs
  *
- * Config (env): BBX_ORIGIN (default deployed), BBX_ADMIN_TOKEN (default: read
+ * IT RUNS AGAINST STAGING, AND THAT IS THE POINT.
+ *
+ * This suite is write-heavy: it signs up accounts, bootstraps organisations, mints
+ * codes, opens events and uploads capture chunks. It used to do all of that to the
+ * PRODUCTION database, leaving ~26 organisations and a few unreachable accounts behind
+ * every single run, because its cleanup could only delete accounts it could sign back
+ * into. Testing the safety system was degrading the safety system — the same class of
+ * error as the SendGrid quota bug, where test runs drained the credits real alerts
+ * needed.
+ *
+ * The fix is severance at the resource, not a flag: `blackbox-api-staging` is bound to
+ * its own D1 (`blackbox-test`) and its own R2 buckets, so a run cannot reach production
+ * data even if a check tried. And the severance is ENFORCED here rather than trusted:
+ * pointing BBX_ORIGIN at production aborts unless BBX_ALLOW_PROD=1 is set deliberately.
+ * A default that has to be remembered is not a default.
+ *
+ * WHAT THIS TRADES AWAY, said plainly: the suite no longer proves production's own
+ * configuration — a missing prod secret or an unapplied prod migration will not fail it.
+ * Those are covered elsewhere and deliberately: `pnpm deploy` asserts BOTH live halves
+ * report the committed build, and GET /v1/console/maintenance/health reports prod D1,
+ * R2, currency and pending migrations. To run this suite against production anyway
+ * (read the warning it prints first), set BBX_ORIGIN and BBX_ALLOW_PROD=1.
+ *
+ * Config (env): BBX_ORIGIN (default STAGING), BBX_ADMIN_TOKEN (default: read
  * workers/admin_token.txt), BBX_MAGIC_LINK_SECRET (REQUIRED — coordinator flows
  * cannot be exercised without it, so the suite fails closed if absent), and
- * BBX_LINE_USER_ID (optional: also assert a real LINE delivery).
+ * BBX_LINE_USER_ID (optional: also assert a real LINE delivery). Staging's own
+ * credentials live in the gitignored test/.acceptance.env.
  *
  * Checks self-provision throwaway accounts (smoke+acc-*@example.com) and clean up.
  */
 import { createHmac, createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 // Privileged test creds (MAGIC_LINK_SECRET, optionally ADMIN_TOKEN/LINE_USER_ID)
@@ -31,7 +56,43 @@ import { readFileSync } from 'node:fs';
   }
 })();
 
-const ORIGIN = process.env.BBX_ORIGIN || 'https://blackbox-api.stillpoint-dev.workers.dev';
+/** Production. Named here for ONE reason: so the guard below can recognise it. */
+const PROD_ORIGIN = 'https://blackbox-api.stillpoint-dev.workers.dev';
+/** Staging — its own D1 and its own R2. The default, and the only safe target. */
+const STAGING_ORIGIN = 'https://blackbox-api-staging.stillpoint-dev.workers.dev';
+
+const ORIGIN = process.env.BBX_ORIGIN || STAGING_ORIGIN;
+
+// THE SEVERANCE GUARD. Structural, not conventional: the suite refuses to run against
+// production unless someone has explicitly said so in this invocation. Matched on the
+// HOSTNAME rather than the string, so a trailing slash, a path, or http:// cannot slip
+// past it. This is the same shape as the SendGrid suppression — a property of the
+// TARGET, never a mode someone has to remember to set.
+(() => {
+  let host;
+  try {
+    host = new URL(ORIGIN).hostname;
+  } catch {
+    console.error(`✗ BBX_ORIGIN is not a URL: ${ORIGIN}`);
+    process.exit(1);
+  }
+  if (host !== new URL(PROD_ORIGIN).hostname) return;
+  if (process.env.BBX_ALLOW_PROD === '1') {
+    console.log(
+      '⚠  RUNNING AGAINST PRODUCTION (BBX_ALLOW_PROD=1).\n' +
+        '   This WILL create organisations, accounts and events in the real database,\n' +
+        '   and the cleanup does not remove organisations. You asked for this.\n',
+    );
+    return;
+  }
+  console.error(
+    '✗ REFUSED: this suite is write-heavy and BBX_ORIGIN points at PRODUCTION.\n' +
+      '  It would create real organisations, accounts and events that nothing removes.\n' +
+      `  Run it against staging (the default): unset BBX_ORIGIN, or set it to\n    ${STAGING_ORIGIN}\n` +
+      '  If you genuinely mean to test production, set BBX_ALLOW_PROD=1.',
+  );
+  process.exit(1);
+})();
 const ADMIN =
   process.env.BBX_ADMIN_TOKEN ||
   (() => {
@@ -200,6 +261,28 @@ async function check(name, fn) {
 // =====================================================================
 async function run() {
   console.log(`BLACK BOX acceptance suite → ${ORIGIN}\n`);
+
+  await check('0. the target is running THIS commit — a green suite must mean this code passed', async () => {
+    // Severing the suite onto staging only buys anything if staging runs the code under
+    // test. A suite pointed at a stale worker reports green for code that was never
+    // exercised — worse than no suite, because it is believed. `pnpm deploy` ships
+    // staging and production from the same build id, so this check simply proves it ran.
+    const expected = (() => {
+      try {
+        return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8', shell: true }).trim();
+      } catch {
+        return '';
+      }
+    })();
+    assert(expected, 'could not read the git HEAD — cannot prove the target is current');
+    const res = await api('GET', `/version?ts=${Date.now()}`);
+    assert(res.status === 200 && res.data?.version, `target did not report a build: ${res.status}`);
+    assert(
+      res.data.version === expected,
+      `STALE TARGET: ${ORIGIN} is running '${res.data.version}' but HEAD is '${expected}'. ` +
+        'Run `pnpm deploy` first — otherwise this suite is testing code you are not shipping.',
+    );
+  });
 
   await check('1. signup + login, BOTH modes (direct + covert), mode persists', async () => {
     for (const mode of ['direct', 'covert']) {

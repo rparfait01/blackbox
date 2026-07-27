@@ -92,3 +92,73 @@ new_sqlite_classes = ["CascadeScheduler"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["EventChannel"]
+# =====================================================================
+# STAGING — where the acceptance suite runs. THE POINT: tests never operate on
+# production.
+#
+# The suite is a WRITE-HEAVY integration test. It signs up accounts, bootstraps
+# organisations, mints codes, opens events and uploads capture chunks. Pointed at
+# production it did all of that to the real database — ~26 orgs and a few orphan
+# accounts per run, permanently, because its cleanup only ever deleted accounts it
+# could sign back into. That is the same class of error as the SendGrid quota bug:
+# testing the safety system was degrading the safety system.
+#
+# So this environment is a COMPLETE severance, not a flag:
+#   DB     → blackbox-test        (its own D1; prod rows are unreachable from here)
+#   MEDIA  → blackbox-media-test  (capture chunks never land in the real bucket)
+#   VAULT  → blackbox-vault-test
+#
+# Bindings and vars are NON-INHERITABLE in wrangler — every one below must be
+# restated or the environment silently falls back to having none. `main`,
+# `compatibility_date`, `compatibility_flags`, `triggers` and the Durable Object
+# `migrations` ARE inherited, so the cron and the DO classes match production and
+# the cascade-timing checks stay honest.
+#
+# Secrets are per-environment too, and staging gets its OWN — set with
+# `wrangler secret put <NAME> --env staging`. They are deliberately NOT the
+# production values: a test environment holding production credentials is not a
+# severed environment.
+[env.staging]
+name = "blackbox-api-staging"
+
+[env.staging.vars]
+# The staging PWA origin is the same Pages deployment — only the DATA is severed.
+CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blackbox-pwa.pages.dev"
+PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
+WORKER_ORIGIN = "https://blackbox-api-staging.stillpoint-dev.workers.dev"
+SECURITY_CONTACT_EMAIL = "security@example.com"
+# STAGING'S OWN keypairs — NOT production's. The private halves are staging secrets, so
+# reusing the production public keys here would mean signatures that never verify. More
+# importantly, a test environment must not hold production signing keys: the whole point
+# of this environment is that compromising it reaches nothing real.
+INTEGRITY_PUBLIC_KEY = "MCowBQYDK2VwAyEAukhg3BBMXLS4wV0A0Lxw46kIakd9sXOaL4lp/V6eHwQ="
+REPORT_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEINaqxgJsApfosM1lTPKROXU0fzIwknZNfzUbdTBPpAvgwKm/YoNM1zFWBP0qIcIKzKfLtPZPc4xf8v+31vNMCw=="
+LINE_OA_BASIC_ID = "@346hrzaa"
+# The REAL product id: acceptance check 75 asserts that an unrecognised licence key
+# is refused as `invalid_license`, which only happens when Gumroad is actually
+# reached with a real product. A dummy here would answer `not_configured` and the
+# check would be testing nothing. It is public (it appears in Gumroad's embed) and
+# `increment_uses_count: false` means verification never consumes a real purchase.
+GUMROAD_PRODUCT_ID = "E8v_RiJkV5Tyjwryd5rMCg=="
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "blackbox-test"
+database_id = "bbca261e-56ce-443d-9f34-056f6dbbd68a"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "MEDIA"
+bucket_name = "blackbox-media-test"
+
+[[env.staging.r2_buckets]]
+binding = "VAULT"
+bucket_name = "blackbox-vault-test"
+
+[[env.staging.durable_objects.bindings]]
+name = "CASCADE_DO"
+class_name = "CascadeScheduler"
+
+[[env.staging.durable_objects.bindings]]
+name = "EVENT_CHANNEL"
+class_name = "EventChannel"
