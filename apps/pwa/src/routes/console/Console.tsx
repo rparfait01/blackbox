@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 
 import { api } from '@/lib/api';
 import { clearSession, getSessionToken, setSession, type DisplayMode } from '@/lib/auth';
@@ -40,6 +41,13 @@ import {
 
 type Level = 'operator' | 'admin' | 'coordinator' | 'unmarked';
 
+/** A nav entry, built by the SERVER for this level. The client renders these verbatim. */
+interface NavItem {
+  key: string;
+  label: string;
+  path: string;
+}
+
 interface ConsoleMe {
   userId: string;
   displayName: string | null;
@@ -47,6 +55,9 @@ interface ConsoleMe {
   levelLabel: string;
   orgId: string | null;
   orgName: string | null;
+  /** The sections this level may reach. A coordinator's array has no Maintenance entry —
+   *  it is absent from the response, not hidden by the client. */
+  nav: NavItem[];
   may: {
     orgs: boolean;
     accounts: boolean;
@@ -974,24 +985,129 @@ const METRIC_LABEL: Record<string, string> = {
   notReady: 'Not ready',
 };
 
-function ConsoleShell({ me, onSignOut }: { me: ConsoleMe; onSignOut: () => void }): JSX.Element {
+/**
+ * THE NAV. Rendered from `me.nav`, which the SERVER built for this level — the client
+ * filters nothing and invents nothing, so a coordinator's markup never contains the word
+ * "Maintenance". Present on EVERY console view, including the sub-views, so there is no
+ * screen whose only exit is the browser's back button.
+ *
+ * "Back to the app" is the way OUT, and it is deliberately the last item and visually
+ * separated: leaving the console is a different kind of action from moving inside it.
+ */
+function ConsoleNav({ nav, section }: { nav: NavItem[]; section: string }): JSX.Element {
+  return (
+    <nav
+      aria-label="Console sections"
+      className="sticky top-[53px] z-10 flex flex-wrap items-center gap-1 border-b border-bb-border-subtle bg-bb-surface px-6 py-2"
+    >
+      {nav.map((item) => {
+        const active = item.key === section;
+        return (
+          <Link
+            key={item.key || 'home'}
+            to={item.path}
+            aria-current={active ? 'page' : undefined}
+            className={`border px-3 py-[6px] font-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
+              active
+                ? 'border-status-armed bg-status-armed font-bold text-bb-bg'
+                : 'border-transparent text-bb-text-secondary hover:border-bb-border-defined hover:text-bb-text'
+            }`}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
+      {/* The way OUT. Always present, on every view, for every level. */}
+      <Link
+        to="/settings"
+        className="ml-auto border border-bb-border-defined px-3 py-[6px] font-mono text-[10px] uppercase tracking-[0.12em] text-bb-text-secondary transition-colors hover:border-bb-text-secondary hover:text-bb-text"
+      >
+        ← Back to app
+      </Link>
+    </nav>
+  );
+}
+
+/** The console home: who you are, what your scope is, and your counters. */
+function HomeView({ me }: { me: ConsoleMe }): JSX.Element {
   const { data: overview } = useLoader<Overview>('/v1/console/overview');
+  const metrics = Object.entries(overview?.metrics ?? {})
+    .filter(([k]) => k !== 'seatsTotal')
+    .slice(0, 4);
+  return (
+    <>
+      {metrics.length > 0 ? (
+        <div className="mb-7 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {metrics.map(([k, v]) => (
+            <Metric
+              key={k}
+              label={METRIC_LABEL[k] ?? k}
+              value={
+                k === 'seatsUsed' && overview?.metrics.seatsTotal != null ? (
+                  <>
+                    {v}
+                    <small className="text-base font-medium text-bb-text-tertiary"> / {overview.metrics.seatsTotal}</small>
+                  </>
+                ) : (
+                  v
+                )
+              }
+              tone={k === 'activations30d' ? 'warn' : k === 'notReady' ? (v > 0 ? 'hot' : 'ok') : undefined}
+            />
+          ))}
+        </div>
+      ) : null}
+      {/* Home also carries the shortcuts, so the nav is never the ONLY way through. */}
+      <div className="mb-6 flex flex-wrap gap-2">
+        {me.nav
+          .filter((n) => n.key)
+          .map((n) => (
+            <Link
+              key={n.key}
+              to={n.path}
+              className="border border-bb-border-defined bg-bb-elevated px-[14px] py-[7px] font-mono text-[10px] uppercase tracking-[0.12em] text-bb-text hover:border-bb-text-secondary"
+            >
+              {n.label} →
+            </Link>
+          ))}
+      </div>
+      <BoundaryPanel me={me} />
+    </>
+  );
+}
+
+function ConsoleShell({ me, onSignOut }: { me: ConsoleMe; onSignOut: () => void }): JSX.Element {
+  const params = useParams();
   const [toast, setToast] = useState<string | null>(null);
   const notify = useCallback((m: string) => {
     setToast(m);
     setTimeout(() => setToast(null), 2600);
   }, []);
 
-  const metrics = Object.entries(overview?.metrics ?? {})
-    .filter(([k]) => k !== 'seatsTotal')
-    .slice(0, 4);
+  // The requested section, VALIDATED against the nav the server sent. An unknown section,
+  // or one this level was not given, falls back to home rather than rendering an empty
+  // screen — a URL nobody can act on is the dead end this brief is about. The boundary is
+  // still the server: every one of these views calls an endpoint that refuses on its own.
+  const requested = params.section ?? '';
+  const section = me.nav.some((n) => n.key === requested) ? requested : '';
+
+  const TITLE: Record<string, string> = {
+    '': me.levelLabel,
+    orgs: 'Organizations',
+    codes: 'Access codes',
+    accounts: 'Accounts',
+    maintenance: 'Maintenance',
+    seats: 'Seats & coordinators',
+    roster: me.level === 'admin' ? 'Enrollments' : 'Your enrollments',
+  };
 
   return (
     <div className="min-h-full bg-bb-bg text-bb-text">
       <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-4 border-b border-bb-border-subtle bg-bb-bg px-6 py-[14px]">
-        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-bb-text-secondary">
+        {/* The wordmark is itself a link home — the conventional escape hatch. */}
+        <Link to="/console" className="font-mono text-[11px] uppercase tracking-[0.18em] text-bb-text-secondary">
           <b className="text-bb-text">BLACK BOX</b> <span className="text-status-armed">■</span> CONSOLE
-        </div>
+        </Link>
         <div className="flex items-center gap-4">
           <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-bb-text-tertiary">
             Signed in as <b className="font-medium text-bb-text-secondary">{me.displayName ?? me.userId}</b> ·{' '}
@@ -1002,6 +1118,8 @@ function ConsoleShell({ me, onSignOut }: { me: ConsoleMe; onSignOut: () => void 
           </Btn>
         </div>
       </header>
+
+      <ConsoleNav nav={me.nav} section={section} />
 
       <div className="flex flex-wrap items-center gap-3 border-b border-bb-border-subtle bg-bb-surface px-6 py-[10px] font-mono text-[10px] uppercase tracking-[0.14em] text-bb-text-secondary">
         <span className="h-[7px] w-[7px] flex-none rounded-full bg-status-armed" />
@@ -1015,7 +1133,7 @@ function ConsoleShell({ me, onSignOut }: { me: ConsoleMe; onSignOut: () => void 
       </div>
 
       <main className="mx-auto max-w-[1180px] px-6 pb-20 pt-7">
-        <h1 className="mb-1 font-display text-[30px] font-bold tracking-[-0.01em]">{me.levelLabel}</h1>
+        <h1 className="mb-1 font-display text-[30px] font-bold tracking-[-0.01em]">{TITLE[section] ?? me.levelLabel}</h1>
         <p className="mb-6 max-w-[74ch] text-[13px] text-bb-text-secondary">
           {me.level === 'operator'
             ? 'Full system view. Vet and create organizations, issue admin codes, and watch platform health. The only level that crosses org boundaries — and it still cannot read incident content.'
@@ -1024,35 +1142,34 @@ function ConsoleShell({ me, onSignOut }: { me: ConsoleMe; onSignOut: () => void 
               : 'Your organization only. Issue enrollment codes and track the enrollments you personally issued.'}
         </p>
 
-        {metrics.length > 0 ? (
-          <div className="mb-7 grid grid-cols-2 gap-3 md:grid-cols-4">
-            {metrics.map(([k, v]) => (
-              <Metric
-                key={k}
-                label={METRIC_LABEL[k] ?? k}
-                value={
-                  k === 'seatsUsed' && overview?.metrics.seatsTotal != null ? (
-                    <>
-                      {v}
-                      <small className="text-base font-medium text-bb-text-tertiary"> / {overview.metrics.seatsTotal}</small>
-                    </>
-                  ) : (
-                    v
-                  )
-                }
-                tone={k === 'activations30d' ? 'warn' : k === 'notReady' ? (v > 0 ? 'hot' : 'ok') : undefined}
-              />
-            ))}
+        {section === '' ? <HomeView me={me} /> : null}
+        {section === 'orgs' ? <OrgsPanel notify={notify} /> : null}
+        {section === 'seats' ? <SeatsPanel notify={notify} /> : null}
+        {section === 'codes' ? <CodesPanel me={me} notify={notify} /> : null}
+        {section === 'roster' ? <RosterPanel level={me.level} /> : null}
+        {section === 'accounts' ? <AccountsPanel /> : null}
+        {section === 'maintenance' ? <MaintenancePanel notify={notify} /> : null}
+
+        {/* Every sub-view ends with a one-click return to console home. Belt and braces
+            with the nav above: on a narrow screen the nav may be scrolled off, and a
+            person who has scrolled to the bottom of a long table should not have to
+            scroll back up to leave. */}
+        {section !== '' ? (
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Link
+              to="/console"
+              className="border border-bb-border-defined bg-bb-elevated px-[14px] py-[7px] font-mono text-[10px] uppercase tracking-[0.12em] text-bb-text hover:border-bb-text-secondary"
+            >
+              ← Console home
+            </Link>
+            <Link
+              to="/settings"
+              className="border border-bb-border-defined px-[14px] py-[7px] font-mono text-[10px] uppercase tracking-[0.12em] text-bb-text-secondary hover:border-bb-text-secondary hover:text-bb-text"
+            >
+              ← Back to app
+            </Link>
           </div>
         ) : null}
-
-        {me.may.orgs ? <OrgsPanel notify={notify} /> : null}
-        {me.may.seats ? <SeatsPanel notify={notify} /> : null}
-        {me.may.codes ? <CodesPanel me={me} notify={notify} /> : null}
-        {me.may.roster ? <RosterPanel level={me.level} /> : null}
-        {me.may.accounts ? <AccountsPanel /> : null}
-        {me.may.maintenance ? <MaintenancePanel notify={notify} /> : null}
-        <BoundaryPanel me={me} />
 
         <div className="mt-11 border-t border-bb-border-subtle pt-4 font-mono text-[10px] uppercase leading-[1.9] tracking-[0.08em] text-bb-text-tertiary">
           <b className="font-medium text-bb-teal">Data custody.</b> This console shows operational counters only —

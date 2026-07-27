@@ -10,6 +10,7 @@ import {
   deriveConsoleLevel,
   LEVEL_LABEL,
   mayIssueCodeRole,
+  navFor,
   readinessState,
   rosterVisibility,
 } from '../src/lib/console-scope';
@@ -120,6 +121,52 @@ describe('visibility narrows monotonically with the level', () => {
     expect(rosterVisibility('admin')).toBe('org');
     expect(rosterVisibility('coordinator')).toBe('own');
     expect(rosterVisibility('unmarked')).toBe('none');
+  });
+});
+
+describe('the nav is built server-side, per level, with no dead ends', () => {
+  it('a coordinator is never sent a Maintenance or Seats item — not hidden, ABSENT', () => {
+    const keys = navFor('coordinator').map((n) => n.key);
+    expect(keys).toEqual(['', 'codes', 'roster']);
+    expect(JSON.stringify(navFor('coordinator'))).not.toMatch(/maintenance|seats|organization/i);
+  });
+
+  it('an admin gets its own org views and none of the operator ones', () => {
+    const keys = navFor('admin').map((n) => n.key);
+    expect(keys).toEqual(['', 'seats', 'codes', 'roster']);
+    expect(JSON.stringify(navFor('admin'))).not.toMatch(/maintenance|organization|accounts/i);
+  });
+
+  it('the operator gets every operator view, including the one that exists', () => {
+    // A view that is reachable but has no nav entry is a dead end; the account
+    // level-indicator view is operator-only and must therefore be listed.
+    expect(navFor('operator').map((n) => n.key)).toEqual(['', 'orgs', 'codes', 'accounts', 'maintenance']);
+  });
+
+  it('UNMARKED gets no nav at all', () => {
+    expect(navFor('unmarked')).toEqual([]);
+  });
+
+  it('every level that has a nav starts with Home — the one-click way back', () => {
+    for (const level of ['operator', 'admin', 'coordinator'] as const) {
+      const nav = navFor(level);
+      expect(nav[0]).toEqual({ key: '', label: 'Home', path: '/console' });
+    }
+  });
+
+  it('every nav path is under /console and matches its key — no broken links', () => {
+    for (const level of ['operator', 'admin', 'coordinator'] as const) {
+      for (const item of navFor(level)) {
+        expect(item.path).toBe(item.key ? `/console/${item.key}` : '/console');
+        expect(item.label.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('nav breadth narrows with privilege — a lower level never gets a wider nav', () => {
+    const width = (l: 'operator' | 'admin' | 'coordinator') => navFor(l).length;
+    expect(width('operator')).toBeGreaterThan(width('admin'));
+    expect(width('admin')).toBeGreaterThan(width('coordinator'));
   });
 });
 

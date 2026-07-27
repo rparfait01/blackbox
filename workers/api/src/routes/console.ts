@@ -40,6 +40,7 @@ import {
   deriveConsoleLevel,
   LEVEL_LABEL,
   mayIssueCodeRole,
+  navFor,
   readinessState,
   rosterVisibility,
   type ConsoleIdentity,
@@ -155,6 +156,12 @@ consoleRoutes.get('/me', async (c) => {
       levelLabel: LEVEL_LABEL[identity.level],
       orgId: identity.orgId,
       orgName: org?.name ?? null,
+      // The NAV, built server-side for this level. The client renders exactly these
+      // items and derives none of its own: a coordinator's response does not contain
+      // "Maintenance" at all. This is not what enforces the boundary — the endpoints
+      // refuse independently — but it means the UI cannot invent a link the server
+      // would only reject, and cannot leave a reachable view without a way in.
+      nav: navFor(identity.level),
       // What the client may render. The server has ALREADY refused everything not in
       // here — this exists so the UI does not paint controls that would only 403, never
       // as the thing that stops the request.

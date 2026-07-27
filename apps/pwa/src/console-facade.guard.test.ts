@@ -102,14 +102,22 @@ describe('§0a the Settings door is gated on BOTH the server role and the Visibl
 describe('the console renders what the server decided — it does not decide', () => {
   const src = read('./routes/console/Console.tsx');
 
-  it('panel visibility comes from the server’s `may` object, never from a local rule', () => {
-    // Every panel is gated on me.may.*, which the SERVER computed. The client never
-    // derives permission from the level string itself.
+  it('the visible section is VALIDATED against the nav the server sent', () => {
+    // The client does not decide which sections exist for a level — it checks the
+    // requested one against me.nav, which the SERVER built, and falls back to home.
+    expect(src).toMatch(/me\.nav\.some\(\(n\) => n\.key === requested\) \? requested : ''/);
+    // Each panel renders on its own validated section, never on a client-side rule.
     for (const key of ['orgs', 'seats', 'codes', 'roster', 'accounts', 'maintenance']) {
-      expect(src, `panel ${key} is not gated on the server's decision`).toMatch(
-        new RegExp(`me\\.may\\.${key} \\?`),
+      expect(src, `panel ${key} is not gated on the validated section`).toMatch(
+        new RegExp(`section === '${key}' \\?`),
       );
     }
+  });
+
+  it('the nav itself is rendered from the server’s list, never a client-side table', () => {
+    expect(src).toMatch(/nav\.map\(\(item\) =>/);
+    // No hardcoded per-level menu anywhere in the client.
+    expect(src).not.toMatch(/const\s+NAV_(ITEMS|BY_LEVEL)|NAV\s*[:=]\s*\{\s*operator/);
   });
 
   it('the issuable code roles come from the server, not a client table', () => {
@@ -121,6 +129,44 @@ describe('the console renders what the server decided — it does not decide', (
   it('a refusal is surfaced honestly, never as an empty table', () => {
     expect(src).toMatch(/Server refused \(\$\{res\.status\}\)/);
     expect(src).toMatch(/<Deny>\{error\}<\/Deny>/);
+  });
+});
+
+describe('no dead ends — every console view has a way out', () => {
+  const src = read('./routes/console/Console.tsx');
+
+  it('the nav renders on EVERY view, not only on home', () => {
+    // <ConsoleNav> sits in the shell, outside the per-section switch, so every section
+    // renders with it. If it moved inside a section branch this would fail.
+    const shell = src.slice(src.indexOf('function ConsoleShell'), src.indexOf('// ENTRY —'));
+    expect(shell).toMatch(/<ConsoleNav nav=\{me\.nav\} section=\{section\} \/>/);
+    const navAt = shell.indexOf('<ConsoleNav');
+    const firstSectionAt = shell.indexOf("{section === ''");
+    expect(navAt).toBeGreaterThan(-1);
+    expect(navAt).toBeLessThan(firstSectionAt);
+  });
+
+  it('every view carries a way back to the app, and sub-views also return to console home', () => {
+    const shell = src.slice(src.indexOf('function ConsoleNav'), src.indexOf('// ENTRY —'));
+    // The way OUT of the console is in the persistent nav — so it is on every view.
+    expect(src.slice(src.indexOf('function ConsoleNav'), src.indexOf('/** The console home'))).toMatch(
+      /to="\/settings"[\s\S]{0,400}Back to app/,
+    );
+    // …and a sub-view repeats both at the end of a long page.
+    expect(shell).toMatch(/section !== '' \?[\s\S]{0,600}to="\/console"[\s\S]{0,400}to="\/settings"/);
+  });
+
+  it('the wordmark is a link home — the conventional escape hatch', () => {
+    expect(src).toMatch(/<Link to="\/console"[\s\S]{0,160}BLACK BOX/);
+  });
+
+  it('an unknown or unauthorised section falls back to home, never a blank screen', () => {
+    expect(src).toMatch(/me\.nav\.some\(\(n\) => n\.key === requested\) \? requested : ''/);
+  });
+
+  it('console home links onward to every section the server allowed', () => {
+    const home = src.slice(src.indexOf('function HomeView'), src.indexOf('function ConsoleShell'));
+    expect(home).toMatch(/me\.nav[\s\S]{0,120}\.map\(\(n\) => \(/);
   });
 });
 

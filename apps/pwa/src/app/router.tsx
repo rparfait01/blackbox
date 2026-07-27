@@ -31,10 +31,16 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
   // The code is entered manually on the page (never in the URL) and consumed only on
   // explicit submit. Registered before the catch-all, like /org.
   { path: '/org/register', element: <OrgRegister />, errorElement: <MeditationHome /> },
-  // Brief 33b — the console. Behind login on the PWA domain, reachable only by typing
-  // /console: nothing in the survivor skin links here, so it never appears in the Hidden
+  // Brief 33b — the console. Behind login on the PWA domain; the only link to it is the
+  // role-gated, Visible-skin-only door in Settings, so it never appears in the Hidden
   // facade (§0a). Registered explicitly, before the catch-all, exactly like /org.
+  //
+  // The :section child carries the console's own views (orgs / codes / seats / roster /
+  // accounts / maintenance). Both paths render the same shell, which validates the
+  // section against the nav the SERVER sent and falls back to home for anything else —
+  // so a hand-typed or stale sub-path can never strand someone on a blank screen.
   { path: '/console', element: <Console />, errorElement: <MeditationHome /> },
+  { path: '/console/:section', element: <Console />, errorElement: <MeditationHome /> },
   {
     path: '/blackbox',
     element: (

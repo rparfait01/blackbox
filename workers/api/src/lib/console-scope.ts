@@ -79,6 +79,59 @@ export function accountLevelLabel(input: {
   return LEVEL_LABEL[deriveConsoleLevel(input).level];
 }
 
+/**
+ * A console navigation item. The SERVER builds this list, so a role's nav is not a
+ * client-side filter over a master list — a coordinator's /me response does not contain
+ * the word "Maintenance" at all. Hiding a link is not a boundary; not sending it is at
+ * least not a lie, and the endpoints refuse independently either way.
+ */
+export interface NavItem {
+  /** Stable id — the URL segment under /console, and '' for the console home. */
+  key: string;
+  label: string;
+  path: string;
+}
+
+/**
+ * The nav for a level. Every entry is a view that this level can actually load, and
+ * every view a level can load has an entry — that symmetry is the whole rule: no page
+ * without a way in, no link without a page.
+ *
+ * `Home` is first for every role because it is the one-click way back from any sub-view.
+ */
+export function navFor(level: ConsoleLevel): NavItem[] {
+  const home: NavItem = { key: '', label: 'Home', path: '/console' };
+  switch (level) {
+    case 'operator':
+      return [
+        home,
+        { key: 'orgs', label: 'Organizations', path: '/console/orgs' },
+        { key: 'codes', label: 'Codes', path: '/console/codes' },
+        // Included deliberately even though it was not in the original list: the account
+        // level-indicator view exists and is operator-only, and a view with no way in is
+        // the exact dead end this is fixing.
+        { key: 'accounts', label: 'Accounts', path: '/console/accounts' },
+        { key: 'maintenance', label: 'Maintenance', path: '/console/maintenance' },
+      ];
+    case 'admin':
+      return [
+        home,
+        { key: 'seats', label: 'Seats', path: '/console/seats' },
+        { key: 'codes', label: 'Codes', path: '/console/codes' },
+        { key: 'roster', label: 'Enrollments', path: '/console/roster' },
+      ];
+    case 'coordinator':
+      return [
+        home,
+        { key: 'codes', label: 'Codes', path: '/console/codes' },
+        { key: 'roster', label: 'Roster', path: '/console/roster' },
+      ];
+    default:
+      // UNMARKED is not a console user: no nav, and every scoped route refuses it.
+      return [];
+  }
+}
+
 /** Enrollment-code roles the console can mint. `admin` is deliberately absent — see below. */
 export type IssuableRole = 'survivor' | 'coordinator';
 
