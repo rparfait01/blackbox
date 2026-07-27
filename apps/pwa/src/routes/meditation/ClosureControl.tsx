@@ -29,6 +29,10 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   const [shown, setShown] = useState(false);
   const [reason, setReason] = useState('');
   const [awaiting, setAwaiting] = useState(false);
+  // The event closed outright (no support party was engaged, so the survivor's own
+  // assent was the whole required set). Distinct from `awaiting`, which means a
+  // coordinator IS engaged and their assent is genuinely outstanding.
+  const [secured, setSecured] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [pressing, setPressing] = useState(false);
@@ -42,6 +46,7 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
       setMounted(true);
       setReason('');
       setAwaiting(false);
+      setSecured(false);
       setBusy(false);
       setProgress(0);
       setPressing(false);
@@ -73,9 +78,10 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
     setPressing(false);
   }
 
-  // Both outcomes route through here and set the SAME awaiting state. The only
-  // difference that ever leaves this function is the `sat` boolean sent to the
-  // server; the on-screen result is identical. (Brief 15 §E2 invariant.)
+  // Both gestures route through here and render whatever the ONE closure model
+  // returned. The `sat` boolean is the only difference that leaves this function, and
+  // the model never reads it (decideConsent branches on ENGAGEMENT, not on the gesture)
+  // — so at any moment both gestures produce the identical screen. §E2 invariant intact.
   async function submit(sat: boolean): Promise<void> {
     if (firedRef.current || busy) return;
     firedRef.current = true;
@@ -84,6 +90,13 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
     setBusy(false);
     if (result === 'no-session') {
       onClose();
+      return;
+    }
+    // 'closed' = the server closed it. With no support engaged that is immediate, and
+    // showing "your support contact will confirm" here was the solo deadlock: waiting
+    // on a party that does not exist.
+    if (result === 'closed') {
+      setSecured(true);
       return;
     }
     setAwaiting(true);
@@ -132,8 +145,26 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
         style={{ transform: shown ? 'translateY(0)' : 'translateY(100%)' }}
         onClick={(event) => event.stopPropagation()}
       >
-        {awaiting ? (
-          // IDENTICAL for sat and unsat — do not branch this view on the gesture.
+        {secured ? (
+          // Closed. Reached identically by a clean hold and a duress release — the model
+          // never reads the gesture — so this reveals nothing to an onlooker. Wording
+          // stays inside the meditation cover story.
+          <div className="flex min-h-[20rem] flex-col items-center justify-center text-center">
+            <p className="font-serif text-xl font-light tracking-[0.1em] text-med-text/80">Session ended.</p>
+            <p className="mt-4 max-w-xs text-xs leading-relaxed text-med-text/45">
+              You can close this whenever you are ready.
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-8 rounded-full border border-med-text/40 px-8 py-3 text-sm font-medium text-med-text"
+            >
+              Done
+            </button>
+          </div>
+        ) : awaiting ? (
+          // IDENTICAL for sat and unsat — do not branch this view on the gesture. Only
+          // reached when a support party is ACTUALLY engaged, so the copy is now true.
           <div className="flex min-h-[20rem] flex-col items-center justify-center text-center">
             <p className="animate-breath-label motion-reduce:animate-none font-serif text-xl font-light tracking-[0.1em] text-med-text/80">
               Closure requested — awaiting confirmation…

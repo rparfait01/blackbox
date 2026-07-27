@@ -107,3 +107,40 @@ describe('Brief 0B ACCEPTANCE [A] — the model is derived, with no solo special
     expect(src).toMatch(/isSupportEngaged/);
   });
 });
+
+/**
+ * §E2 — the model is GESTURE-BLIND, and that is what makes it safe for the client to
+ * render the model's answer directly.
+ *
+ * The client used to hardcode "awaiting confirmation" for both gestures, which hid the
+ * duress signal but also hid a completed close — a survivor with no support contact was
+ * told to wait for a party that did not exist. The client now renders what the model
+ * returned. That is only safe because the decision never depends on WHICH gesture was
+ * made, so both still land on the identical screen at any moment. This asserts that
+ * property directly rather than trusting it.
+ */
+describe('§E2 the decision never depends on which gesture was made', () => {
+  const states: Omit<ConsentState, 'closeRequestStatus'>[] = [
+    { status: 'active', supportAssentAt: null, coordinatorClaimedAt: null, tamperingAt: null },
+    { status: 'active', supportAssentAt: null, coordinatorClaimedAt: 1, tamperingAt: null },
+    { status: 'active', supportAssentAt: 2, coordinatorClaimedAt: 1, tamperingAt: null },
+    { status: 'active', supportAssentAt: null, coordinatorClaimedAt: null, tamperingAt: 5 },
+    { status: 'closed', supportAssentAt: null, coordinatorClaimedAt: null, tamperingAt: null },
+  ];
+
+  it('sat and unsat produce the identical decision in every state', () => {
+    for (const s of states) {
+      expect(decideConsent({ ...s, closeRequestStatus: 'sat' })).toBe(
+        decideConsent({ ...s, closeRequestStatus: 'unsat' }),
+      );
+    }
+  });
+
+  it('the derivation never reads the gesture value at all', () => {
+    // It may only test for PRESENCE of a gesture (null vs not), never sat-vs-unsat.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(here, '../src/lib/closure-consent.ts'), 'utf8');
+    const fn = source.slice(source.indexOf('export function decideConsent'), source.indexOf('recordUserAssent'));
+    expect(fn).not.toMatch(/=== 'sat'|=== 'unsat'/);
+  });
+});
