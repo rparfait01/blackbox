@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { api } from '@/lib/api';
-import { clearSession, getSessionToken, setSession, type DisplayMode } from '@/lib/auth';
+import { cacheConsoleLevel, clearSession, getSessionToken, setSession, type DisplayMode } from '@/lib/auth';
 import { loginWithPasskey, passkeySupported } from '@/lib/passkey';
 import {
   Btn,
@@ -1224,8 +1224,14 @@ export function Console(): JSX.Element {
     // could be told why they are not here — but every other route refuses them.
     if (res.ok && res.data && res.data.level !== 'unmarked') {
       setMe(res.data);
+      // Keep the root route's synchronous hint in step with server truth (see RootGate).
+      cacheConsoleLevel(res.data.levelLabel);
       setPhase('console');
     } else {
+      if (res.ok) {
+        // Confirmed no level — clear the hint so the landing stops offering the console.
+        cacheConsoleLevel(null);
+      }
       setPhase(res.status === 401 ? 'signin' : 'no-access');
     }
   }, []);

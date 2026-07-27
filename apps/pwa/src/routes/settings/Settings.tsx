@@ -4,6 +4,7 @@ import { CaretLeft } from '@phosphor-icons/react';
 
 import { api } from '@/lib/api';
 import {
+  cacheConsoleLevel,
   cacheEntitlement,
   clearSession,
   getDisplayMode,
@@ -87,7 +88,12 @@ export function Settings(): JSX.Element {
     // The console level is decided SERVER-SIDE from the session. The client never infers
     // it, and never reads a role out of the token — it renders whatever the server says.
     void api<{ level: string; levelLabel: string }>('/v1/console/me').then((r) => {
-      setConsoleLevel(r.ok && r.data && r.data.level !== 'unmarked' ? r.data.levelLabel : null);
+      const next = r.ok && r.data && r.data.level !== 'unmarked' ? r.data.levelLabel : null;
+      setConsoleLevel(next);
+      // Refresh the hint the ROOT route reads synchronously (see RootGate). Settings is
+      // the surface a roled user passes through most, so this keeps it warm — and a
+      // demoted account clears it here too, on the next visit.
+      cacheConsoleLevel(next);
     });
     void api<MeData>('/v1/me').then((r) => {
       if (r.ok && r.data) {

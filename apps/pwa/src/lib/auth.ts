@@ -13,6 +13,7 @@ const MODE_KEY = 'blackbox.displayMode';
 const SETUP_KEY = 'blackbox.setupComplete';
 const USER_KEY = 'blackbox.user';
 const ENTITLEMENT_KEY = 'blackbox.entitlement';
+const CONSOLE_KEY = 'blackbox.consoleLevel';
 
 export interface CachedUser {
   name: string;
@@ -147,4 +148,36 @@ export function clearSession(): void {
   del(USER_KEY);
   del(SETUP_KEY);
   del(ENTITLEMENT_KEY);
+  del(CONSOLE_KEY);
+}
+
+/**
+ * The account's console level, cached from the last live /v1/console/me — the same
+ * pattern as the entitlement cache, and for the same reason: the ROOT route must decide
+ * what to render SYNCHRONOUSLY.
+ *
+ * WHY THIS EXISTS AT ALL. `/` sends a signed-in Visible user straight to their armed
+ * screen. Making that decision wait on a network round-trip would put a spinner between
+ * a survivor and the screen with the trigger on it — offline, it would never resolve.
+ * So the landing reads this hint instead, and the hint is refreshed by every surface
+ * that already calls /v1/console/me (Settings, the console itself).
+ *
+ * IT IS A HINT, NEVER AN AUTHORITY. It decides which SCREEN is shown and nothing more:
+ * every console route re-derives the level server-side from the session and refuses on
+ * its own, so a tampered value buys a link to a page that will 403. It defaults to
+ * "no level", so the failure direction is a survivor going straight into their app —
+ * which is the right place for them to be.
+ */
+export function cacheConsoleLevel(label: string | null): void {
+  if (label) {
+    set(CONSOLE_KEY, label);
+  } else {
+    del(CONSOLE_KEY);
+  }
+}
+
+/** The cached console level label (DEV/ADMIN/COORD), or null for "no level known". */
+export function getCachedConsoleLevel(): string | null {
+  const v = get(CONSOLE_KEY);
+  return v === 'DEV' || v === 'ADMIN' || v === 'COORD' ? v : null;
 }
