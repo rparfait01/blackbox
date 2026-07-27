@@ -125,4 +125,16 @@ describe('rule 1 + 3 — the session token carries no deadline', () => {
   it('the no-expiry rule is documented as permanent, not as a "v0" placeholder', () => {
     expect(session).toMatch(/NOT EVER|not ever/);
   });
+
+  it('the accepted trade-off is recorded where the rule lives', () => {
+    // A rule with a real cost must carry that cost in writing, or the next person to read
+    // it "fixes" the missing expiry without knowing what was weighed.
+    expect(session).toMatch(/TRADE THIS MAKES|ACCEPTED DELIBERATELY/);
+    expect(session).toMatch(/found or unlocked device/i);
+    expect(session).toMatch(/covert facade/i);
+  });
+
+  it('any future expiring token must ship silent refresh in the same change', () => {
+    expect(session).toMatch(/SILENT BACKGROUND REFRESH/);
+  });
 });

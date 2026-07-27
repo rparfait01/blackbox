@@ -16,6 +16,24 @@
  * genuinely needs expiring credentials, it must ship SILENT BACKGROUND REFRESH in the same
  * change — a token that can expire without a refresh path is a logout with extra steps.
  * session-persistence.guard.test.ts fails the build if an age check appears here.
+ *
+ * THE TRADE THIS MAKES, ACCEPTED DELIBERATELY.
+ *
+ * A never-expiring passwordless session means a found or unlocked device stays signed in.
+ * That is a real cost and it is the right one to pay here. Weigh the two failures against
+ * each other:
+ *
+ *   - Silent logout: a survivor's safety device is dead and SHE DOES NOT KNOW IT. She
+ *     finds out by pressing the trigger and getting a login form. There is no recovery
+ *     from that in the moment it matters.
+ *   - Device compromise: someone else holds an unlocked phone. This threat is already
+ *     carried by other layers — the covert facade means the app does not announce what it
+ *     is, closure is a gesture rather than a stored secret, and the physical-device
+ *     assumption underpins the whole design.
+ *
+ * The first failure is silent, unrecoverable, and hits the person we exist to protect at
+ * the exact moment of crisis. The second is loud, already mitigated, and does not disarm
+ * anyone. So the session persists until it is explicitly ended.
  */
 
 import { hmacSha256Hex } from '@blackbox/shared';
