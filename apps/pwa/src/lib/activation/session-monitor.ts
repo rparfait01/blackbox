@@ -40,16 +40,47 @@ interface DeliveryStatus {
   closedBy: string | null;
 }
 
-async function fetchStatus(eventId: string, secret: string): Promise<DeliveryStatus | null> {
+/**
+ * The three answers that matter, kept distinct on purpose.
+ *
+ *   ok      — the server told us the event's status.
+ *   gone    — the server positively says this event does not exist (404/410). The local
+ *             session is a phantom: there is nothing to close, nothing to dispatch from.
+ *   unknown — we could not ASK (offline, timeout, 5xx). NOT an answer, and must never be
+ *             treated as one: the device may be recording a real emergency with no signal.
+ *
+ * Collapsing `gone` and `unknown` into a single null is what produced a phantom alert
+ * that survived hard resets — the monitor saw null, returned, and the local session stayed
+ * `active` forever with no server event behind it.
+ */
+type StatusProbe =
+  | { kind: 'ok'; status: DeliveryStatus }
+  | { kind: 'gone' }
+  | { kind: 'unknown' };
+
+async function fetchStatus(eventId: string, secret: string): Promise<StatusProbe> {
   const path = `/v1/events/${eventId}/delivery-status`;
   const timestamp = Date.now();
   const body = new Uint8Array(0);
   const signed = await signRequest({ secret, eventId, method: 'GET', path, timestamp, body });
-  const response = await fetch(`${API_BASE_URL}${path}`, { method: 'GET', headers: { ...signed } });
-  if (response.status !== 200) {
-    return null;
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { method: 'GET', headers: { ...signed } });
+  } catch {
+    return { kind: 'unknown' }; // no network — say nothing, change nothing.
   }
-  return (await response.json()) as DeliveryStatus;
+  // 404 is hmacAuth's answer for an event row that is not there; 410 is a retired route.
+  if (response.status === 404 || response.status === 410) {
+    return { kind: 'gone' };
+  }
+  if (response.status !== 200) {
+    return { kind: 'unknown' }; // 5xx, auth hiccup, anything else — not a verdict.
+  }
+  try {
+    return { kind: 'ok', status: (await response.json()) as DeliveryStatus };
+  } catch {
+    return { kind: 'unknown' };
+  }
 }
 
 /**
@@ -59,8 +90,11 @@ async function fetchStatus(eventId: string, secret: string): Promise<DeliverySta
  * against it (Brief 25).
  */
 export async function fetchEventStatus(eventId: string, secret: string): Promise<string | null> {
-  const status = await fetchStatus(eventId, secret);
-  return status?.status ?? null;
+  const probe = await fetchStatus(eventId, secret);
+  // 'gone' reports as closed: for every caller, an event the server does not have is an
+  // event that cannot be live. Only an unreachable server yields null (= "don't know").
+  if (probe.kind === 'gone') return 'closed';
+  return probe.kind === 'ok' ? probe.status.status : null;
 }
 
 async function tick(state: MonitorState): Promise<void> {
@@ -72,8 +106,22 @@ async function tick(state: MonitorState): Promise<void> {
     if (!session?.eventId || !session.hmacSecret) {
       return; // event not created yet — wait for the upload pipeline
     }
-    const status = await fetchStatus(session.eventId, session.hmacSecret);
-    if (!status) {
+    const probe = await fetchStatus(session.eventId, session.hmacSecret);
+
+    // We could not ask. Change nothing — the device may be recording a real emergency
+    // with no signal, and an absent answer is not permission to end an alert.
+    if (probe.kind === 'unknown') {
+      return;
+    }
+
+    // The server does not have this event. There is nothing to close and nothing to
+    // dispatch from, so holding a local "ALERT ACTIVE" is a lie the UI must not tell.
+    // This is the phantom-alert case: previously indistinguishable from "couldn't ask",
+    // so the session stayed active across every reload.
+    if (probe.kind === 'gone') {
+      const callback = state.onClosureConfirmed;
+      stopSessionMonitor();
+      callback();
       return;
     }
 
@@ -81,7 +129,7 @@ async function tick(state: MonitorState): Promise<void> {
     // contact "stand down". (Duress never flips status, so recording correctly
     // continues; the user cannot close their own session — activation is
     // committal.)
-    if (status.status === 'closed') {
+    if (probe.status.status === 'closed') {
       const callback = state.onClosureConfirmed;
       stopSessionMonitor();
       callback();
