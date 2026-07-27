@@ -34,6 +34,15 @@ describe('§0a the covert branch wins at the root, before anything branded', () 
     expect(gate).toContain('ClosurePinGate');
   });
 
+  it('the covert branch does NOT require a session — a signed-out survivor still gets it', () => {
+    // Gating this on isSetupComplete() would discard the preserved disguise at exactly
+    // the moment it matters: the launch right after a sign-out.
+    const covertLine = gate.slice(gate.indexOf("getDisplayMode() === 'covert'") - 40, gate.indexOf("getDisplayMode() === 'covert'") + 40);
+    expect(covertLine).not.toMatch(/isSetupComplete/);
+    // …while the branded branches DO still require one.
+    expect(gate).toMatch(/isSetupComplete\(\) && getDisplayMode\(\) === 'direct'/);
+  });
+
   it('a signed-in survivor with no role still goes STRAIGHT to the app', () => {
     // The landing must never become a toll gate on the way to the trigger screen.
     expect(gate).toMatch(/!getCachedConsoleLevel\(\)[\s\S]{0,120}to="\/blackbox"/);
@@ -110,6 +119,32 @@ describe('the landing routes internally — no dead ends, no external links', ()
     expect(landing).toMatch(/cacheConsoleLevel\(next\)/);
     // Signed out means no level, and the hint is cleared rather than left stale.
     expect(landing).toMatch(/if \(!signedIn\) \{[\s\S]{0,120}cacheConsoleLevel\(null\)/);
+  });
+});
+
+describe('the disguise survives sign-out — and only the disguise', () => {
+  const auth = read('./lib/auth.ts');
+
+  it('clearSession reads the mode BEFORE deleting, then restores it when covert', () => {
+    expect(auth).toMatch(/const disguise = getDisplayMode\(\);[\s\S]{0,400}if \(disguise === 'covert'\) \{[\s\S]{0,80}set\(MODE_KEY, 'covert'\)/);
+  });
+
+  it('direct is NOT preserved — the safe direction is sticky, the revealing one is not', () => {
+    const fn = auth.slice(auth.indexOf('export function clearSession'), auth.indexOf('export function clearSession') + 700);
+    expect(fn).not.toMatch(/set\(MODE_KEY, 'direct'\)/);
+    // The key is still deleted unconditionally first; only covert is written back.
+    expect(fn).toMatch(/del\(MODE_KEY\)/);
+  });
+
+  it('signing in still overwrites the skin from server truth — nobody is trapped', () => {
+    expect(auth).toMatch(/export function setSession[\s\S]{0,200}set\(MODE_KEY, mode\)/);
+  });
+
+  it('the session itself is still fully cleared', () => {
+    const fn = auth.slice(auth.indexOf('export function clearSession'), auth.indexOf('export function clearSession') + 700);
+    for (const key of ['TOKEN_KEY', 'USER_KEY', 'SETUP_KEY', 'ENTITLEMENT_KEY', 'CONSOLE_KEY']) {
+      expect(fn, `${key} must still be deleted on sign-out`).toMatch(new RegExp(`del\\(${key}\\)`));
+    }
   });
 });
 

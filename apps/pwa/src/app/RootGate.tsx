@@ -22,6 +22,14 @@ import { getCachedConsoleLevel, getDisplayMode, isSetupComplete } from '@/lib/au
  * matters most. So `covert` is checked before anything branded can be constructed, and
  * that branch returns exactly what it always returned.
  *
+ * THE COVERT BRANCH DOES NOT REQUIRE A SESSION, and that is the point of it. `clearSession`
+ * keeps the covert preference on purpose, so a survivor who signs out still opens into
+ * Stillpoint rather than a splash naming the product. Gating this on `isSetupComplete()`
+ * would throw away that preservation at the only moment it matters. A signed-out facade is
+ * not a degraded state either: the double-tap still reaches triggerAlert, which falls back
+ * to the tokenless event path the server already supports — so the trigger survives a
+ * sign-out, where previously a signed-out covert user was sent to onboarding and had none.
+ *
  * WHY THE ROLE COMES FROM A CACHE HERE, when everywhere else it comes from the server:
  * this decision must be synchronous. Waiting on /v1/console/me would put a spinner
  * between a survivor and their trigger screen, and offline it would never resolve. The
@@ -31,8 +39,8 @@ import { getCachedConsoleLevel, getDisplayMode, isSetupComplete } from '@/lib/au
  * against the server on mount.
  */
 export function RootGate(): JSX.Element {
-  // 1. COVERT FIRST. Nothing branded may be reached from here.
-  if (isSetupComplete() && getDisplayMode() === 'covert') {
+  // 1. COVERT FIRST, session or no session. Nothing branded may be reached from here.
+  if (getDisplayMode() === 'covert') {
     return (
       <ClosurePinGate>
         <MeditationHome />
