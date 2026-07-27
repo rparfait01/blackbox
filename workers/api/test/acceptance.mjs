@@ -103,6 +103,10 @@ const ADMIN =
     }
   })();
 const MAGIC = process.env.BBX_MAGIC_LINK_SECRET || '';
+/** Staging SESSION_SECRET — lets check 80 mint an AGED token and prove sessions never
+ *  expire on a timer. The worker's sessionSecret() is SESSION_SECRET ?? MAGIC_LINK_SECRET,
+ *  so fall back the same way rather than failing when only the magic secret is set. */
+const SESSION_SECRET = process.env.BBX_SESSION_SECRET || MAGIC;
 const PW = 'Acc-suite-pw-12345';
 
 const sha256hex = (s) => createHash('sha256').update(s).digest('hex');
@@ -2004,6 +2008,63 @@ async function run() {
     // The admin's seat list labels its own members with the same vocabulary.
     const seats = await api('GET', '/v1/console/seats', { bearer: O.admin.session });
     assert(seats.data.seats.every((s) => ['ADMIN', 'COORD', 'DEV'].includes(s.level)), `seat levels wrong: ${JSON.stringify(seats.data.seats.map((s) => s.level))}`);
+  });
+
+  // ---- SAFETY RULE: no unintentional sign-out, ever ----
+  //
+  // A session ends when the person ends it, and at no other time. The failure being
+  // prevented is specific: a survivor opens the app to trigger an alert and gets a login
+  // form instead, because something expired or a request failed while they had no signal.
+  // The unit guards pin the client and the token shape; this proves the SERVER's half on
+  // the live deployment — that age is not a factor in whether a session is accepted.
+
+  await check('80. sessions NEVER expire on a timer — a year-old token still authenticates', async () => {
+    const u = await signup();
+    // Sanity: the fresh session works, so a later 200 means something.
+    const fresh = await api('GET', '/v1/me', { bearer: u.session });
+    assert(fresh.status === 200, `a fresh session was refused: ${fresh.status}`);
+
+    if (!SESSION_SECRET) {
+      throw new Error('BBX_SESSION_SECRET required to mint an aged token (staging value; see test/.acceptance.env)');
+    }
+    // Mint a token for the SAME account, issued 400 days ago. Same shape the server mints:
+    // `<userId>.<issuedAt>.<hmac>`.
+    const aged = (days) => {
+      const issuedAt = Date.now() - days * 24 * 60 * 60 * 1000;
+      return `${u.userId}.${issuedAt}.${hmacHex(SESSION_SECRET, `${u.userId}.${issuedAt}`)}`;
+    };
+    for (const days of [1, 30, 400, 3650]) {
+      const res = await api('GET', '/v1/me', { bearer: aged(days) });
+      assert(res.status === 200, `a ${days}-day-old session was refused (${res.status}) — an expiry has been introduced`);
+    }
+
+    // The check must not be vacuous: a token with a BAD signature must still be refused,
+    // otherwise "old tokens work" could just mean authentication is broken.
+    const forged = `${u.userId}.${Date.now()}.${'0'.repeat(64)}`;
+    const bad = await api('GET', '/v1/me', { bearer: forged });
+    assert(bad.status === 401, `a forged token was ACCEPTED (${bad.status}) — authentication is broken`);
+    // …and a token for a different account is not interchangeable.
+    const other = await signup();
+    const crossed = `${other.userId}.${Date.now()}.${hmacHex(SESSION_SECRET, `${u.userId}.${Date.now()}`)}`;
+    const cross = await api('GET', '/v1/me', { bearer: crossed });
+    assert(cross.status === 401, `a token signed for another account was accepted: ${cross.status}`);
+  });
+
+  await check('81. an offline/failed check never invalidates a session — the token survives errors', async () => {
+    const u = await signup();
+    // Hammer the account with requests that FAIL for reasons that are not authentication:
+    // a bad route, a malformed body, an unauthorised scope. None of these may have any
+    // effect on whether the session still works afterwards.
+    await api('GET', '/v1/does-not-exist', { bearer: u.session });
+    await api('POST', '/v1/me/contacts/primary', { bearer: u.session, body: { nonsense: true } });
+    await api('GET', '/v1/console/orgs', { bearer: u.session });
+    await api('POST', '/v1/console/codes', { bearer: u.session, body: { role: 'admin' } });
+    const still = await api('GET', '/v1/me', { bearer: u.session });
+    assert(still.status === 200, `the session stopped working after failed requests: ${still.status}`);
+    // And the SAME token keeps working for the thing that matters most.
+    const ev = await api('POST', '/v1/events', { bearer: u.session, body: { source: 'acc-persist' } });
+    assert(ev.status === 201 && ev.data.eventId, `the trigger stopped working after failed requests: ${ev.status}`);
+    created.events.push(ev.data.eventId);
   });
 
   // ---- cleanup ----

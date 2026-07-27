@@ -1,8 +1,21 @@
 /**
- * Session tokens (W8A). HMAC-signed `<userId>.<issuedAt>.<sigHex>` — stateless,
- * no expiry in v0 (the user stays signed in until they sign out). Stored in the
- * PWA's localStorage and sent as `Authorization: Bearer <token>` on user-scoped
- * routes. userId is a UUID (no dots), so splitting on '.' is unambiguous.
+ * Session tokens (W8A). HMAC-signed `<userId>.<issuedAt>.<sigHex>` — stateless and
+ * **deliberately unexpiring**. Stored in the PWA's localStorage and sent as
+ * `Authorization: Bearer <token>` on user-scoped routes. userId is a UUID (no dots), so
+ * splitting on '.' is unambiguous.
+ *
+ * NO EXPIRY. NOT "not yet" — NOT EVER.
+ *
+ * This is a safety rule, not a convenience one. An idle timeout or a max-age would sign a
+ * survivor out silently, and they would discover it at the worst possible moment: opening
+ * the app to trigger an alert and being shown a login form instead. A session ends when
+ * the person ends it, and at no other time.
+ *
+ * `issuedAt` is carried for ATTRIBUTION and for the `sessionsValidFrom` comparison, never
+ * as a deadline: nothing here compares it to the clock, and nothing may. If a future brief
+ * genuinely needs expiring credentials, it must ship SILENT BACKGROUND REFRESH in the same
+ * change — a token that can expire without a refresh path is a logout with extra steps.
+ * session-persistence.guard.test.ts fails the build if an age check appears here.
  */
 
 import { hmacSha256Hex } from '@blackbox/shared';

@@ -1205,7 +1205,7 @@ function SignInShell({ title, subtitle, children }: { title: string; subtitle?: 
   );
 }
 
-type Phase = 'loading' | 'signin' | 'console' | 'no-access';
+type Phase = 'loading' | 'signin' | 'console' | 'no-access' | 'unreachable';
 type Pane = 'choose' | 'email-link' | 'sent' | 'recovery';
 
 export function Console(): JSX.Element {
@@ -1218,22 +1218,39 @@ export function Console(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const supported = passkeySupported();
 
-  const checkLevel = useCallback(async (): Promise<void> => {
+  /**
+   * Resolve the level, and NEVER let a failure end the session.
+   *
+   * This used to read `res.status === 401 ? 'signin' : 'no-access'`, which got both
+   * failure modes wrong: a network blip (status 0) told a legitimate operator they had
+   * "no console access", and a transient 401 dropped them onto a sign-in form. Losing the
+   * network is not losing the session. Only a CONFIRMED answer from the server changes
+   * anything; everything else retries and then degrades, still signed in.
+   */
+  const checkLevel = useCallback(async (attempt = 0): Promise<void> => {
     const res = await api<ConsoleMe>('/v1/console/me');
-    // UNMARKED is not a console user. The server still answers /me — it must, or nobody
-    // could be told why they are not here — but every other route refuses them.
+
     if (res.ok && res.data && res.data.level !== 'unmarked') {
       setMe(res.data);
       // Keep the root route's synchronous hint in step with server truth (see RootGate).
       cacheConsoleLevel(res.data.levelLabel);
       setPhase('console');
-    } else {
-      if (res.ok) {
-        // Confirmed no level — clear the hint so the landing stops offering the console.
-        cacheConsoleLevel(null);
-      }
-      setPhase(res.status === 401 ? 'signin' : 'no-access');
+      return;
     }
+    // A CONFIRMED "you have no level" — the server answered, and it answered plainly.
+    if (res.ok) {
+      cacheConsoleLevel(null);
+      setPhase('no-access');
+      return;
+    }
+    // Anything else is a failure to ASK, not an answer. Retry with backoff first.
+    if (attempt < 3) {
+      await new Promise((r) => setTimeout(r, 600 * 2 ** attempt));
+      return checkLevel(attempt + 1);
+    }
+    // Still unreachable. Stay signed in and say so honestly — never a forced sign-in,
+    // and never "no access", which would blame the person for a broken connection.
+    setPhase('unreachable');
   }, []);
 
   useEffect(() => {
@@ -1303,6 +1320,34 @@ export function Console(): JSX.Element {
 
   if (phase === 'console' && me) {
     return <ConsoleShell me={me} onSignOut={signOut} />;
+  }
+
+  // Could not REACH the server — not a verdict about this account. The session is intact
+  // and stays intact; the only controls are "try again" and going back to the app. There
+  // is deliberately no sign-in prompt here: a connection problem must never be presented
+  // as though the person had been signed out.
+  if (phase === 'unreachable') {
+    return (
+      <SignInShell title="Can’t reach the server" subtitle="You are still signed in.">
+        <p className="mb-6 text-[13px] leading-relaxed text-bb-text-secondary">
+          The console needs a connection to check your access. Nothing has changed about your account — try again when
+          you have signal.
+        </p>
+        <Btn
+          variant="primary"
+          className="mb-3 w-full py-3"
+          onClick={() => {
+            setPhase('loading');
+            void checkLevel();
+          }}
+        >
+          Try again
+        </Btn>
+        <Link to="/settings" className="block w-full text-center font-mono text-[11px] text-bb-text-tertiary underline">
+          Back to the app
+        </Link>
+      </SignInShell>
+    );
   }
 
   if (phase === 'no-access') {
