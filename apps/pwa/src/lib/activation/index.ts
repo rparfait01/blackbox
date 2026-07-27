@@ -7,6 +7,7 @@ import {
   appendLocation,
   createSession,
   getActiveSession,
+  getAllActiveSessions,
   updateSessionStatus,
 } from '@/lib/storage';
 import type { ActivationSource } from '@/lib/storage/types';
@@ -26,7 +27,7 @@ import {
 } from '@/lib/upload';
 import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
-import { startSessionMonitor, stopSessionMonitor } from './session-monitor';
+import { fetchEventStatus, startSessionMonitor, stopSessionMonitor } from './session-monitor';
 import { startHeartbeat, stopHeartbeat } from './heartbeat';
 
 /** How often the descriptive classifier runs over the session so far. */
@@ -93,6 +94,32 @@ export function isSessionActive(): boolean {
  * what matters.
  */
 export async function resumeActiveSession(): Promise<void> {
+  // RECONCILE EVERY ACTIVE RECORD, not just the newest. A device can hold more than one
+  // stale 'active' session, and the alert screen is driven by whether ANY exists — so
+  // reconciling only the latest left the others resurrecting the alert on every launch.
+  // That, plus a 404 being indistinguishable from "offline", is how a phantom alert
+  // survived hard resets.
+  //
+  // Server truth decides, and only a POSITIVE answer acts: an event the server does not
+  // have (or reports closed) closes the local record; a server we cannot REACH changes
+  // nothing, because a device recording a real emergency with no signal must keep going.
+  // Buffered capture is untouched either way — the upload queue is a separate store and
+  // drains on reconnect regardless of session status.
+  const stale = await getAllActiveSessions();
+  for (const s of stale) {
+    if (!uploadsEnabled || !s.eventId || !s.hmacSecret) {
+      // Never reached the backend, so there is nothing to reconcile against and nothing
+      // to close. It is not a live alert.
+      await updateSessionStatus(s.id, 'interrupted', Date.now());
+      continue;
+    }
+    const status = await fetchEventStatus(s.eventId, s.hmacSecret);
+    // null = could not ask. Leave it alone.
+    if (status === 'closed') {
+      await updateSessionStatus(s.id, 'closed', Date.now());
+    }
+  }
+
   const session = await getActiveSession();
   if (!session) {
     return;

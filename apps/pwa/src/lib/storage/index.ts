@@ -116,6 +116,29 @@ export async function setSessionBackend(
   }
 }
 
+/**
+ * EVERY local session still marked active — not just the newest.
+ *
+ * `getActiveSession()` deliberately returns only the latest, which is right for "what is
+ * happening now". It is wrong for reconciliation: a device can accumulate more than one
+ * stale active record, and reconciling only the newest leaves the others driving the
+ * alert screen forever. That is how a phantom alert survived repeated hard resets.
+ */
+export async function getAllActiveSessions(): Promise<SessionRecord[]> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_SESSIONS, 'readonly');
+    const matches = await promisifyRequest<SessionRecord[]>(
+      tx.objectStore(STORE_SESSIONS).index('byStatus').getAll('active'),
+    );
+    await transactionDone(tx);
+    return matches;
+  } catch (error) {
+    log.error('getAllActiveSessions failed', error);
+    return [];
+  }
+}
+
 export async function getActiveSession(): Promise<SessionRecord | null> {
   try {
     const db = await getDB();
