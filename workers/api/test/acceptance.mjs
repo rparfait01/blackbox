@@ -1741,6 +1741,11 @@ async function run() {
     assert(bCode.status === 201, `org B could not issue: ${bCode.status}`);
     const bSurvivor = await enrollWith(bCode.data.codes[0]);
     assert(bSurvivor.red.status === 200, `org B enrolment failed: ${JSON.stringify(bSurvivor.red.data)}`);
+    // A SECOND code, left untouched, is the revoke target. It must be one nothing else in
+    // this check consumes, or "still live" would be indistinguishable from "used up" and
+    // the assertion would prove nothing about revocation.
+    const bLive = await api('POST', '/v1/console/codes', { bearer: B.admin.session, body: { role: 'survivor' } });
+    assert(bLive.status === 201, `org B could not issue the revoke target: ${bLive.status}`);
 
     // 1. A's code list never contains B's code, whatever A does.
     const aCodes = await api('GET', '/v1/console/codes', { bearer: A.admin.session });
@@ -1748,12 +1753,16 @@ async function run() {
     assert(aCodes.data.codes.every((c) => c.orgId == null || c.orgId === A.orgId), 'org A’s code list leaked another org');
 
     // 2. A cannot REVOKE B's code — out of scope is indistinguishable from non-existent.
-    const revoke = await api('POST', `/v1/console/codes/${bCode.data.codes[0]}/revoke`, { bearer: A.admin.session, body: {} });
+    const revoke = await api('POST', `/v1/console/codes/${bLive.data.codes[0]}/revoke`, { bearer: A.admin.session, body: {} });
     assert(revoke.status === 404 && revoke.data.error === 'code_not_found', `org A revoked into org B: ${revoke.status} ${JSON.stringify(revoke.data)}`);
-    // …and the code is still live, which is what makes that a refusal rather than a lie.
+    // …and the code is STILL ACTIVE, which is what makes that a refusal rather than a lie:
+    // a 404 over a write that actually landed would be the worst of both.
     const stillLive = await api('GET', '/v1/console/codes', { bearer: B.admin.session });
-    const bRow = stillLive.data.codes.find((c) => c.code === bCode.data.codes[0]);
+    const bRow = stillLive.data.codes.find((c) => c.code === bLive.data.codes[0]);
     assert(bRow && bRow.status === 'active', `org A actually revoked org B’s code: ${JSON.stringify(bRow)}`);
+    // B can revoke its own — proving the 404 above was scope, not a broken endpoint.
+    const ownRevoke = await api('POST', `/v1/console/codes/${bLive.data.codes[0]}/revoke`, { bearer: B.admin.session, body: {} });
+    assert(ownRevoke.status === 200, `org B cannot revoke its own code — the refusal above was not scope: ${ownRevoke.status}`);
 
     // 3. A cannot remove a seat in B, nor change a role in B.
     const rm = await api('POST', `/v1/console/seats/${B.admin.userId}/remove`, { bearer: A.admin.session, body: {} });
