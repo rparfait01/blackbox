@@ -146,8 +146,27 @@ export async function registrationOptions(
     userDisplayName: user.name,
     // Platform authenticator + resident key: Face ID / Touch ID / device PIN, and
     // discoverable so login needs no email typed first.
+    //
+    // residentKey MUST be 'required', not 'preferred'. THE ASYMMETRY THIS FIXES:
+    // authenticationOptions() is deliberately usernameless — it sends NO
+    // allowCredentials, so the browser can only offer a DISCOVERABLE (resident)
+    // credential. With 'preferred', an authenticator is free to create a
+    // NON-discoverable one: enrolment reports success, the credential is stored, and
+    // then every sign-in fails because the browser has nothing it can offer for a
+    // usernameless request. Enrol and authenticate must be symmetric — it must be
+    // impossible to enrol a credential this login flow cannot find.
+    //
+    // requireResidentKey mirrors it for CTAP2.0 authenticators, which read the legacy
+    // boolean rather than the newer enum.
+    //
+    // Cost, accepted: an authenticator with no room for a discoverable credential now
+    // fails at ENROLMENT instead of silently succeeding and failing at every sign-in.
+    // A visible failure while she still has another way in beats a credential that
+    // looks enrolled and never works. Every platform authenticator this targets
+    // (Face ID, Touch ID, Windows Hello, Google Password Manager) supports them.
     authenticatorSelection: {
-      residentKey: 'preferred',
+      residentKey: 'required',
+      requireResidentKey: true,
       userVerification: 'preferred',
     },
     // Never enroll the same authenticator twice on one account.
