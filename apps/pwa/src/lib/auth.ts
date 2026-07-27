@@ -143,35 +143,32 @@ export function cacheEntitlement(next: CachedEntitlement): void {
 }
 
 /**
- * Sign out: drop the session and everything derived from it — but NOT the disguise.
+ * Sign out: drop the session and EVERYTHING derived from it, the display mode included.
  *
- * THE DISGUISE IS STICKY, AND ONLY THE DISGUISE. A survivor running Hidden has an app
- * on their home screen called "Stillpoint" whose icon is a wellness mark. If signing out
- * also forgot that choice, the next launch would render the branded landing — the product
- * name announced on a device chosen precisely so it would never say the product name. The
- * moment after a sign-out is not a safe moment to start shouting.
+ * THE DISPLAY MODE IS AN ACCOUNT PROPERTY, NOT A DEVICE ONE. Server truth lives in
+ * users.displayMode and arrives at sign-in (setSession writes it from the response). A
+ * signed-out device has no account, so it has no display mode to honour — and a stored
+ * one is worse than useless: it would decide what a stranger, a new visitor arriving from
+ * the public site, or a second person on a shared device sees, none of whom that
+ * preference belongs to.
  *
- * So `covert` survives sign-out and `direct` does not. That asymmetry is deliberate: the
- * safe direction is sticky, the revealing one is not. Signing back in overwrites it from
- * server truth (setSession), and the Visibility control overwrites it on demand, so this
- * traps nobody in a skin they did not pick.
+ * An earlier revision kept `covert` across sign-out so a survivor's disguise survived it.
+ * That was reversed deliberately: it meant a signed-out visitor could be shown the
+ * meditation facade with no obvious way into the product. The mode is cleared here so it
+ * CANNOT be read without a session, which makes the rule structural rather than something
+ * every future caller has to remember to check.
  *
- * LIMIT, stated because it cannot be engineered away: a true reinstall wipes localStorage,
- * so a fresh install has no preference to honour and gets the landing. No client-side
- * store survives an uninstall. The device has no identity at that point and genuinely
- * cannot know; signing in restores the covert skin from the account.
+ * The consequence is accepted and real: a survivor who signs out gets the branded landing
+ * on reopen until they sign back in, at which point their Hidden skin is restored from
+ * the account.
  */
 export function clearSession(): void {
-  const disguise = getDisplayMode();
   del(TOKEN_KEY);
   del(MODE_KEY);
   del(USER_KEY);
   del(SETUP_KEY);
   del(ENTITLEMENT_KEY);
   del(CONSOLE_KEY);
-  if (disguise === 'covert') {
-    set(MODE_KEY, 'covert');
-  }
 }
 
 /**

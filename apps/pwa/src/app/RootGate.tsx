@@ -3,43 +3,51 @@ import { Navigate } from 'react-router-dom';
 import { MeditationHome } from '@/routes/meditation/MeditationHome';
 import { Landing } from '@/routes/landing/Landing';
 import { ClosurePinGate } from '@/components/ClosurePinGate';
-import { getCachedConsoleLevel, getDisplayMode, isSetupComplete } from '@/lib/auth';
+import { getCachedConsoleLevel, getDisplayMode, getSessionToken, isSetupComplete } from '@/lib/auth';
 
 /**
  * Root gate. Decides what `/` renders, SYNCHRONOUSLY from localStorage — no flicker, no
- * fallback drift, and critically no network round-trip on the path to the armed screen.
+ * fallback drift, and no network round-trip on the path to the armed screen.
  *
- * THE ORDER IS THE SAFETY PROPERTY. The covert branch is first and unconditional:
+ * THE PRECEDENCE, in order, and the order is the whole thing:
  *
- *   covert                → Stillpoint (the meditation disguise), byte-identical
- *   direct, no console role → /blackbox (straight to the app, as before)
- *   direct, console role   → the Landing, to choose App or Console
- *   not set up             → the Landing (Sign in · Create an account)
+ *   1. NOT SIGNED IN        → the branded landing, ALWAYS. Any stored display mode is
+ *                             ignored, because it belongs to an account and there is no
+ *                             account here.
+ *   2. signed in + Hidden   → Stillpoint (the meditation disguise), byte-identical
+ *   3. signed in + Visible  → /blackbox, or the landing when the account holds a console
+ *                             role and therefore has a choice to make
  *
- * §0a: the installed PWA is named "Stillpoint" and its start_url is `/`. If a branded
- * landing could render there for a covert install, opening the home-screen icon would
- * announce the product — the loudest possible tell, in the exact moment the disguise
- * matters most. So `covert` is checked before anything branded can be constructed, and
- * that branch returns exactly what it always returned.
+ * WHY THE SESSION CHECK COMES FIRST. The display mode is an ACCOUNT property — server
+ * truth in users.displayMode, delivered at sign-in. A signed-out device has no account,
+ * so honouring a leftover mode would let one person's preference decide what the NEXT
+ * person sees: a visitor arriving from the public site, or a second user of a shared
+ * device, dropped into a meditation app with no visible way into the product. That was a
+ * real bug, and this ordering is its fix. `clearSession` also drops the mode outright, so
+ * the rule holds even if some future code path forgets to check for a session.
  *
- * THE COVERT BRANCH DOES NOT REQUIRE A SESSION, and that is the point of it. `clearSession`
- * keeps the covert preference on purpose, so a survivor who signs out still opens into
- * Stillpoint rather than a splash naming the product. Gating this on `isSetupComplete()`
- * would throw away that preservation at the only moment it matters. A signed-out facade is
- * not a degraded state either: the double-tap still reaches triggerAlert, which falls back
- * to the tokenless event path the server already supports — so the trigger survives a
- * sign-out, where previously a signed-out covert user was sent to onboarding and had none.
+ * ACCEPTED CONSEQUENCE: a survivor running Hidden who signs out gets the branded landing
+ * on reopen, and does not have the facade's covert trigger until they sign back in. Their
+ * Hidden skin returns from the account at sign-in.
  *
- * WHY THE ROLE COMES FROM A CACHE HERE, when everywhere else it comes from the server:
- * this decision must be synchronous. Waiting on /v1/console/me would put a spinner
- * between a survivor and their trigger screen, and offline it would never resolve. The
- * cache is a HINT that only picks a screen — it defaults to "no role", so the failure
- * direction is a survivor going straight into their app. Every console route still
- * derives the level server-side and refuses on its own, and the Landing itself confirms
- * against the server on mount.
+ * §0a still holds where it must: for a SIGNED-IN covert install — the one the disguise
+ * exists to protect, and the one whose home-screen icon says "Stillpoint" — `/` renders
+ * the facade and nothing branded is reachable from it.
+ *
+ * WHY THE ROLE COMES FROM A CACHE, when everywhere else it comes from the server: this
+ * decision must be synchronous. Waiting on /v1/console/me would put a spinner between a
+ * survivor and their trigger screen, and offline it would never resolve. The cache is a
+ * HINT that only picks a screen — it defaults to "no role", so the failure direction is a
+ * survivor going straight into their app. Every console route still derives the level
+ * server-side and refuses on its own, and the Landing confirms against the server on mount.
  */
 export function RootGate(): JSX.Element {
-  // 1. COVERT FIRST, session or no session. Nothing branded may be reached from here.
+  // 1. NO SESSION → the branded landing, unconditionally. Note this deliberately does NOT
+  //    consult getDisplayMode(): a signed-out device has no account whose skin to wear.
+  if (getSessionToken() == null) {
+    return <Landing />;
+  }
+  // 2. Signed in and Hidden → the disguise, exactly as it has always rendered.
   if (getDisplayMode() === 'covert') {
     return (
       <ClosurePinGate>
@@ -47,12 +55,10 @@ export function RootGate(): JSX.Element {
       </ClosurePinGate>
     );
   }
-  // 2. A signed-in survivor with no console role goes straight into the app, exactly as
-  //    before — the landing is not a toll gate on the way to the trigger.
-  if (isSetupComplete() && getDisplayMode() === 'direct' && !getCachedConsoleLevel()) {
+  // 3. Signed in and Visible: straight into the app, unless this account holds a console
+  //    role and so has a genuine choice between the app and the console.
+  if (isSetupComplete() && !getCachedConsoleLevel()) {
     return <Navigate to="/blackbox" replace />;
   }
-  // 3. Everyone else — signed out, or signed in with a console role — gets the entry
-  //    router. Onboarding is one branch off it, not the default everyone was dumped on.
   return <Landing />;
 }

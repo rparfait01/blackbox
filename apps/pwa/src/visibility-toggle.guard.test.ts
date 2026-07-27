@@ -55,9 +55,21 @@ describe('§0 visibility toggle — relabel + pinned mapping', () => {
 
 describe('§0 RootGate renders the mode the toggle sets', () => {
   const rootGate = read('./app/RootGate.tsx');
-  it("direct → instrument (/blackbox); covert → Stillpoint facade", () => {
-    expect(rootGate).toMatch(/getDisplayMode\(\) === 'direct'/);
-    expect(rootGate).toContain("to=\"/blackbox\"");
+  it('covert → Stillpoint facade; direct → instrument (/blackbox)', () => {
+    // Covert is now the only mode named explicitly — direct is the fall-through — so the
+    // PINNED mapping is asserted by where each branch leads, not by a literal 'direct'.
+    expect(rootGate).toMatch(/getDisplayMode\(\) === 'covert'[\s\S]{0,200}MeditationHome/);
+    expect(rootGate).toContain('to="/blackbox"');
     expect(rootGate).toContain('MeditationHome');
+  });
+
+  it('the mapping is never inverted: covert must not route to the instrument', () => {
+    // A survivor choosing Hidden must NEVER get the instrument (the load-bearing rule).
+    const covertBranch = rootGate.slice(
+      rootGate.indexOf("getDisplayMode() === 'covert'"),
+      rootGate.indexOf('to="/blackbox"'),
+    );
+    expect(covertBranch).toContain('MeditationHome');
+    expect(covertBranch).not.toContain('to="/blackbox"');
   });
 });

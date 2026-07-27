@@ -18,29 +18,35 @@ const SRC = dirname(fileURLToPath(import.meta.url));
 const read = (p: string): string => readFileSync(join(SRC, p), 'utf8');
 const stripComments = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
-describe('§0a the covert branch wins at the root, before anything branded', () => {
+describe('the session check wins at the root, before any display mode is consulted', () => {
   const gate = stripComments(read('./app/RootGate.tsx'));
 
-  it('checks covert FIRST — earlier in the function than any Landing reference', () => {
-    const covertAt = gate.indexOf("getDisplayMode() === 'covert'");
-    const landingAt = gate.indexOf('<Landing />');
-    expect(covertAt).toBeGreaterThan(-1);
-    expect(landingAt).toBeGreaterThan(-1);
-    expect(covertAt, 'the covert check must precede any branded render').toBeLessThan(landingAt);
+  it('checks for a SESSION first — earlier than any getDisplayMode() call', () => {
+    // A signed-out device has no account, so it has no display mode to honour. Reading a
+    // leftover one would let the previous user's preference decide what the NEXT person
+    // sees — a visitor from the public site dropped into a meditation app.
+    const sessionAt = gate.indexOf('getSessionToken() == null');
+    const modeAt = gate.indexOf('getDisplayMode()');
+    expect(sessionAt).toBeGreaterThan(-1);
+    expect(modeAt).toBeGreaterThan(-1);
+    expect(sessionAt, 'the session check must precede any display-mode read').toBeLessThan(modeAt);
   });
 
-  it('the covert branch still returns the untouched facade', () => {
+  it('the no-session branch returns the Landing and consults NOTHING else', () => {
+    const branch = gate.slice(gate.indexOf('getSessionToken() == null'), gate.indexOf('getDisplayMode()'));
+    expect(branch).toMatch(/<Landing \/>/);
+    expect(branch, 'the signed-out branch must not read a stored skin').not.toMatch(/getDisplayMode|covert|MeditationHome/);
+  });
+
+  it('a SIGNED-IN covert install still gets the untouched facade', () => {
     expect(gate).toMatch(/getDisplayMode\(\) === 'covert'[\s\S]{0,200}MeditationHome/);
     expect(gate).toContain('ClosurePinGate');
   });
 
-  it('the covert branch does NOT require a session — a signed-out survivor still gets it', () => {
-    // Gating this on isSetupComplete() would discard the preserved disguise at exactly
-    // the moment it matters: the launch right after a sign-out.
-    const covertLine = gate.slice(gate.indexOf("getDisplayMode() === 'covert'") - 40, gate.indexOf("getDisplayMode() === 'covert'") + 40);
-    expect(covertLine).not.toMatch(/isSetupComplete/);
-    // …while the branded branches DO still require one.
-    expect(gate).toMatch(/isSetupComplete\(\) && getDisplayMode\(\) === 'direct'/);
+  it('the facade is unreachable without a session — the covert branch sits after the guard', () => {
+    const facadeAt = gate.indexOf('MeditationHome', gate.indexOf('export function RootGate'));
+    const sessionAt = gate.indexOf('getSessionToken() == null');
+    expect(sessionAt).toBeLessThan(facadeAt);
   });
 
   it('a signed-in survivor with no role still goes STRAIGHT to the app', () => {
@@ -122,29 +128,24 @@ describe('the landing routes internally — no dead ends, no external links', ()
   });
 });
 
-describe('the disguise survives sign-out — and only the disguise', () => {
+describe('the display mode is an ACCOUNT property — sign-out drops it', () => {
   const auth = read('./lib/auth.ts');
+  const fn = auth.slice(auth.indexOf('export function clearSession'), auth.indexOf('export function clearSession') + 500);
 
-  it('clearSession reads the mode BEFORE deleting, then restores it when covert', () => {
-    expect(auth).toMatch(/const disguise = getDisplayMode\(\);[\s\S]{0,400}if \(disguise === 'covert'\) \{[\s\S]{0,80}set\(MODE_KEY, 'covert'\)/);
-  });
-
-  it('direct is NOT preserved — the safe direction is sticky, the revealing one is not', () => {
-    const fn = auth.slice(auth.indexOf('export function clearSession'), auth.indexOf('export function clearSession') + 700);
-    expect(fn).not.toMatch(/set\(MODE_KEY, 'direct'\)/);
-    // The key is still deleted unconditionally first; only covert is written back.
+  it('clearSession deletes the mode and never writes one back', () => {
+    // Keeping a mode without a session is what let a signed-out visitor reach the facade.
     expect(fn).toMatch(/del\(MODE_KEY\)/);
+    expect(fn, 'no skin may survive sign-out').not.toMatch(/set\(MODE_KEY/);
   });
 
-  it('signing in still overwrites the skin from server truth — nobody is trapped', () => {
-    expect(auth).toMatch(/export function setSession[\s\S]{0,200}set\(MODE_KEY, mode\)/);
-  });
-
-  it('the session itself is still fully cleared', () => {
-    const fn = auth.slice(auth.indexOf('export function clearSession'), auth.indexOf('export function clearSession') + 700);
+  it('the whole session is cleared with it', () => {
     for (const key of ['TOKEN_KEY', 'USER_KEY', 'SETUP_KEY', 'ENTITLEMENT_KEY', 'CONSOLE_KEY']) {
-      expect(fn, `${key} must still be deleted on sign-out`).toMatch(new RegExp(`del\\(${key}\\)`));
+      expect(fn, `${key} must be deleted on sign-out`).toMatch(new RegExp(`del\\(${key}\\)`));
     }
+  });
+
+  it('sign-in restores the skin from server truth, so Hidden is not lost', () => {
+    expect(auth).toMatch(/export function setSession[\s\S]{0,200}set\(MODE_KEY, mode\)/);
   });
 });
 
