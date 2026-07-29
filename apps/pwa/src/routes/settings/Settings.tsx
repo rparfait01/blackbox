@@ -20,6 +20,7 @@ import { ContactTabs } from './ContactTabs';
 import { AnonymousTally } from './AnonymousTally';
 import { GuidedIntake } from './GuidedIntake';
 import { CertifiedReport } from './CertifiedReport';
+import { EvidenceReview } from './EvidenceReview';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean; entitlement?: string; entitlementSource?: string | null };
@@ -72,9 +73,13 @@ export function Settings(): JSX.Element {
   // Brief 27: the guided intake (structured case file). Settings-only; filing is
   // fail-closed (blocked unless zero-knowledge storage is armed).
   const [intakeOpen, setIntakeOpen] = useState(false);
-  // Brief 29: the survivor-generated certified report. Settings-only, and gated on
-  // zero-knowledge custody — with the flag off the entry point is not rendered at all.
+  // Brief 29: the survivor-generated OFFICIAL report. Settings-only, and gated on
+  // zero-knowledge custody — with the flag off the entry states that honestly and cannot
+  // be opened, rather than disappearing or failing on tap.
   const [reportOpen, setReportOpen] = useState(false);
+  // Evidence review: her own captures, decrypted and played on this device. Same gate as
+  // the official report (both need sealed custody), same honest state when it is off.
+  const [reviewOpen, setReviewOpen] = useState(false);
   // Brief 33b — THE DOOR to the console. `null` until the server answers, and null is
   // rendered as "no door": this fails CLOSED, so a slow or failed request shows nothing
   // rather than a link that would only 403.
@@ -430,13 +435,32 @@ export function Settings(): JSX.Element {
 
         <ContactTabs flash={flash} />
 
-        {/* Brief 25 — anonymous incident tally. A calm, deliberate acknowledgment that
-            something happened, severed from identity. Settings-only (never the Hidden
-            facade) and unreachable during an active alert. */}
-        <Group label="Something happened">
+        {/* ─── REPORTS. Two reports, two destinations, and the labels here are what keeps
+            them apart. Conflating them is the failure mode this section is named against:
+
+              ANONYMOUS  → leaves her hands. It goes to the severed public tally that closes
+                           the unreported-incident gap. No identity, and no way back — which
+                           is exactly why the copy says so before she sends and again at the
+                           consent step.
+              OFFICIAL   → never leaves her hands. Built on this device from her own
+                           recording, signed so a stranger can check it, and exported by HER.
+                           There is no BLACK BOX repository of personal reports: no table
+                           holds one, and POST /reports/sign takes two hashes, not content.
+              REVIEW     → goes nowhere at all. She opens her own recording in this tab; the
+                           bytes are released when she closes the screen.
+
+            The two flag-gated entries are always PRESENT and never dead: with zero-knowledge
+            custody off they render an honest unavailable state rather than a tap that fails
+            or an entry that silently isn't there. §0a: the Hidden facade renders none of
+            this — the facade surfaces are asserted clean in the guard tests. */}
+
+        {/* Brief 25 — anonymous incident tally. Severed from identity: no account, device,
+            or event column exists on that store to link back with. */}
+        <Group label="Anonymous report">
           <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
-            Acknowledge anonymously that an incident occurred — four taps, nothing about what happened or about
-            you. It’s counted toward statistics on violence that usually goes unreported.
+            Record anonymously that something happened — four taps, nothing about what happened and nothing about
+            you. It goes into public statistics on violence that usually goes unreported. Because it can’t be
+            traced to you, it also can’t be taken back.
           </p>
           <button
             onClick={() => setTallyOpen(true)}
@@ -446,39 +470,63 @@ export function Settings(): JSX.Element {
           </button>
         </Group>
 
-        {/* Brief 27 — guided intake producing a structured, encrypted case file the survivor
-            owns. Settings-only; filing is fail-closed (blocked unless ZK storage is armed). */}
-        <Group label="Make a report">
+        {/* Brief 29 — the survivor-generated certified report. Built on her device from her
+            own decrypted recording, signed so any third party can verify it independently.
+            HERS: we hold no copy, and the download is what puts it in her custody. */}
+        <Group label="Official report">
           <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
-            A private, guided space to record what happened, in your own words and at your own pace. Your report is
-            encrypted under your own key — only you can open it — and you can export it to legal aid or counsel.
+            Your own certified account of an incident, built on this phone from your own recording and signed so
+            anyone — a court, an advocate, an insurer — can check it without taking our word for it. It is yours:
+            we keep no copy, and you decide who ever sees it.
+          </p>
+          {envelopeEncryptionEnabled ? (
+            <button
+              onClick={() => setReportOpen(true)}
+              className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
+            >
+              Start an official report
+            </button>
+          ) : (
+            <NotYet>Available when secure storage is enabled</NotYet>
+          )}
+        </Group>
+
+        {/* Brief 26 read side — her own captures, opened on her device with her key. No
+            download here on purpose: producing a file is the official report's step, behind
+            its custody caution. */}
+        <Group label="Evidence review">
+          <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
+            Watch or listen to your own recordings, opened here on this phone with your key. Nothing is downloaded
+            and nothing is sent anywhere — it’s just you, looking at what was recorded.
+          </p>
+          {envelopeEncryptionEnabled ? (
+            <button
+              onClick={() => setReviewOpen(true)}
+              className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
+            >
+              Review my evidence
+            </button>
+          ) : (
+            <NotYet>Available when secure storage is enabled</NotYet>
+          )}
+        </Group>
+
+        {/* Brief 27 — guided intake producing a structured, sealed case file. Distinct from
+            the official report above and deliberately labelled so: this is her WRITTEN
+            account, sealed under her key; the official report is the certified, signed
+            document built from the recording. Filing is fail-closed. */}
+        <Group label="Written account">
+          <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
+            A private, guided space to set down what happened in your own words, at your own pace. It’s sealed
+            under your key — only you can open it — and you can take it to legal aid or counsel.
           </p>
           <button
             onClick={() => setIntakeOpen(true)}
             className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
           >
-            Start a report
+            Write an account
           </button>
         </Group>
-
-        {/* Brief 29 — the survivor-generated certified report. Built on her device from her
-            own decrypted recording, signed so any third party can verify it independently.
-            Flag-gated: with zero-knowledge custody off there is nothing to certify against,
-            so the entry point does not exist at all. */}
-        {envelopeEncryptionEnabled ? (
-          <Group label="Certified report">
-            <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
-              A report you generate yourself, from your own recording, with a signature anyone can check —
-              independently of us. Your own words stay yours, in a separate section that is never signed or judged.
-            </p>
-            <button
-              onClick={() => setReportOpen(true)}
-              className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
-            >
-              Start a certified report
-            </button>
-          </Group>
-        ) : null}
 
         <button onClick={() => void signOut()} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
@@ -507,6 +555,7 @@ export function Settings(): JSX.Element {
       {tallyOpen ? <AnonymousTally onClose={() => setTallyOpen(false)} /> : null}
       {intakeOpen ? <GuidedIntake onClose={() => setIntakeOpen(false)} /> : null}
       {reportOpen ? <CertifiedReport onClose={() => setReportOpen(false)} /> : null}
+      {reviewOpen ? <EvidenceReview onClose={() => setReviewOpen(false)} /> : null}
     </main>
   );
 }
@@ -543,6 +592,19 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
       <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.12em] text-med-text/45">{label}</div>
       {children}
     </section>
+  );
+}
+/**
+ * The honest state for an entry whose feature is not switched on yet. Deliberately NOT a
+ * button: a tap that goes nowhere teaches a survivor that this app's controls are unreliable,
+ * and that lesson is expensive on the one day it matters. The entry stays visible and named
+ * so she knows the capability exists and what turns it on.
+ */
+function NotYet({ children }: { children: React.ReactNode }): JSX.Element {
+  return (
+    <p className="w-full rounded-full border border-dashed border-med-text/20 py-3 text-center text-[12px] text-med-text/40">
+      {children}
+    </p>
   );
 }
 function Row({ k, v }: { k: string; v: string }): JSX.Element {

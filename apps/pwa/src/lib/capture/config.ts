@@ -8,8 +8,10 @@ export const DEFAULT_CAPTURE_MODE: CaptureMode = 'audio';
 
 /**
  * Capture mode by activation source (Fix Brief 1 #6). Overt (direct-tap)
- * activations record audio + front camera; covert (stillpoint-press) keep the
- * camera OFF so nothing on the user's phone betrays that capture is running.
+ * activations record audio + the REAR camera (see media-capture.ts — the phone
+ * is not going to be turned around mid-emergency); covert (stillpoint-press)
+ * keep the camera OFF so nothing on the user's phone betrays that capture is
+ * running.
  * Voice/button default to audio until those overt sources are wired.
  */
 export function captureModeForSource(source: ActivationSource): CaptureMode {

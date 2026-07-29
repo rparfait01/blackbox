@@ -110,17 +110,39 @@ export class MediaCapture {
   }
 
   /**
-   * Acquire the capture stream. In overt (audio-video) mode, fall back to
-   * audio-only if the camera is missing or denied — never lose audio + location
-   * just because there is no camera.
+   * Acquire the capture stream. In overt (audio-video) mode, prefer the REAR
+   * (`environment`) camera: in an emergency the survivor will not turn the phone
+   * around, so the front lens records her own face while the rear lens faces
+   * away from her — toward whatever is happening. Rear is the evidentiary
+   * default.
+   *
+   * The ladder degrades but never fails on the way down, because capture
+   * availability outranks capture quality:
+   *   1. exact rear    — guarantees the rear lens whenever the device has one
+   *   2. ideal rear    — any camera, rear preferred (devices that don't report
+   *                      facingMode, e.g. many desktop webcams)
+   *   3. any camera    — some video beats none
+   *   4. audio only    — never lose audio + location just because there is no
+   *                      usable camera
    */
   private async acquireStream(): Promise<MediaStream> {
     if (this.options.mode === 'audio-video') {
-      try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'user' } });
-      } catch (error) {
-        log.error('video capture unavailable; falling back to audio-only', error);
+      const videoConstraints: MediaTrackConstraints[] = [
+        { facingMode: { exact: 'environment' } },
+        { facingMode: { ideal: 'environment' } },
+        {},
+      ];
+      for (const video of videoConstraints) {
+        try {
+          return await navigator.mediaDevices.getUserMedia({ audio: true, video });
+        } catch (error) {
+          // Expected on front-camera-only devices for the `exact` rung; the
+          // loop simply relaxes the constraint. Only the last failure means we
+          // genuinely have no camera.
+          log.error('camera constraint unavailable; relaxing', error);
+        }
       }
+      log.error('video capture unavailable; falling back to audio-only');
     }
     return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   }

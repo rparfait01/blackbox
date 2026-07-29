@@ -49,9 +49,21 @@ describe('§-1 [A] fully behind the flag', () => {
     expect(envelopeEncryptionEnabled).toBe(false);
   });
 
-  it('the Settings entry point is rendered only when the flag is armed', () => {
+  /**
+   * The ACTION is behind the flag; the ENTRY is not. Those are different things, and the
+   * later "report destinations" brief moved the second one deliberately: an entry that
+   * silently isn't there teaches nothing, while a tap that fails teaches the survivor this
+   * app's controls are unreliable. So the named entry always renders, and with the flag down
+   * its control is a non-interactive honest state that cannot open the flow.
+   */
+  it('the Settings ACTION is armed only behind the flag, and the off state is not tappable', () => {
     const settings = read('./routes/settings/Settings.tsx');
-    expect(settings).toMatch(/\{envelopeEncryptionEnabled \? \([\s\S]*?Start a certified report/);
+    expect(settings).toMatch(/\{envelopeEncryptionEnabled \? \([\s\S]*?Start an official report/);
+    expect(settings).toMatch(/<NotYet>Available when secure storage is enabled<\/NotYet>/);
+    // The ONE way into the flow, and it lives in the flag-on branch.
+    expect(settings.match(/setReportOpen\(true\)/g) ?? []).toHaveLength(1);
+    // The off branch renders no button at all — nothing to tap, so nothing to fail.
+    expect(settings).not.toMatch(/NotYet[\s\S]{0,200}onClick/);
   });
 
   it('the flow itself refuses when the flag is off — belt and braces', () => {
