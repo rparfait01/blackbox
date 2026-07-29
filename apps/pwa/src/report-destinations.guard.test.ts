@@ -123,8 +123,17 @@ describe('GROUP 2 [A] the OFFICIAL report is hers — there is no central store'
   it('the UI says plainly that it is hers and that its privacy becomes hers', () => {
     expect(SETTINGS).toMatch(/we keep no copy/);
     const ui = read('./routes/settings/CertifiedReport.tsx');
+    expect(ui).toMatch(/We keep no copy/);
     expect(ui).toMatch(/Once you download this report, we can no longer protect its privacy/);
     expect(ui).toMatch(/Its privacy is now yours to manage/);
+  });
+
+  it('the screen carries the SAME name as the entry that opened it', () => {
+    const ui = read('./routes/settings/CertifiedReport.tsx');
+    expect(ui).toMatch(/>Official report</);
+    expect(ui).toMatch(/<Primary onClick=\{\(\) => setStep\('pick'\)\}>Start an official report<\/Primary>/);
+    // The old generic name is gone from both ends — it was one word away from the intake's.
+    expect(ui).not.toMatch(/>Start a report</);
   });
 });
 

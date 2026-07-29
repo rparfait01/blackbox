@@ -104,7 +104,10 @@ export function CertifiedReport({ onClose }: { onClose: () => void }): JSX.Eleme
           <button onClick={onClose} className="text-sm text-med-text/70 underline">
             Close
           </button>
-          <span className="text-[11px] uppercase tracking-[0.18em] text-med-text/40">Certified report</span>
+          {/* The SAME name she tapped in Settings. A survivor who taps "Official report" and
+              lands on a screen called something else has been handed a second thing to work
+              out, at the worst possible moment to be working anything out. */}
+          <span className="text-[11px] uppercase tracking-[0.18em] text-med-text/40">Official report</span>
         </div>
       ) : null}
 
@@ -121,17 +124,23 @@ export function CertifiedReport({ onClose }: { onClose: () => void }): JSX.Eleme
 
         {step === 'intro' ? (
           <Center>
-            <h2 className="mb-3 font-serif text-2xl font-light tracking-[0.03em]">Start a report</h2>
+            <h2 className="mb-3 font-serif text-2xl font-light tracking-[0.03em]">Your official report</h2>
             <p className="mb-4 text-[13px] leading-relaxed text-med-text/70">
               A report you generate yourself, on this device, from your own recording. It carries a signature
               anyone can check — a court, an advocate, a police intake officer — without taking BLACK BOX&rsquo;s
               word for anything.
             </p>
-            <p className="mb-8 text-[13px] leading-relaxed text-med-text/60">
+            <p className="mb-4 text-[13px] leading-relaxed text-med-text/60">
               Your own words go in a separate section that stays yours: it is not signed, not judged, and you can
               change it whenever you like.
             </p>
-            <Primary onClick={() => setStep('pick')}>Start a report</Primary>
+            {/* Where it goes: nowhere, unless she takes it there. There is no repository of
+                personal reports on our side to send it to. */}
+            <p className="mb-8 text-[13px] leading-relaxed text-med-text/60">
+              It is yours alone. We keep no copy — it is built here and stays on this phone until you choose to
+              share it.
+            </p>
+            <Primary onClick={() => setStep('pick')}>Start an official report</Primary>
             <Secondary onClick={onClose}>Not now</Secondary>
           </Center>
         ) : null}
