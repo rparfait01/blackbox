@@ -45,8 +45,11 @@ function importSpecifiers(src: string): string[] {
 }
 
 describe('§-1 [A] fully behind the flag', () => {
-  it('the envelope flag defaults OFF, so this brief is inert today', () => {
-    expect(envelopeEncryptionEnabled).toBe(false);
+  it('the flag is ARMED, so the report path is live — the severance below still holds', () => {
+    // Brief 29 shipped dormant and is now armed (2026-07-30, operator decision). Everything
+    // else in this file is what makes arming SAFE: the report still touches nothing
+    // operational, still signs only hashes, and is still reachable only from Settings.
+    expect(envelopeEncryptionEnabled).toBe(true);
   });
 
   /**

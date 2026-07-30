@@ -9,7 +9,7 @@ import { envelopeEncryptionEnabled } from '@/lib/env';
  * Brief 26 — fail-open guard for the capture path. The envelope is now WIRED into the
  * upload send path (step 3), so the invariant is no longer "not imported" but
  * "encryption can never break or block a capture." These pin that structurally:
- *   - the flag defaults OFF;
+ *   - the flag is ARMED (and arming still cannot break a capture);
  *   - the media recorder is still untouched (encryption lives in the upload layer);
  *   - the send path goes through sealChunkForSend (plaintext-by-default) and never calls
  *     the raw encrypt primitive directly;
@@ -21,9 +21,17 @@ const read = (p: string): string => readFileSync(join(SRC, p), 'utf8');
 const uploadMgr = read('./lib/upload/upload-manager.ts');
 const sealer = read('./lib/upload/capture-encryptor.ts');
 
-describe('the envelope flag defaults OFF', () => {
-  it('is false unless VITE_ENVELOPE_ENC is exactly "true"', () => {
-    expect(envelopeEncryptionEnabled).toBe(false);
+describe('the envelope flag is ARMED', () => {
+  it('is on by default, so no build can silently ship unencrypted captures', () => {
+    // Armed 2026-07-30. The default lives in tracked code precisely so a fresh clone or CI
+    // build cannot quietly disarm custody; `VITE_ENVELOPE_ENC=false` is the explicit way out.
+    expect(envelopeEncryptionEnabled).toBe(true);
+  });
+
+  it('is still a real switch — the opt-out is a single explicit value', () => {
+    const env = read('./lib/env.ts');
+    expect(env).toMatch(/const ENVELOPE_DEFAULT = 'true';/);
+    expect(env).toMatch(/!== 'false'/);
   });
 });
 

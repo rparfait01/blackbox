@@ -10,6 +10,17 @@ send_metrics = false
 # be here so the PWA (sign-up, guardian accept) and the contact magic-link view
 # can call the Worker.
 [vars]
+# Zero-knowledge capture envelope (Brief 26) — ARMED 2026-07-30, operator decision.
+#
+# DECLARED HERE, NOT PASSED AS `--var`. A `wrangler deploy --var` value lives only for that
+# one deploy: the very next `pnpm deploy` would drop it and silently disarm custody, with no
+# error and no sign except unencrypted captures. Vars in this file are re-applied on every
+# deploy, so the armed state survives them.
+#
+# Arming turns on: per-capture DEK wrapping, capture-time plaintext commitments, device key
+# provisioning, and the four owner-scoped report endpoints (which 404 while it is off). The
+# capture send path still FAILS OPEN to plaintext, so this can never cost a recording.
+ENVELOPE_ENCRYPTION_ENABLED = "true"
 CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blackbox-pwa.pages.dev"
 # PWA origin used to build dashboard + guardian-invite links. Set to the deployed
 # Pages URL for the pilot. When empty the Worker falls back to its own origin.

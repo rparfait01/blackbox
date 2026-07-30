@@ -35,11 +35,20 @@ export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
 export const uploadsEnabled = API_BASE_URL.length > 0;
 
 /**
- * Zero-knowledge capture envelope (Brief 26). Default OFF: unless `VITE_ENVELOPE_ENC`
- * is exactly "true" at build time, the capture pipeline is byte-identical to today —
- * no encryption, no key generation, no change on any path. Arming this is a deliberate,
- * test-accounts-first step, and even when armed the send path FAILS OPEN to a plaintext
- * upload rather than ever dropping a survivor's capture (capture availability is
- * paramount; see docs/brief26).
+ * Zero-knowledge capture envelope (Brief 26) — **ARMED 2026-07-30**, operator decision.
+ *
+ * Encryption is the mechanism, and it is on. Even armed, the send path FAILS OPEN to a
+ * plaintext upload rather than ever dropping a survivor's capture: arming can improve
+ * confidentiality, it can never cost availability (see docs/brief26).
+ *
+ * WHY THE DEFAULT LIVES IN TRACKED CODE AND NOT IN `.env`.
+ * `.env` and `.env.*` are gitignored, so a flag that lived there would be armed on the one
+ * machine that set it and silently DISARMED in every fresh clone, CI build, and future
+ * deploy — with no error, just quietly unencrypted captures. That is the same failure shape
+ * as migration 0038, which silently un-armed every account. So the armed state is the
+ * committed default and travels with the source; `VITE_ENVELOPE_ENC=false` is the explicit,
+ * deliberate way back out.
  */
-export const envelopeEncryptionEnabled = (import.meta.env.VITE_ENVELOPE_ENC ?? '') === 'true';
+const ENVELOPE_DEFAULT = 'true';
+export const envelopeEncryptionEnabled =
+  (import.meta.env.VITE_ENVELOPE_ENC ?? ENVELOPE_DEFAULT) !== 'false';
