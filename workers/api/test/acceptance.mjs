@@ -1419,19 +1419,33 @@ async function run() {
   });
 
   // ===== Brief 27 — guided intake case file (FAIL-CLOSED; ZK) =====
-  await check('58. case file: FAIL-CLOSED — filing is refused (409) while the envelope flag is off', async () => {
+  await check('58. case file: ARMED — a SEALED file is stored, and the server can never read it', async () => {
+    // Armed (2026-07-30), so filing now succeeds where it used to be refused with 409. The
+    // fail-closed rule this row used to prove has not gone away — it has moved from "refuse
+    // everything" to "only ever store ciphertext", which is the property that actually matters.
     const u = await signup();
-    // The live flag is OFF, so the server must refuse to store a case file at all — no
-    // plaintext case file can ever land. (When armed, this returns 201; that is the
-    // final-acceptance path.)
+    const sealed = '{"alg":"p256-hkdf-sha256-aes256gcm/v1","epk":"e","iv":"i","ct":"c"}';
     const res = await api('POST', '/v1/me/case-files', {
       bearer: u.session,
-      body: { sealedCaseFile: '{"alg":"p256-hkdf-sha256-aes256gcm/v1","epk":"e","iv":"i","ct":"c"}', taxonomyVersion: 'nibrs-2019+who-2013/v1' },
+      body: { sealedCaseFile: sealed, taxonomyVersion: 'nibrs-2019+who-2013/v1' },
     });
-    assert(res.status === 409 && res.data.error === 'envelope_disabled', `fail-closed not enforced: ${res.status} ${JSON.stringify(res.data)}`);
-    // And with nothing filed, the list is empty — no plaintext case file leaked in.
+    assert(res.status === 201 && res.data.id, `armed: filing a sealed case file must succeed, got ${res.status} ${JSON.stringify(res.data)}`);
+
+    // It comes back to its owner, and what comes back is the OPAQUE blob — byte-identical to
+    // what she sealed. The server stored a ciphertext it holds no key for; if this ever
+    // returned readable fields, zero-knowledge would be gone.
     const list = await api('GET', '/v1/me/case-files', { bearer: u.session });
-    assert(list.status === 200 && Array.isArray(list.data.caseFiles) && list.data.caseFiles.length === 0, `unexpected case files: ${JSON.stringify(list.data)}`);
+    assert(list.status === 200 && list.data.caseFiles.length === 1, `armed: the owner must see her own file, got ${JSON.stringify(list.data)}`);
+    const one = await api('GET', `/v1/me/case-files/${res.data.id}`, { bearer: u.session });
+    assert(one.status === 200 && one.data.sealedCaseFile === sealed, `armed: the stored blob must round-trip untouched, got ${JSON.stringify(one.data)}`);
+
+    // PLAINTEXT IS STILL REFUSED. Arming loosened WHO may store, never WHAT: a body that is
+    // not a sealed envelope must never land, or "zero-knowledge" is only a habit.
+    const plain = await api('POST', '/v1/me/case-files', {
+      bearer: u.session,
+      body: { sealedCaseFile: '{"notes":"he hit me"}', taxonomyVersion: 'nibrs-2019+who-2013/v1' },
+    });
+    assert(plain.status >= 400, `armed: an unsealed case file must be refused, got ${plain.status} ${JSON.stringify(plain.data)}`);
   });
 
   await check('59. case file: a non-owner cannot read another account’s case file id', async () => {
@@ -1683,26 +1697,39 @@ async function run() {
   // deployment — the same shape as row 58 for the case file. When the flag is armed, 68
   // flips to 200s and the CERTIFIED/TAMPERED rows become live checks (final acceptance).
 
-  await check('68. certified report: DORMANT — every report endpoint 404s while the envelope flag is off', async () => {
+  await check('68. certified report: ARMED — the owner is answered, a non-owner is told nothing', async () => {
+    // Custody is armed (2026-07-30), so this row no longer proves dormancy — it proves the
+    // contract that REPLACED it. The dormant version asserted 404-as-absent everywhere; kept
+    // unchanged after arming it would have gone on passing against a path production had
+    // stopped taking, which is worse than no check at all.
     const u = await signup();
-    // All four report routes must be indistinguishable from absent: not 403, not 409 — gone.
-    const routes = [
-      ['GET', '/v1/me/reports/events'],
-      ['GET', `/v1/me/reports/events/${'evt-' + uniq()}/metadata`],
-      ['GET', `/v1/me/reports/events/${'evt-' + uniq()}/chunks/0`],
-    ];
-    for (const [method, path] of routes) {
-      const res = await api(method, path, { bearer: u.session });
-      assert(res.status === 404, `${method} ${path} is reachable while the flag is off: ${res.status}`);
+
+    // Her own list EXISTS and answers. This is the assertion that would fail if a deploy ever
+    // silently disarmed custody again (a `--var` that got dropped, a missing env restatement).
+    const list = await api('GET', '/v1/me/reports/events', { bearer: u.session });
+    assert(
+      list.status === 200 && Array.isArray(list.data?.events),
+      `armed: the owner's own report list must answer, got ${list.status} ${JSON.stringify(list.data)}`,
+    );
+
+    // An event that is not hers reads exactly like one that never existed. Same answer either
+    // way, so the surface cannot be used to probe whether another account's event is real.
+    const foreign = 'evt-' + uniq();
+    for (const path of [`/v1/me/reports/events/${foreign}/metadata`, `/v1/me/reports/events/${foreign}/chunks/0`]) {
+      const res = await api('GET', path, { bearer: u.session });
+      assert(res.status === 404, `armed: ${path} must be not-found for a non-owner, got ${res.status}`);
     }
     const sign = await api('POST', '/v1/me/reports/sign', {
       bearer: u.session,
-      body: { eventId: 'evt-x', evidenceHash: 'a'.repeat(64), renderedHash: 'b'.repeat(64) },
+      body: { eventId: foreign, evidenceHash: 'a'.repeat(64), renderedHash: 'b'.repeat(64) },
     });
-    assert(sign.status === 404, `the signing endpoint is reachable while the flag is off: ${sign.status}`);
-    // And the public verification page is not served either — no promise published early.
+    assert(sign.status === 404, `armed: signing an event she does not own must refuse, got ${sign.status}`);
+
+    // And the public verification page is now SERVED. While dormant this had to 404 so we
+    // published no promise we could not keep; armed, the promise is real and must be reachable
+    // without an account — that is the whole point of an independent check.
     const page = await api('GET', '/verification');
-    assert(page.status === 404, `/verification is live while the flag is off: ${page.status}`);
+    assert(page.status === 200, `armed: /verification must be live, got ${page.status}`);
   });
 
   await check('69. certified report: no anonymous access — a session is required before the gate', async () => {

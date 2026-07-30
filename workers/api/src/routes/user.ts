@@ -133,6 +133,30 @@ userRoutes.get('/events/:id/envelope', async (c) => {
 // Brief 27 §2 — file a case file. THE SECOND FAIL-CLOSED GATE: the server refuses to store
 // a case file unless zero-knowledge custody is armed, so no path — client or server — ever
 // persists an unencrypted disclosure. The body carries ONLY the sealed envelope; a plaintext
+/**
+ * Is this string a sealed envelope, structurally? Shape only — every field is opaque to us.
+ * Matches what the client's sealer emits (lib/crypto/envelope: alg / epk / iv / ct) and what
+ * the decryptor requires, so anything the survivor's own device could later OPEN passes, and
+ * a bare JSON object of readable fields does not.
+ */
+function isSealedEnvelope(value: string): boolean {
+  try {
+    const env = JSON.parse(value) as Record<string, unknown>;
+    return (
+      typeof env.alg === 'string' &&
+      env.alg.length > 0 &&
+      typeof env.epk === 'string' &&
+      env.epk.length > 0 &&
+      typeof env.iv === 'string' &&
+      env.iv.length > 0 &&
+      typeof env.ct === 'string' &&
+      env.ct.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 // case file has no column to land in and no endpoint to reach.
 userRoutes.post('/case-files', async (c) => {
   if (!envelopeEnabled(c.env)) {
@@ -146,6 +170,21 @@ userRoutes.post('/case-files', async (c) => {
   const taxonomyVersion = (body.taxonomyVersion ?? '').trim();
   if (!sealedCaseFile || !taxonomyVersion) {
     return c.json({ error: 'sealed_case_file_required' }, 400);
+  }
+  // THE SERVER CHECKS THE SEAL ITSELF. Until arming, the client's fail-closed sealing was the
+  // only thing standing between us and a plaintext case file — and "the client always seals"
+  // is a habit, not a guarantee. Arming custody made that testable and the acceptance suite
+  // immediately stored `{"notes":"he hit me"}` as a "sealed" file, 201.
+  //
+  // So the shape is verified here: an envelope has an alg, an ephemeral public key, an IV and
+  // a ciphertext. We validate the SHAPE only — we cannot and must not be able to read it, and
+  // a wrong key still produces a valid-shaped envelope we simply cannot open. That is the
+  // point: this refuses plaintext without granting the server any ability to decrypt.
+  if (!isSealedEnvelope(sealedCaseFile)) {
+    return c.json(
+      { error: 'not_sealed', message: 'A case file must be sealed under your own key before it can be stored.' },
+      400,
+    );
   }
   const row = await storeCaseFile(c.env, { userId: c.get('userId'), sealedCaseFile, taxonomyVersion });
   await audit(c.env, null, 'case_file_filed', c.get('userId'), { caseFileId: row.id, taxonomyVersion });

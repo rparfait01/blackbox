@@ -133,6 +133,13 @@ new_sqlite_classes = ["EventChannel"]
 name = "blackbox-api-staging"
 
 [env.staging.vars]
+# Envelope custody must MATCH PRODUCTION here, and this restatement is load-bearing.
+# Wrangler does not inherit top-level vars into a named environment — it warns and gives the
+# environment none. When prod was armed and this line was missing, staging stayed dormant, so
+# acceptance 68 went on proving a 404-as-absent contract that production no longer had: the
+# live report path was outside the tripwire while the suite still reported green. A test
+# environment that disagrees with prod about a feature's EXISTENCE tests nothing.
+ENVELOPE_ENCRYPTION_ENABLED = "true"
 # The staging PWA origin is the same Pages deployment — only the DATA is severed.
 CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blackbox-pwa.pages.dev"
 PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
