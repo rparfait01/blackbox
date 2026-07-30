@@ -57,6 +57,35 @@ export function formatLocal(utcMs: number, tzOffsetMinutes: number | null | unde
   return `${date} ${time} (${formatOffsetLabel(offset)})`;
 }
 
+/**
+ * The evidence label for one stored capture, e.g. "30JUL26@14:32".
+ *
+ * This is the NAME a survivor sees on her own sealed recording, replacing the opaque
+ * identifier the blob is stored under. She does not recognise `evt-9f2c…`; she recognises
+ * the evening it happened.
+ *
+ * Rendered in the EVENT'S OWN LOCAL TIME, not Zulu — deliberately unlike formatDtg. A DTG is
+ * for the people coordinating a response across zones; this is for the one person who was
+ * there, and she remembers the local clock. Like formatLocal, the instant is shifted by the
+ * stored offset and read with UTC getters, so the label is identical on every device that
+ * renders it rather than drifting with the reader's own zone.
+ *
+ * The 2-digit year is safe HERE, unlike in a DTG. formatDtg spells the year in full because
+ * its trailing field would otherwise read as a day-of-month ("121830Z JUN 26"). In this
+ * format the year is not trailing — it sits between a named month and an `@`-prefixed clock
+ * time — so "30JUL26" cannot be misread.
+ */
+export function formatEvidenceLabel(utcMs: number, tzOffsetMinutes: number | null | undefined): string {
+  const offset = tzOffsetMinutes ?? 0;
+  const shifted = new Date(utcMs - offset * 60_000);
+  const dd = pad2(shifted.getUTCDate());
+  const mon = MONTHS[shifted.getUTCMonth()];
+  const yy = pad2(shifted.getUTCFullYear() % 100);
+  const hh = pad2(shifted.getUTCHours());
+  const mm = pad2(shifted.getUTCMinutes());
+  return `${dd}${mon}${yy}@${hh}:${mm}`;
+}
+
 /** Just the local clock time, e.g. "18:30" — for compact contact-facing copy. */
 export function formatLocalClock(utcMs: number, tzOffsetMinutes: number | null | undefined): string {
   const offset = tzOffsetMinutes ?? 0;

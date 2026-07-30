@@ -8,7 +8,7 @@ import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { pairingStatus, startLinePairing } from '../lib/line-pairing';
-import { deleteAccount, getUserById, hasActiveEvent, setCheckinContact, setGuardianEnabled, updateUserFields } from '../lib/users';
+import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
 import {
   guardianLoad,
   hasDeliverableRecipient,
@@ -229,7 +229,17 @@ userRoutes.get('/reports/events', async (c) => {
 });
 
 /** The generic details that auto-populate the evidence zone (§1.2) — event metadata,
- *  location, notifications, and the chunk index. Owner-scoped; null for anything else. */
+ *  location, notifications, the chunk index, and the recorded CLASSIFICATIONS and
+ *  TRANSCRIPTS the review dashboard's summary and transcript panels replay.
+ *
+ *  Owner-scoped; null for anything else. Ownership is checked on the EVENT before any
+ *  child row is read, so a foreign eventId yields the same 404 whether or not it exists
+ *  — this is not an existence oracle for another account's events.
+ *
+ *  Classifications and transcripts are a REPLAY of what was recorded during the incident,
+ *  never a re-analysis: nothing is recomputed here, so the values cannot drift between
+ *  reviews. See the custody note on ReportMetadata — these two are server-readable
+ *  plaintext (pre-existing), unlike the chunk bytes. */
 userRoutes.get('/reports/events/:id/metadata', async (c) => {
   const off = reportsOff(c);
   if (off) return off;
@@ -508,9 +518,10 @@ userRoutes.get('/contacts', async (c) => {
       // add a recipient) without ever conflating the two.
       armable: entitled && deliverable,
       armReasons: { entitled, hasDeliverableRecipient: deliverable },
-      // Brief 19: the designated check-in recipient (null → the primary contact is
-      // used by default). Lets the UI mark which contact holds the check-in.
-      checkinContactId: user?.checkinContactId ?? null,
+      // Check-in routing is PRIMARY-ONLY and server-decided, so there is no
+      // designation for the UI to read back. The Settings marker is rendered from the
+      // primary slot itself — one source of truth, no field that could disagree
+      // with resolveCheckinContact().
       // Which channels can ACTUALLY deliver right now — server truth, derived from
       // the same isChannelDeliverable the dispatcher and the save-guard use. The UI
       // renders from THIS rather than a hardcoded list, so the day Twilio is
@@ -528,27 +539,11 @@ userRoutes.get('/contacts', async (c) => {
   );
 });
 
-// Designate the check-in recipient (Brief 19). Exactly one contact holds it; it
-// must be one of the user's own `contact` rows (never the guardian). Passing null
-// clears back to the primary-contact default. Not locked during an alert —
-// check-in is a dormant-only reassurance feature and never touches the event.
-userRoutes.post('/checkin-contact', async (c) => {
-  const body = await c.req.json<{ contactId?: string | null }>().catch(() => ({}) as { contactId?: string | null });
-  const contactId = typeof body.contactId === 'string' && body.contactId.trim() ? body.contactId.trim() : null;
-  if (contactId) {
-    const owned = await c.env.DB.prepare(
-      "SELECT id FROM contacts WHERE id = ? AND userId = ? AND role = 'contact'",
-    )
-      .bind(contactId, c.get('userId'))
-      .first<{ id: string }>();
-    if (!owned) {
-      return c.json({ error: 'invalid_contact', message: 'Choose one of your own contacts.' }, 400);
-    }
-  }
-  await setCheckinContact(c.env, c.get('userId'), contactId);
-  return c.json({ ok: true, checkinContactId: contactId }, 200);
-});
-
+// NOTE: `POST /v1/me/checkin-contact` is GONE, not deprecated. Check-in routing is
+// primary-only and decided by resolveCheckinContact() alone (see lib/checkin.ts). A
+// route left in place "harmlessly" would still write a column the resolver no longer
+// reads — a setting that appears to take effect and changes nothing, which is worse
+// than a 404. Callers now get 404 from the router.
 userRoutes.post('/contacts/:slot', async (c) => {
   if (await lockedDuringAlert(c)) {
     return c.json({ error: 'locked_during_active_alert' }, 423);

@@ -44,6 +44,10 @@ export interface ReportEventSummary {
   createdAt: number;
   closedAt: number | null;
   status: string;
+  /** The device's offset when the event opened. Already sent by the Worker (listOwnEvents
+   *  selects it); declared here so the evidence label can render in HER local time rather
+   *  than the reviewing device's — the two differ the moment she travels. */
+  tzOffsetMinutes: number | null;
 }
 
 /** Everything that can go wrong, named — so the UI can say something true rather than

@@ -32,8 +32,9 @@ interface ContactsData {
   slots: Slot[];
   guardianEnabled: boolean;
   guardianAlsoFailsafeFor: number;
-  /** Brief 19: the designated check-in contact id (null → primary is used). */
-  checkinContactId: string | null;
+  // No check-in designation field: routing is primary-only and server-decided, so
+  // this view renders the marker from the primary slot rather than a separate id
+  // that could disagree with the server's resolve.
   /** Brief 23 §2: true only when at least one recipient is on a channel that can
    *  actually deliver in this deployment. False → a config-time loud warning. */
   armable: boolean;
@@ -75,10 +76,6 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
   useEffect(load, []);
 
   const slot = data?.slots.find((s) => s.slot === selected);
-  // The effective check-in recipient: the explicit designation, or the primary
-  // contact by default (Brief 19). Used to mark which contact currently holds it.
-  const primaryId = data?.slots.find((s) => s.slot === 'primary')?.id ?? null;
-  const effectiveCheckinId = data?.checkinContactId ?? primaryId;
 
   async function save(values: ContactValues): Promise<void> {
     setBusy(true);
@@ -118,21 +115,6 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
     const res = await api(`/v1/me/contacts/${selected}`, { method: 'DELETE' });
     flash(res.ok ? `${SLOT_LABEL[selected]} cleared` : 'Could not clear');
     load();
-  }
-
-  // Brief 19: designate this contact as the single check-in ("I'm OK") recipient.
-  // Exactly one contact holds it; selecting reassigns instantly and persists.
-  async function designateCheckin(contactId: string | null): Promise<void> {
-    if (!contactId) {
-      return;
-    }
-    const res = await api('/v1/me/checkin-contact', { body: { contactId } });
-    if (res.ok) {
-      flash('Check-in contact set');
-      load();
-    } else {
-      flash('Could not set check-in contact');
-    }
   }
 
   async function toggleGuardian(enabled: boolean): Promise<void> {
@@ -296,28 +278,20 @@ export function ContactTabs({ flash }: { flash: (msg: string) => void }): JSX.El
             </>
           )}
 
-          {/* Brief 19: designate this contact as the single check-in ("I'm OK")
-              recipient. Only on the three contact slots (never guardian/emergency).
-              Exactly one contact holds it — the marked one; tap another to move it. */}
-          {CONTACT_SLOTS.includes(selected) && slot.filled && !editing ? (
+          {/* Check-in recipient — a STATEMENT, not a control. Routing is primary-only
+              and decided server-side by resolveCheckinContact(); there is nothing to
+              pick, so there is no button to press. The marker is derived from the slot
+              being shown, so it cannot claim a recipient the server would not use. */}
+          {selected === 'primary' && slot.filled && !editing ? (
             <div className="mt-4 border-t border-med-text/15 pt-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-med-text/70">Check-in partner</span>
-                {slot.id && slot.id === effectiveCheckinId ? (
-                  <span className="rounded-full border border-[#34c759]/50 bg-[#13301a] px-4 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-[#34c759]">
-                    This contact ✓
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => void designateCheckin(slot.id)}
-                    className="rounded-full border border-med-text/25 px-4 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-med-text/70"
-                  >
-                    Check in here
-                  </button>
-                )}
+                <span className="rounded-full border border-[#34c759]/50 bg-[#13301a] px-4 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-[#34c759]">
+                  This contact ✓
+                </span>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-med-text/45">
-                Your “I’m OK” check-in goes to this one contact. Choose a different contact to move it.
+                Your “I’m OK” check-in always goes to your primary contact.
               </p>
             </div>
           ) : null}

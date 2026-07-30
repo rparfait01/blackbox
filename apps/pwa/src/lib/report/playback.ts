@@ -22,7 +22,9 @@ import { api } from '@/lib/api';
 import { getSessionToken } from '@/lib/auth';
 import { decryptStoredChunk, openCaptureDek, verifyChunkCommitment } from '@/lib/crypto/capture-decryptor';
 import { getStoredEnvelopeKeypair } from '@/lib/storage/user-config';
-import { isoUtc, type ChunkIndexEntry, type Commitment } from './evidence';
+import { isoUtc, type ChunkIndexEntry, type Commitment, type EventMetadata, type LocationPoint } from './evidence';
+import type { RecordedObservation } from '@/lib/review/summary';
+import type { RecordedFragment } from '@/lib/review/transcript';
 import { listReportableEvents, type ReportEventSummary } from './generate';
 
 /** The review list is the same owner-scoped event list the certified report picks from —
@@ -57,6 +59,23 @@ export type ReviewFailure =
   | 'unopenable' // segments exist but not one of them could be opened
   | 'network';
 
+/**
+ * The non-media half of the record, carried alongside the recording so the dashboard's
+ * summary, transcript and location panels render from the SAME fetch that produced the media.
+ *
+ * One request, one consistent view. Fetching these separately would let the panels disagree
+ * with the player about which event is on screen — and on an evidence surface, a summary
+ * describing a different incident than the audio is the worst possible failure.
+ *
+ * All of it is a REPLAY of rows written during the incident. Nothing here is recomputed.
+ */
+export interface ReviewRecord {
+  event: EventMetadata;
+  observations: RecordedObservation[];
+  fragments: RecordedFragment[];
+  locations: LocationPoint[];
+}
+
 export interface ReviewCapture {
   eventId: string;
   media: ReviewMedia;
@@ -68,12 +87,22 @@ export interface ReviewCapture {
   segmentsVerified: number;
   segmentsFailedCheck: number;
   totalBytes: number;
+  /** The event record the dashboard panels replay. */
+  record: ReviewRecord;
+  /** The decrypted bytes, for on-device waveform analysis. Released with the object URL. */
+  blob: Blob;
 }
 
 export type ReviewResult = { ok: true; capture: ReviewCapture } | { ok: false; reason: ReviewFailure };
 
 interface MetadataResponse {
-  metadata: { chunks: ChunkIndexEntry[] };
+  metadata: {
+    event: EventMetadata;
+    chunks: ChunkIndexEntry[];
+    classifications?: RecordedObservation[];
+    transcripts?: RecordedFragment[];
+    locations?: LocationPoint[];
+  };
 }
 interface EnvelopeResponse {
   envelope: { wrappedDek: string; algId: string; commitments: Commitment[] } | null;
@@ -97,12 +126,15 @@ async function fetchSegmentBytes(eventId: string, sequence: number): Promise<Uin
 
 /** MediaRecorder timeslices concatenate back into the original stream when kept in
  *  sequence order — order is the whole meaning here, so it is enforced, never assumed. */
-function assemble(parts: Uint8Array[], mimeType: string): ReviewMedia {
+function assemble(parts: Uint8Array[], mimeType: string): { media: ReviewMedia; blob: Blob } {
   const blob = new Blob(parts as BlobPart[], { type: mimeType });
   return {
-    url: URL.createObjectURL(blob),
-    mimeType,
-    kind: mimeType.startsWith('video') ? 'video' : 'audio',
+    media: {
+      url: URL.createObjectURL(blob),
+      mimeType,
+      kind: mimeType.startsWith('video') ? 'video' : 'audio',
+    },
+    blob,
   };
 }
 
@@ -122,8 +154,18 @@ export async function openCaptureForReview(eventId: string): Promise<ReviewResul
   const metaRes = await api<MetadataResponse>(`/v1/me/reports/events/${eventId}/metadata`);
   if (metaRes.status === 0) return { ok: false, reason: 'network' };
   if (!metaRes.ok || !metaRes.data) return { ok: false, reason: 'no_event' };
-  const index = [...metaRes.data.metadata.chunks].sort((a, b) => a.sequence - b.sequence);
+  const meta = metaRes.data.metadata;
+  const index = [...meta.chunks].sort((a, b) => a.sequence - b.sequence);
   if (index.length === 0) return { ok: false, reason: 'no_capture' };
+  // Tolerate an older Worker that predates these collections: an empty panel is a correct
+  // rendering of "nothing recorded", whereas refusing the whole review would deny her the
+  // recording over a missing side panel.
+  const record: ReviewRecord = {
+    event: meta.event,
+    observations: meta.classifications ?? [],
+    fragments: meta.transcripts ?? [],
+    locations: meta.locations ?? [],
+  };
 
   const envRes = await api<EnvelopeResponse>(`/v1/me/events/${eventId}/envelope`);
   if (envRes.status === 0) return { ok: false, reason: 'network' };
@@ -205,11 +247,14 @@ export async function openCaptureForReview(eventId: string): Promise<ReviewResul
     return { ok: false, reason: unopenable > 0 ? 'unopenable' : 'no_capture' };
   }
 
+  const assembled = assemble(parts, index[0].mimeType || 'video/mp4');
   return {
     ok: true,
     capture: {
       eventId,
-      media: assemble(parts, index[0].mimeType || 'video/mp4'),
+      media: assembled.media,
+      blob: assembled.blob,
+      record,
       segments,
       segmentsOpened: parts.length,
       segmentsUnopenable: unopenable,

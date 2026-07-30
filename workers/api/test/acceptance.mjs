@@ -684,7 +684,7 @@ async function run() {
     }
   });
 
-  await check('24. §19 check-in routes to designated→primary CONTACT (not guardian); honest failure; on-the-fly; dormant-only', async () => {
+  await check('24. check-in routes to the PRIMARY contact ONLY (no override door, no fallthrough); honest failure; dormant-only', async () => {
     assert(ADMIN, 'BBX_ADMIN_TOKEN not set — cannot read the delivery log');
     const u = await signup();
     // No contact at all → HONEST failure, never a silent success.
@@ -708,25 +708,53 @@ async function run() {
       if (recs < 1) await sleep(500);
     }
     assert(recs >= 1, `check-in is a NO-OP — no delivery attempt recorded for the contact: ${JSON.stringify(chk.data)}`);
-    // Designate a DIFFERENT contact ON THE FLY → the resolve order prefers it, and
-    // the contacts view reflects the new designation immediately.
-    assert((await addEmail(u.session, 'secondary', 'S')).status === 200, 'add secondary failed');
-    const listed = await api('GET', '/v1/me/contacts', { bearer: u.session });
+    // PRIMARY-ONLY, proven adversarially on an account that has a deliverable
+    // `contact` but NO primary. A second account is used because removing this one's
+    // primary would REINDEX (secondary shifts to priority 1 and legitimately becomes
+    // the primary), which would prove nothing.
+    //
+    // A non-primary contact must NEVER receive a check-in and must NEVER be silently
+    // substituted for a missing primary: the answer is an honest no_recipient. Under
+    // the retired override (users.checkinContactId) this contact COULD be designated
+    // and would have been delivered to — so this pair of assertions is what holds the
+    // door shut.
+    const v = await signup();
+    assert((await addEmail(v.session, 'secondary', 'S')).status === 200, 'add secondary failed');
+    const listed = await api('GET', '/v1/me/contacts', { bearer: v.session });
     const secondaryId = listed.data?.slots?.find((s) => s.slot === 'secondary')?.id;
     assert(secondaryId, `secondary contact id missing from /contacts: ${JSON.stringify(listed.data)}`);
-    const desig = await api('POST', '/v1/me/checkin-contact', { bearer: u.session, body: { contactId: secondaryId } });
-    assert(desig.status === 200 && desig.data?.checkinContactId === secondaryId, `designate failed: ${JSON.stringify(desig.data)}`);
-    const relisted = await api('GET', '/v1/me/contacts', { bearer: u.session });
-    assert(relisted.data?.checkinContactId === secondaryId, `designation not reflected in /contacts: ${JSON.stringify(relisted.data)}`);
-    // The guardian can NEVER be designated as the check-in recipient (contacts only).
+    const nonPrimary = await api('POST', '/v1/me/checkin', { bearer: v.session, body: {} });
     assert(
-      (await api('POST', '/v1/me/contacts/guardian', { bearer: u.session, body: { contactName: 'G', channel: 'email', destination: `smoke+chkg-${uniq()}@example.com` } })).status === 200,
+      nonPrimary.status === 200 && nonPrimary.data?.ok === false && (nonPrimary.data?.recipients ?? -1) === 0 && nonPrimary.data?.reason === 'no_recipient',
+      `a non-primary contact must NOT receive the check-in — expected honest no_recipient: ${JSON.stringify(nonPrimary.data)}`,
+    );
+    // The override endpoint is GONE, not merely ignored. A 200 here would mean a
+    // setting that appears to take effect and changes nothing; a 404 is the contract.
+    const desig = await api('POST', '/v1/me/checkin-contact', { bearer: v.session, body: { contactId: secondaryId } });
+    assert(desig.status === 404, `POST /v1/me/checkin-contact must be gone (404), got ${desig.status}: ${JSON.stringify(desig.data)}`);
+    // And no designation field survives on the contacts view for a client to render a
+    // recipient the server would not actually route to.
+    assert(
+      listed.data?.checkinContactId === undefined,
+      `/contacts must not expose checkinContactId: ${JSON.stringify(listed.data)}`,
+    );
+    // Adding the PRIMARY is what makes a check-in deliverable — same account, one
+    // change, so the primary is unambiguously the cause.
+    assert((await addEmail(v.session, 'primary', 'P')).status === 200, 'add primary failed');
+    const nowOk = await api('POST', '/v1/me/checkin', { bearer: v.session, body: {} });
+    assert(nowOk.status === 200 && nowOk.data?.reason !== 'no_recipient', `primary contact did not become the recipient: ${JSON.stringify(nowOk.data)}`);
+    // The guardian is never a check-in recipient: a guardian-only account still fails
+    // honestly rather than quietly paging the guardian.
+    const w = await signup();
+    assert(
+      (await api('POST', '/v1/me/contacts/guardian', { bearer: w.session, body: { contactName: 'G', channel: 'email', destination: `smoke+chkg-${uniq()}@example.com` } })).status === 200,
       'add guardian failed',
     );
-    const withG = await api('GET', '/v1/me/contacts', { bearer: u.session });
-    const guardianId = withG.data?.slots?.find((s) => s.slot === 'guardian')?.id;
-    const badDesig = await api('POST', '/v1/me/checkin-contact', { bearer: u.session, body: { contactId: guardianId } });
-    assert(badDesig.status === 400, `guardian must not be designable as the check-in recipient: ${badDesig.status} ${JSON.stringify(badDesig.data)}`);
+    const gOnly = await api('POST', '/v1/me/checkin', { bearer: w.session, body: {} });
+    assert(
+      gOnly.data?.ok === false && gOnly.data?.reason === 'no_recipient',
+      `the guardian must never receive a check-in: ${JSON.stringify(gOnly.data)}`,
+    );
   });
 
   await check('25. §20 live-alert lock: /me reports activeEvent; delete refused (423) during alert; restored after close', async () => {
@@ -1730,6 +1758,75 @@ async function run() {
     // without an account — that is the whole point of an independent check.
     const page = await api('GET', '/verification');
     assert(page.status === 200, `armed: /verification must be live, got ${page.status}`);
+  });
+
+  await check('82. report metadata carries CLASSIFICATIONS + TRANSCRIPTS, owner-scoped, replayed not recomputed', async () => {
+    // The evidence dashboard's summary and transcript panels are built from THIS endpoint.
+    // Without these two collections the dashboard has nothing to render, so this row is the
+    // hard prerequisite the dashboard stands on.
+    const u = await signup();
+    await addEmail(u.session, 'primary', 'P');
+    const ev = await trigger(u.session, 'acc-meta');
+    assert(ev?.eventId, `trigger did not open an event: ${JSON.stringify(ev)}`);
+
+    // Write what the live classifier and transcriber write during a real incident, through
+    // the SAME ungated capture endpoints the device uses.
+    const cls = await api('POST', `/v1/events/${ev.eventId}/classifications`, {
+      body: {
+        items: [
+          {
+            timestamp: 1000,
+            threatLevel: 'high',
+            matchedCategories: [{ category: 'weapon', matches: ['knife'], weight: 3 }],
+            toneIndicators: ['elevated-volume', 'multi-speaker'],
+            summary: 'Weapon reference detected.',
+            languages: ['en'],
+          },
+        ],
+      },
+    });
+    assert(cls.status === 201, `classification write failed: ${cls.status} ${JSON.stringify(cls.data)}`);
+    const tr = await api('POST', `/v1/events/${ev.eventId}/transcripts`, {
+      body: { fragments: [{ sequence: 0, text: 'first fragment', isFinal: true }, { sequence: 1, text: 'second fragment', isFinal: false }] },
+    });
+    assert(tr.status === 201, `transcript write failed: ${tr.status} ${JSON.stringify(tr.data)}`);
+
+    // The OWNER is answered, with both collections present and the JSON columns already
+    // parsed into a typed shape (the client must not have to re-parse).
+    const meta = await api('GET', `/v1/me/reports/events/${ev.eventId}/metadata`, { bearer: u.session });
+    assert(meta.status === 200 && meta.data?.metadata, `owner metadata refused: ${meta.status} ${JSON.stringify(meta.data)}`);
+    const m = meta.data.metadata;
+    assert(Array.isArray(m.classifications) && m.classifications.length >= 1, `classifications missing: ${JSON.stringify(m.classifications)}`);
+    assert(Array.isArray(m.transcripts) && m.transcripts.length === 2, `transcripts missing: ${JSON.stringify(m.transcripts)}`);
+    const k = m.classifications[0];
+    assert(k.threatLevel === 'high', `threatLevel not replayed: ${JSON.stringify(k)}`);
+    assert(
+      Array.isArray(k.matchedCategories) && k.matchedCategories[0]?.category === 'weapon' && k.matchedCategories[0]?.matches?.[0] === 'knife',
+      `matchedCategories not parsed into a typed shape: ${JSON.stringify(k.matchedCategories)}`,
+    );
+    assert(Array.isArray(k.toneIndicators) && k.toneIndicators.includes('whisper') === false && k.toneIndicators.includes('multi-speaker'), `toneIndicators not parsed: ${JSON.stringify(k.toneIndicators)}`);
+    assert(Array.isArray(k.languages) && k.languages.includes('en'), `languages not parsed: ${JSON.stringify(k.languages)}`);
+    // Transcript order is by sequence, so the panel replays in the order spoken.
+    assert(m.transcripts[0].sequence === 0 && m.transcripts[1].sequence === 1, `transcripts not ordered by sequence: ${JSON.stringify(m.transcripts)}`);
+
+    // REPLAYED, NOT RECOMPUTED: reading twice yields byte-identical values. A summary that
+    // drifted between reviews would not be evidence.
+    const again = await api('GET', `/v1/me/reports/events/${ev.eventId}/metadata`, { bearer: u.session });
+    assert(
+      JSON.stringify(again.data?.metadata?.classifications) === JSON.stringify(m.classifications),
+      'classifications changed between reads — the summary must be a frozen replay, never re-derived',
+    );
+
+    // OWNER-SCOPED against a REAL event: a second account asking for HER event id gets the
+    // same not-found as for an id that never existed. This is the assertion that a fabricated
+    // id cannot make — it proves the scope check, not just the absence of a row.
+    const other = await signup();
+    const stolen = await api('GET', `/v1/me/reports/events/${ev.eventId}/metadata`, { bearer: other.session });
+    assert(stolen.status === 404, `another account read her event metadata: ${stolen.status} ${JSON.stringify(stolen.data)}`);
+    assert(
+      !JSON.stringify(stolen.data ?? '').includes('fragment'),
+      `a non-owner received transcript content: ${JSON.stringify(stolen.data)}`,
+    );
   });
 
   await check('69. certified report: no anonymous access — a session is required before the gate', async () => {

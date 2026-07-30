@@ -48,11 +48,68 @@ async function getOwnEvent(env: Env, userId: string, eventId: string): Promise<R
   return row ?? null;
 }
 
+/**
+ * One classifier observation, as it was recorded DURING the event. This is a replay of
+ * `classifications_index`, not a re-analysis: nothing here is recomputed at read time,
+ * so re-opening a review always shows identical values.
+ *
+ * `matchedCategories` and `toneIndicators` are parsed from the stored JSON so the
+ * client renders a typed shape rather than re-implementing tolerant parsing. Parsing
+ * is DEFENSIVE — a malformed or legacy value degrades to an empty array and never
+ * throws, because a survivor must never be locked out of her own evidence by one bad
+ * row written months ago.
+ */
+export interface ReportClassification {
+  timestamp: number;
+  threatLevel: string | null;
+  /** Categories that actually fired, with the dictionary entries that matched. */
+  matchedCategories: Array<{ category: string; matches: string[]; weight: number }>;
+  /** Acoustic signals the tone analyzer surfaced (e.g. 'whisper', 'multi-speaker'). */
+  toneIndicators: string[];
+  /** The template-generated factual line written at capture. Never a model judgement. */
+  summaryText: string | null;
+  languages: string[];
+}
+
+export interface ReportTranscript {
+  sequence: number;
+  text: string;
+  isFinal: number;
+  createdAt: number;
+}
+
 export interface ReportMetadata {
   event: ReportEventRow;
   locations: Array<{ timestamp: number; lat: number; lon: number; accuracyM: number | null }>;
   deliveries: Array<{ createdAt: number; messageKind: string; channel: string; status: string }>;
   chunks: Array<{ sequence: number; sizeBytes: number; mimeType: string; createdAt: number; isFinal: number }>;
+  /**
+   * NOTE ON CUSTODY — these two collections are SERVER-READABLE PLAINTEXT, and that is
+   * pre-existing, not introduced here. Zero-knowledge custody (Brief 26) encrypts capture
+   * MEDIA: chunks are wrapped per-capture and served as ciphertext the server cannot open.
+   * Transcript fragments and classifier output, by contrast, have always been written to
+   * D1 in the clear by POST /v1/events/:id/{transcripts,classifications} — the coordinator
+   * dispatch path reads them to build situational awareness.
+   *
+   * So serving them here grants the OWNER access to rows the server already holds; it does
+   * not weaken the envelope. It does mean the survivor's own words are not protected to the
+   * same standard as her recording. That gap is real and named in the session report as a
+   * follow-up brief (seal transcripts under the same envelope), not papered over here.
+   */
+  classifications: ReportClassification[];
+  transcripts: ReportTranscript[];
+}
+
+/** Parse a stored JSON column into an array, degrading to [] rather than throwing.
+ *  Never let one malformed legacy row deny a survivor her whole event. */
+function parseArray<T>(json: string | null): T[] {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Everything the evidence zone's non-capture sections are built from, owner-scoped.
@@ -62,7 +119,7 @@ export async function getReportMetadata(env: Env, userId: string, eventId: strin
   const event = await getOwnEvent(env, userId, eventId);
   if (!event) return null;
 
-  const [locations, deliveries, chunks] = await Promise.all([
+  const [locations, deliveries, chunks, classifications, transcripts] = await Promise.all([
     env.DB.prepare('SELECT timestamp, lat, lon, accuracyM FROM locations_index WHERE eventId = ? ORDER BY timestamp')
       .bind(eventId)
       .all<{ timestamp: number; lat: number; lon: number; accuracyM: number | null }>(),
@@ -76,6 +133,23 @@ export async function getReportMetadata(env: Env, userId: string, eventId: strin
     )
       .bind(eventId)
       .all<{ sequence: number; sizeBytes: number; mimeType: string; createdAt: number; isFinal: number }>(),
+    // Chronological: the summary panel replays these in the order they were observed,
+    // so the survivor sees the record develop as the incident did.
+    env.DB.prepare(
+      'SELECT timestamp, threatLevel, matchedCategoriesJson, toneIndicatorsJson, summaryText, languagesJson FROM classifications_index WHERE eventId = ? ORDER BY timestamp',
+    )
+      .bind(eventId)
+      .all<{
+        timestamp: number;
+        threatLevel: string | null;
+        matchedCategoriesJson: string | null;
+        toneIndicatorsJson: string | null;
+        summaryText: string | null;
+        languagesJson: string | null;
+      }>(),
+    env.DB.prepare('SELECT sequence, text, isFinal, createdAt FROM transcripts_index WHERE eventId = ? ORDER BY sequence')
+      .bind(eventId)
+      .all<ReportTranscript>(),
   ]);
 
   return {
@@ -83,6 +157,15 @@ export async function getReportMetadata(env: Env, userId: string, eventId: strin
     locations: locations.results ?? [],
     deliveries: deliveries.results ?? [],
     chunks: chunks.results ?? [],
+    classifications: (classifications.results ?? []).map((r) => ({
+      timestamp: r.timestamp,
+      threatLevel: r.threatLevel,
+      matchedCategories: parseArray<{ category: string; matches: string[]; weight: number }>(r.matchedCategoriesJson),
+      toneIndicators: parseArray<string>(r.toneIndicatorsJson),
+      summaryText: r.summaryText,
+      languages: parseArray<string>(r.languagesJson),
+    })),
+    transcripts: transcripts.results ?? [],
   };
 }
 

@@ -185,9 +185,48 @@ describe('GROUP 2 [A] review is a third thing, and produces no file', () => {
   });
 
   it('nothing plays at her — opening is deliberate', () => {
-    // The JSX attributes and the imperative call, not the words: `autoPlay` is React's
-    // spelling, `loop` the replay attribute, `.play()` the way to start one uninvited.
-    expect(review).not.toMatch(/autoPlay|\bloop\b|\.play\(\)/);
+    // The JSX attributes, not the words: `autoPlay` is React's spelling and `loop` the
+    // replay attribute. Neither may appear at all.
+    expect(review).not.toMatch(/autoPlay|\bloop\b/);
+  });
+
+  /**
+   * The dashboard has a real transport (play/pause, reset, scrub), so `.play()` now exists on
+   * this path and a blanket ban on the token would have to be lifted or the transport dropped.
+   * The ban is therefore made PRECISE rather than removed: what must never happen is playback
+   * starting on its own, and the place that would happen is an effect or a timer, never a
+   * button. A play call reachable only from an onClick is exactly the deliberate open the brief
+   * asks for; one inside useEffect/setTimeout is the autoplay it forbids.
+   */
+  it('playback starts only from a control she pressed — never from an effect or a timer', () => {
+    const calls = [...review.matchAll(/\.play\(\)/g)];
+    expect(calls.length, 'the transport should need exactly one play call').toBe(1);
+
+    // Every effect body and every deferred callback must be free of it. The body is taken by
+    // matching the opener's parenthesis rather than by a fixed window — a window long enough
+    // to cover a real effect also swallows whatever function follows it, which would make this
+    // assertion fire on innocent code and teach us to loosen it.
+    const argsOf = (openParenIndex: number): string => {
+      let depth = 0;
+      for (let i = openParenIndex; i < review.length; i += 1) {
+        if (review[i] === '(') depth += 1;
+        else if (review[i] === ')') {
+          depth -= 1;
+          if (depth === 0) return review.slice(openParenIndex, i + 1);
+        }
+      }
+      return review.slice(openParenIndex);
+    };
+
+    for (const m of review.matchAll(/\b(useEffect|setTimeout|setInterval|requestAnimationFrame)\(/g)) {
+      const open = (m.index ?? 0) + m[1].length;
+      expect(argsOf(open), `playback must not be startable from ${m[1]}`).not.toMatch(/\.play\(\)/);
+    }
+
+    // ...and it lives in the toggle the transport button is wired to.
+    const toggle = review.slice(review.indexOf('function toggle()'));
+    expect(toggle.slice(0, 500)).toMatch(/\.play\(\)/);
+    expect(review).toMatch(/<Transport onClick=\{toggle\}>/);
   });
 
   it('access is unlimited — no counter, cap, or cooldown anywhere on the path', () => {

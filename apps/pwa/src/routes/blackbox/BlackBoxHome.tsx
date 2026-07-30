@@ -388,21 +388,24 @@ export function BlackBoxHome(): JSX.Element {
                   : checkin === 'undelivered'
                     ? '⚠ Not delivered — tap to retry'
                     : checkin === 'no-recipient'
-                      ? '⚠ No check-in contact set'
+                      ? '⚠ No primary contact set'
                       : checkin === 'error'
                         ? 'Couldn’t check in — tap to retry'
                         : "I'm OK · Check in"}
           </button>
           <p className="mt-2 text-center font-mono text-[10px] leading-relaxed text-bb-text-tertiary">
+            {/* Copy names the PRIMARY contact because that is what the server routes to
+                — there is no designation to choose, so "choose one" would send the user
+                looking for a control that no longer exists. */}
             {checkin === 'delivered'
-              ? 'Your check-in contact received your status, time, and location.'
+              ? 'Your primary contact received your status, time, and location.'
               : checkin === 'undelivered'
-                ? 'Your check-in contact couldn’t be reached — check it in settings.'
+                ? 'Your primary contact couldn’t be reached — check it in settings.'
                 : checkin === 'no-recipient'
-                  ? 'No check-in contact set — choose one under your contacts in settings.'
+                  ? 'Add a primary contact in settings — your check-in goes to them.'
                   : checkin === 'error'
                     ? 'No connection — please try again.'
-                    : 'Sends your status, time & location to your check-in contact. No recording, no tracking.'}
+                    : 'Sends your status, time & location to your primary contact. No recording, no tracking.'}
           </p>
         </div>
       </div>

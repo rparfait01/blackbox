@@ -4,11 +4,28 @@
  * creates NO event, NO capture, NO coordinator, NO escalation — it just sends a
  * calm status message and records the time.
  *
- * Recipient (Brief 19 — retires the guardian hardcode): the user's designated
- * check-in contact if set and deliverable, else the primary contact if
- * deliverable, else an HONEST failure. It is NEVER the guardian, and it NEVER
- * reports success with zero recipients. Location is always captured on tap (Brief
- * 17 §1) — no opt-in flag.
+ * Recipient: the PRIMARY contact if deliverable, else an HONEST failure. ONE
+ * routing rule, server-side, with no second door.
+ *
+ * There used to be a per-user override (`users.checkinContactId`, Brief 19): a
+ * designated contact took precedence and the primary was only the fallback. That
+ * override is retired. Two reasons, in order:
+ *
+ *   1. It could not express a choice. Contact Consent §0 cut the contact ceiling to
+ *      ONE slot (`CONTACT_SLOTS = ['primary']`), so the only contact a user could
+ *      designate WAS the primary. The selector offered a decision that had exactly
+ *      one outcome.
+ *   2. It was a second routing door. Two ways to answer "who gets the check-in" is
+ *      the same shape as the dual trigger paths and the fourth report door this
+ *      codebase has already had to collapse — a divergence waiting to happen, where
+ *      the stale one points at a contact the user thinks they removed.
+ *
+ * Proven before removal: 0 of 2 production accounts had a non-null
+ * checkinContactId, so no live routing changed. 0045 drops the column so the door
+ * cannot be reopened by a future reader.
+ *
+ * It is NEVER the guardian, and it NEVER reports success with zero recipients.
+ * Location is always captured on tap (Brief 17 §1) — no opt-in flag.
  */
 
 import { formatLocalClock } from '@blackbox/shared';
@@ -16,7 +33,7 @@ import { dispatch } from '../channels/router';
 import { isChannelDeliverable } from '../channels/router';
 import { audit } from './audit';
 import { consentGateEnforced } from './consent';
-import { getUserById, type UserRow } from './users';
+import { getUserById } from './users';
 import type { Env } from '../types';
 
 /** A contact is a viable check-in target only if at least one of its endpoints can
@@ -29,27 +46,21 @@ async function contactDeliverable(env: Env, contactId: string): Promise<boolean>
 }
 
 /**
- * Resolve the single check-in recipient (Brief 19): designated contact → primary
- * contact → none. Only ever a `contact` role (never guardian/emergency), and only
- * if it can actually be reached. Returns the contact id or null.
+ * Resolve the single check-in recipient: the PRIMARY contact, or none. Only ever a
+ * `contact` role (never guardian/emergency), and only if it can actually be
+ * reached. Returns the contact id or null.
+ *
+ * This is the ONLY function that answers "who receives a check-in". There is no
+ * override, no per-user column, and no caller-supplied recipient — so the answer
+ * cannot differ between the UI's claim and the dispatcher's behaviour.
  */
-async function resolveCheckinContact(env: Env, userId: string, user: UserRow | null): Promise<string | null> {
+async function resolveCheckinContact(env: Env, userId: string): Promise<string | null> {
   // CONSENT-GATED (§4, behind the flag): once armed, a check-in reaches a recipient
   // only if that contact has CONFIRMED the role — same rule as an alert. A pending
-  // guardian/contact is not a silent success; the check-in resolves to null and the
-  // UI reflects "no confirmed recipient" rather than reporting a delivery that never
+  // contact is not a silent success; the check-in resolves to null and the UI
+  // reflects "no confirmed recipient" rather than reporting a delivery that never
   // happened.
   const gate = consentGateEnforced(env) ? "AND status = 'confirmed'" : '';
-  if (user?.checkinContactId) {
-    const designated = await env.DB.prepare(
-      `SELECT id FROM contacts WHERE id = ? AND userId = ? AND role = 'contact' ${gate}`,
-    )
-      .bind(user.checkinContactId, userId)
-      .first<{ id: string }>();
-    if (designated && (await contactDeliverable(env, designated.id))) {
-      return designated.id;
-    }
-  }
   const primary = await env.DB.prepare(
     `SELECT id FROM contacts WHERE userId = ? AND role = 'contact' AND priority = 1 ${gate} LIMIT 1`,
   )
@@ -92,10 +103,10 @@ export async function sendCheckin(env: Env, userId: string, input: CheckinInput)
     env.DB.prepare('UPDATE users SET lastCheckinAt = ? WHERE id = ?').bind(now, userId),
   ]);
 
-  const contactId = await resolveCheckinContact(env, userId, user);
+  const contactId = await resolveCheckinContact(env, userId);
   if (!contactId) {
-    // No designated/primary contact that can be reached → honest failure. NEVER
-    // ok:true with zero recipients.
+    // No primary contact that can be reached → honest failure. NEVER ok:true with
+    // zero recipients.
     await audit(env, checkinId, 'checkin', userId, { recipients: 0, reason: 'no_recipient', location: location != null });
     return { ok: false, id: checkinId, at: now, recipients: 0, reason: 'no_recipient' };
   }

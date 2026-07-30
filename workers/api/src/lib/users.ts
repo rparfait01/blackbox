@@ -21,9 +21,8 @@ export interface UserRow {
   passwordHash: string | null;
   guardianEnabled: number;
   nationality: string | null;
-  /** The contact designated as the check-in recipient (Brief 19). NULL → default
-   *  to the primary contact at resolve time. Never the guardian. */
-  checkinContactId: string | null;
+  // NOTE: there is no `checkinContactId`. Check-in routing is primary-only and lives
+  // entirely in resolveCheckinContact() (lib/checkin.ts); 0045 dropped the column.
   /** Entitlement (Brief 28). 'unactivated' | 'activated'. One-way: once 'activated'
    *  it is NEVER set back — permanent, offline-durable, never re-checked. Gates the
    *  ARM affordance only; the trigger path never reads it. */
@@ -38,7 +37,7 @@ export interface UserRow {
 }
 
 const USER_COLS =
-  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, checkinContactId, entitlement, entitlement_source AS entitlementSource, activatedAt, createdAt, updatedAt';
+  'id, name, phone, email, phoneVerifiedAt, emailVerifiedAt, displayMode, regionId, lockCodeHash, duressCodeHash, passwordHash, guardianEnabled, nationality, entitlement, entitlement_source AS entitlementSource, activatedAt, createdAt, updatedAt';
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -173,18 +172,6 @@ export async function updateUserFields(
   const now = Date.now();
   await env.DB.prepare(`UPDATE users SET ${sets.join(', ')}, updatedAt = ? WHERE id = ?`)
     .bind(...values, now, userId)
-    .run();
-}
-
-/**
- * Designate the check-in recipient (Brief 19). Stores the chosen contact row id;
- * passing null clears it back to the primary-contact default. Validation that the
- * id is one of the user's own `contact` rows lives at the route, so this stays a
- * plain setter mirroring setGuardianEnabled.
- */
-export async function setCheckinContact(env: Env, userId: string, contactId: string | null): Promise<void> {
-  await env.DB.prepare('UPDATE users SET checkinContactId = ?, updatedAt = ? WHERE id = ?')
-    .bind(contactId, Date.now(), userId)
     .run();
 }
 
