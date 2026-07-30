@@ -18,7 +18,6 @@ import { useActiveAlert } from '@/lib/active-alert';
 import { enrollPasskey, passkeySupported } from '@/lib/passkey';
 import { ContactTabs } from './ContactTabs';
 import { AnonymousTally } from './AnonymousTally';
-import { GuidedIntake } from './GuidedIntake';
 import { CertifiedReport } from './CertifiedReport';
 import { EvidenceReview } from './EvidenceReview';
 
@@ -70,9 +69,6 @@ export function Settings(): JSX.Element {
   // Brief 25: the anonymous incident tally overlay. Reachable only here (Settings is
   // Visible + unreachable during an active alert), so it is never surfaced under duress.
   const [tallyOpen, setTallyOpen] = useState(false);
-  // Brief 27: the guided intake (structured case file). Settings-only; filing is
-  // fail-closed (blocked unless zero-knowledge storage is armed).
-  const [intakeOpen, setIntakeOpen] = useState(false);
   // Brief 29: the survivor-generated OFFICIAL report. Settings-only, and gated on
   // zero-knowledge custody — with the flag off the entry states that honestly and cannot
   // be opened, rather than disappearing or failing on tap.
@@ -511,22 +507,11 @@ export function Settings(): JSX.Element {
           )}
         </Group>
 
-        {/* Brief 27 — guided intake producing a structured, sealed case file. Distinct from
-            the official report above and deliberately labelled so: this is her WRITTEN
-            account, sealed under her key; the official report is the certified, signed
-            document built from the recording. Filing is fail-closed. */}
-        <Group label="Written account">
-          <p className="mb-3 text-[12px] leading-relaxed text-med-text/60">
-            A private, guided space to set down what happened in your own words, at your own pace. It’s sealed
-            under your key — only you can open it — and you can take it to legal aid or counsel.
-          </p>
-          <button
-            onClick={() => setIntakeOpen(true)}
-            className="w-full rounded-full border border-med-text/30 py-3 text-sm text-med-text/80"
-          >
-            Write an account
-          </button>
-        </Group>
+        {/* THREE entries, and only three. The guided intake (Brief 27) used to sit here as a
+            fourth, "Written account" — but her own words are already a section of the Official
+            Report, so a separate door was a duplicate and reopened exactly the conflation this
+            section exists to prevent. The intake subsystem is untouched and still sealed-file
+            capable; what is removed is the second door to the same thing. */}
 
         <button onClick={() => void signOut()} className="mt-4 w-full rounded-full border border-med-text/25 py-3 text-med-text/70">
           Sign out
@@ -553,7 +538,6 @@ export function Settings(): JSX.Element {
       ) : null}
 
       {tallyOpen ? <AnonymousTally onClose={() => setTallyOpen(false)} /> : null}
-      {intakeOpen ? <GuidedIntake onClose={() => setIntakeOpen(false)} /> : null}
       {reportOpen ? <CertifiedReport onClose={() => setReportOpen(false)} /> : null}
       {reviewOpen ? <EvidenceReview onClose={() => setReviewOpen(false)} /> : null}
     </main>

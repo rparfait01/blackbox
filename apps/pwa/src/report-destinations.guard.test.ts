@@ -227,10 +227,21 @@ describe('GROUP 3 [A] all three entries are present, named, and described', () =
     }
   });
 
-  it('the guided intake is no longer named so as to be mistaken for the official report', () => {
+  it('there is no FOURTH report door — her own words live inside the Official Report', () => {
+    // "Written account" was a second door to something the Official Report already contains,
+    // which reopened the exact conflation this section exists to prevent.
     expect(SETTINGS).not.toContain('<Group label="Make a report">');
+    expect(SETTINGS).not.toContain('<Group label="Written account">');
     expect(SETTINGS).not.toMatch(/>\s*Start a report\s*</);
-    expect(SETTINGS).toContain('<Group label="Written account">');
+    expect(SETTINGS).not.toMatch(/GuidedIntake|intakeOpen/);
+  });
+
+  it('Settings offers EXACTLY three report entries', () => {
+    const groups = [...SETTINGS.matchAll(/<Group label="([^"]+)">/g)].map((m) => m[1]);
+    const reportGroups = groups.filter((g) =>
+      /report|review|account$/i.test(g) && g !== 'Your account',
+    );
+    expect(reportGroups).toEqual(['Anonymous report', 'Official report', 'Evidence review']);
   });
 });
 
