@@ -68,8 +68,24 @@ const contexts = new Map<string, SessionContext>();
 const locationBatch = new Map<string, Array<Record<string, number>>>();
 
 let timersStarted = false;
-let drainScheduled = false;
 let draining = false;
+/** The pending drain timer and when it is due, so an earlier request can preempt a later
+ *  one (see scheduleDrain — a bulk backoff must never gate the life-safety lane). */
+let drainTimer: number | null = null;
+let drainDueAt = 0;
+
+/**
+ * The one BULK kind. Everything else is a small JSON life-safety message — classifier
+ * results, the SITUATION signal, origin, location — and every one of them is worth more to
+ * the person on the other end than a megabyte of video that will still be there in a minute.
+ *
+ * Derived from `kind` in memory: no schema change, no device-DB migration, and items already
+ * queued on a phone are classified correctly the moment this ships. A future kind defaults to
+ * SIGNAL, which is the safe direction — small and urgent rather than bulky and patient.
+ */
+function isBulk(item: UploadQueueItem): boolean {
+  return item.kind === 'chunk';
+}
 
 function backoff(attempts: number): number {
   return Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.max(0, attempts - 1));
@@ -84,15 +100,29 @@ function ensureTimers(): void {
   window.addEventListener('online', () => scheduleDrain(0));
 }
 
+/**
+ * Schedule the next drain, and let an EARLIER wake-up preempt a later one.
+ *
+ * The old guard was `if (drainScheduled) return`, which silently dropped every
+ * subsequent request. That is a second, quieter starvation bug: once a 1.5 MB video
+ * chunk failed and booked a 30-second backoff, a classification enqueued a moment later
+ * asked for a 0 ms drain and was ignored — so the coordinator's SITUATION summary went
+ * dark for 30 seconds at a time no matter how the lanes were ordered. Priority lanes
+ * alone would not have fixed it.
+ */
 function scheduleDrain(delayMs: number): void {
-  if (drainScheduled) {
-    return;
+  const dueAt = Date.now() + Math.max(0, delayMs);
+  if (drainTimer !== null) {
+    if (dueAt >= drainDueAt) {
+      return; // something at least as soon is already pending
+    }
+    window.clearTimeout(drainTimer);
   }
-  drainScheduled = true;
-  window.setTimeout(() => {
-    drainScheduled = false;
+  drainDueAt = dueAt;
+  drainTimer = window.setTimeout(() => {
+    drainTimer = null;
     void drainQueue();
-  }, delayMs);
+  }, Math.max(0, delayMs));
 }
 
 /**
@@ -445,6 +475,58 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
   return response.status >= 200 && response.status < 300;
 }
 
+/**
+ * Send one queued item. Never throws: on any failure it books the item's own backoff and
+ * returns false, so the CALLER decides what that means for its lane.
+ *
+ * Nothing is ever dropped — an item leaves the queue only on a 2xx. Capture retention is
+ * never traded for throughput.
+ */
+async function trySend(item: UploadQueueItem): Promise<boolean> {
+  try {
+    const ctx = await resolveContext(item.sessionId);
+    if (!ctx) {
+      return false; // no session row yet; leave it queued untouched
+    }
+    const ready = await ensureEvent(ctx);
+    if (!ready || !(await sendItem(item, ctx))) {
+      throw new Error('upload failed');
+    }
+    if (item.id !== undefined) {
+      await deleteQueuedUpload(item.id);
+    }
+    return true;
+  } catch (error) {
+    log.error('upload item failed; will retry', error);
+    item.attempts += 1;
+    item.nextAttemptAt = Date.now() + backoff(item.attempts);
+    try {
+      await updateQueuedUpload(item);
+    } catch (persistError) {
+      log.error('could not persist upload backoff', persistError);
+    }
+    return false;
+  }
+}
+
+/**
+ * Drain the queue in TWO LANES, life-safety first.
+ *
+ * The single-lane version let a 1.5 MB video chunk stand in front of a 300-byte
+ * classification, so on a real mobile uplink the coordinator's SITUATION summary never
+ * populated at all — measured on prod: zero classifications and zero transcripts across
+ * events of 67 s and 108 s, while the classifier had produced ~20 of them locally. A
+ * coordinator who cannot see the situation cannot act on it.
+ *
+ *   LANE 1 — SIGNAL: every due item gets an attempt every pass. One item's failure never
+ *   blocks the next, and never ends the lane. Order does not matter here; arrival does.
+ *
+ *   LANE 2 — BULK: strict ascending sequence, and it STOPS at the first failure, because
+ *   playback assembly depends on a contiguous sequence. Stopping the LANE never stops the
+ *   PASS — that distinction is the whole fix.
+ *
+ * Single-flight is retained (`draining`): this changes ORDER, not concurrency. No storms.
+ */
 async function drainQueue(): Promise<void> {
   if (draining) {
     return;
@@ -457,34 +539,45 @@ async function drainQueue(): Promise<void> {
   try {
     const items = await getQueuedUploads();
     const now = Date.now();
-    for (const item of items) {
+    // Soonest moment any lane wants to be woken again. Tracked separately so a long bulk
+    // backoff can never set the alarm for the signal lane.
+    let nextWakeAt = Number.POSITIVE_INFINITY;
+    const wakeAt = (at: number): void => {
+      nextWakeAt = Math.min(nextWakeAt, at);
+    };
+
+    // ---- LANE 1: life-safety signal. Attempt all; a failure is skipped, not fatal. ----
+    for (const item of items.filter((i) => !isBulk(i))) {
       if (item.nextAttemptAt > now) {
+        wakeAt(item.nextAttemptAt);
         continue;
       }
-      const ctx = await resolveContext(item.sessionId);
-      if (!ctx) {
-        continue;
-      }
-      try {
-        const ready = await ensureEvent(ctx);
-        if (!ready || !(await sendItem(item, ctx))) {
-          throw new Error('upload failed');
-        }
-        if (item.id !== undefined) {
-          await deleteQueuedUpload(item.id);
-        }
-      } catch (error) {
-        log.error('upload item failed; will retry', error);
-        item.attempts += 1;
-        item.nextAttemptAt = Date.now() + backoff(item.attempts);
-        await updateQueuedUpload(item);
-        scheduleDrain(backoff(item.attempts));
-        return; // preserve order; back off before the next pass
+      if (!(await trySend(item))) {
+        wakeAt(item.nextAttemptAt);
       }
     }
+
+    // ---- LANE 2: bulk bytes, in order. Sorted explicitly so the contiguity guarantee is
+    // stated in this file rather than inherited from IndexedDB key order. ----
+    const bulk = items.filter(isBulk).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+    for (const item of bulk) {
+      if (item.nextAttemptAt > now) {
+        wakeAt(item.nextAttemptAt);
+        break; // a later chunk must not overtake an earlier one
+      }
+      if (!(await trySend(item))) {
+        wakeAt(item.nextAttemptAt);
+        break; // hold the lane so sequence stays contiguous
+      }
+    }
+
     const remaining = await getQueuedUploads();
     if (remaining.length > 0) {
-      scheduleDrain(2000);
+      // Never sleep longer than the soonest lane wants. With nothing backed off this is the
+      // ordinary 2 s follow-up; with a chunk in 30 s backoff the signal lane still gets its
+      // own short cadence rather than inheriting the chunk's.
+      const idle = Number.isFinite(nextWakeAt) ? Math.max(0, nextWakeAt - Date.now()) : 2000;
+      scheduleDrain(Math.min(2000, idle));
     }
   } finally {
     draining = false;
