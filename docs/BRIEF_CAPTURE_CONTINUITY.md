@@ -162,7 +162,46 @@ there is no queued-record migration and no risk to items already queued on a dev
 
 ---
 
-## ITEM C — PLAYBACK / ASSEMBLY (shared, honest about the format)
+## ITEM C — CORRECTED BY EVIDENCE, 2026-07-30 (read this before building C or D)
+
+**The premise below — mine, in the §0 diagnosis and carried into this item — is WRONG. Sequential
+segment playback must NOT be built: it would break playback completely.**
+
+Read the first bytes of three consecutive stored segments from prod event `42e9bd00`:
+
+| segment | first bytes | what it is |
+|---|---|---|
+| 0 | `1a 45 df a3` | EBML magic — the container header |
+| 1 | `1f 43 b6 75` | Cluster ID — a raw cluster continuation, **not a file** |
+| 2 | `a3 c3 81 03` | SimpleBlock — **mid-cluster**, not even a cluster boundary |
+
+`MediaRecorder` with a timeslice emits **one continuous byte stream, arbitrarily sliced**. So:
+
+- **Byte-concatenation in order is CORRECT** and is the only thing that can work. `/audio/full`
+  is right and must stay. It is not the defect.
+- **Segments after 0 are not independently playable.** A player handed segment 1 fails
+  immediately. "Play segment 0, then 1, advancing on `ended`" cannot work at any surface.
+- `apps/pwa/src/lib/report/playback.ts` is **already correct** — concatenating decrypted
+  plaintexts into one Blob is the right assembly. My claim that it shared a flaw was false.
+- The `~1 second` symptom was **missing chunks** (4 of ~100 arrived), which Items A and B fix.
+  Concatenation was never the cause.
+
+**The real remaining defects, and the corrected Item C:**
+
+1. `normMime` (`dashboard/page.ts:707`) substitutes `vp8` for the actual `vp09...` and has no
+   `video/mp4` branch, so the progressive/seekable MSE path fails for video and falls back.
+   Fix: pass the recorder's real reported type through, add the missing branches, and gate on
+   `MediaSource.isTypeSupported` — never a guess.
+2. The video element (`:699`) is handed `/audio/full` directly with `controls`, and a streaming
+   WebM header carries **no duration**, so it reads a bogus `00:00` and cannot seek — the
+   "bogus 00:00" the code already admits at `:731`. Fix: route video through the same MSE path
+   as audio and set `mediaSource.duration` from the known chunk index.
+3. Frame-accurate seeking still needs a real duration and cues — that is **Item D's remux**,
+   which is now the only route to it. D's input is the concatenated stream, which is well-formed.
+
+Everything below this line is the SUPERSEDED original text, kept for provenance. Do not build it.
+
+## ~~ITEM C — PLAYBACK / ASSEMBLY (shared, honest about the format)~~ — SUPERSEDED
 
 **Independent `MediaRecorder` segments are separate media files. There is no correct way to play
 them as one stream by byte-concatenation, and the system currently pretends otherwise in two
