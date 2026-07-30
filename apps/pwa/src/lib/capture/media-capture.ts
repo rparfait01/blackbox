@@ -14,6 +14,28 @@ export interface MediaCaptureOptions {
   onError?: (error: unknown) => void;
 }
 
+/**
+ * The encoder budget. A chunk has to cross the uplink it actually has, and nothing used to
+ * say how big it was allowed to be: prod chunks reached 1.5 MB per second, which no mobile
+ * uplink sustains, so the queue fell behind without bound and most of the recording never
+ * left the phone.
+ *
+ * ~720p24 at 800 kbps lands around 108 KB per second — an order of magnitude under what was
+ * shipping, and comfortably under the 461 KB/s that was working.
+ *
+ * EVERY ONE OF THESE IS `ideal`, NEVER `exact`. An exact resolution would add a new hard-fail
+ * rung to the acquisition ladder: a device that could not hit it would fall through to
+ * audio-only and lose video altogether. Only `facingMode` uses `exact`, only on rung 1, and
+ * this budget does not touch camera selection at all.
+ */
+const VIDEO_QUALITY: MediaTrackConstraints = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  frameRate: { ideal: 24 },
+};
+const VIDEO_BITS_PER_SECOND = 800_000;
+const AUDIO_BITS_PER_SECOND = 64_000;
+
 function pickMimeType(mode: CaptureMode): string {
   // Prefer MP4/AAC so the recording is decodable in iOS Safari (which cannot
   // play webm/opus) on the contact dashboard; fall back to webm/opus on browsers
@@ -79,9 +101,7 @@ export class MediaCapture {
       }
 
       const mimeType = pickMimeType(this.activeMode);
-      const recorder = mimeType
-        ? new MediaRecorder(this.mediaStream, { mimeType })
-        : new MediaRecorder(this.mediaStream);
+      const recorder = this.makeRecorder(this.mediaStream, mimeType);
       this.recorder = recorder;
 
       recorder.ondataavailable = (event: BlobEvent) => {
@@ -127,10 +147,12 @@ export class MediaCapture {
    */
   private async acquireStream(): Promise<MediaStream> {
     if (this.options.mode === 'audio-video') {
+      // Camera SELECTION is the facingMode rungs and is settled; the spread only adds a
+      // quality preference to each rung. Rung 3 still constrains no camera whatsoever.
       const videoConstraints: MediaTrackConstraints[] = [
-        { facingMode: { exact: 'environment' } },
-        { facingMode: { ideal: 'environment' } },
-        {},
+        { facingMode: { exact: 'environment' }, ...VIDEO_QUALITY },
+        { facingMode: { ideal: 'environment' }, ...VIDEO_QUALITY },
+        { ...VIDEO_QUALITY },
       ];
       for (const video of videoConstraints) {
         try {
@@ -145,6 +167,42 @@ export class MediaCapture {
       log.error('video capture unavailable; falling back to audio-only');
     }
     return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  }
+
+  /**
+   * Build the recorder, degrading through the options rather than losing the recording.
+   *
+   * The bitrate budget must never cost us a capture, so it is the FIRST thing surrendered
+   * when a browser objects — and the mime type is surrendered only after it, because a
+   * container the contact's phone cannot decode is worse than a large one. Same rule as the
+   * acquisition ladder: availability outranks quality.
+   *
+   *   1. mime + budget   — what we want
+   *   2. mime only       — keep an iOS-decodable container, lose the budget
+   *   3. budget only     — browser default container
+   *   4. nothing         — whatever the browser gives us
+   *
+   * If even (4) throws, `start()` catches it and reports honestly; it does not pretend to
+   * record. Bitrate hints are advisory anyway, so the real proof of this is the measured
+   * chunk size on a device, not the presence of the option.
+   */
+  private makeRecorder(stream: MediaStream, mimeType: string): MediaRecorder {
+    const budget: MediaRecorderOptions =
+      this.activeMode === 'audio-video'
+        ? { videoBitsPerSecond: VIDEO_BITS_PER_SECOND, audioBitsPerSecond: AUDIO_BITS_PER_SECOND }
+        : { audioBitsPerSecond: AUDIO_BITS_PER_SECOND };
+    const attempts: MediaRecorderOptions[] = mimeType
+      ? [{ mimeType, ...budget }, { mimeType }, { ...budget }, {}]
+      : [{ ...budget }, {}];
+    for (const options of attempts) {
+      try {
+        return new MediaRecorder(stream, options);
+      } catch (error) {
+        log.error('recorder options rejected; relaxing', error);
+      }
+    }
+    // Every option was refused. Let the bare constructor's own error surface to start().
+    return new MediaRecorder(stream);
   }
 
   /** Mount an off-screen muted video sink and play the stream from the gesture. */

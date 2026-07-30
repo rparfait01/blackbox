@@ -61,8 +61,13 @@ describe('GROUP 1 [A] video capture defaults to the REAR camera', () => {
     );
     // The ladder relaxes on failure rather than returning at the first rung...
     expect(ladder).toMatch(/for \(const video of videoConstraints\)/);
-    // ...and ends with an unconstrained camera, so a front-only device still records.
-    expect(ladder).toMatch(/\{\},\s*\n?\s*\]/);
+    // ...and its last rung names NO camera, so a front-only device still records. It carries
+    // only the quality budget (Item A) — a preference, never a camera selector. Asserted as
+    // "constrains no camera" rather than "is literally {}", so adding quality hints cannot
+    // silently turn this rung into another way to fail.
+    const lastRung = ladder.slice(ladder.lastIndexOf('{ ...VIDEO_QUALITY }'), ladder.indexOf('];'));
+    expect(lastRung, 'the final rung must exist').not.toBe('');
+    expect(lastRung, 'the final rung must select no camera').not.toMatch(/facingMode|deviceId/);
     // The last rung of all is audio-only: never lose audio + location over a camera.
     expect(CAPTURE).toMatch(/getUserMedia\(\{ audio: true, video: false \}\)/);
   });
