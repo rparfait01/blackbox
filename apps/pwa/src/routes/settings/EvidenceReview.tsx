@@ -314,6 +314,9 @@ function Dashboard({
 
   const plot = useMemo(() => plotLocations(record.locations), [record.locations]);
 
+  /** Seeking is only meaningful once the element has told us how long the recording is. */
+  const seekable = durationSec > 0 && Number.isFinite(durationSec);
+
   /**
    * Play/pause. NOTHING plays until she presses this — there is no autoplay on entry and no
    * repeat at the end. The media element is the clock: the transport asks it to start or stop
@@ -385,11 +388,20 @@ function Dashboard({
                 onPause={onStopped}
                 onEnded={onStopped}
                 onDurationChange={onDuration}
+                onLoadedMetadata={onDuration}
+                preload="metadata"
                 playsInline
                 className="w-full rounded border border-med-text/20 bg-black"
               />
             ) : (
               <>
+                {/* The element is visually hidden because the waveform IS the audio UI.
+                    `preload="metadata"` + onLoadedMetadata ask for the duration BEFORE she
+                    presses play, which the transport needs: seekTo() cannot convert a scrub
+                    fraction into a time without a finite duration, so without this, scrubbing
+                    would do nothing until after the first play. Metadata only — no audio data
+                    is fetched until she chooses to play. The waveform below does not depend on
+                    this at all; it is computed from the decrypted Blob directly. */}
                 <audio
                   ref={attach}
                   src={capture.media.url}
@@ -398,6 +410,8 @@ function Dashboard({
                   onPause={onStopped}
                   onEnded={onStopped}
                   onDurationChange={onDuration}
+                  onLoadedMetadata={onDuration}
+                  preload="metadata"
                   className="hidden"
                 />
                 <div className="flex h-28 items-center justify-center rounded border border-med-text/20 bg-black/40 text-[12px] text-med-text/40">
@@ -408,17 +422,21 @@ function Dashboard({
           </Panel>
 
           <Panel title="Sound">
+            {/* HONEST STATUS on the scrub target. Seeking needs a known duration, and until the
+                media element reports one a tap on the waveform cannot go anywhere. Rather than
+                absorb the tap and appear broken, the waveform says seeking is not ready — a
+                control that quietly does nothing is the failure mode this project forbids. */}
             <WaveformView
               peaks={peaks}
               settled={peaksSettled}
               progress={durationSec > 0 ? positionSec / durationSec : 0}
-              onSeek={seekTo}
+              onSeek={seekable ? seekTo : null}
             />
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Transport onClick={toggle}>{running ? 'Pause' : 'Play'}</Transport>
               <Transport onClick={reset}>Reset</Transport>
               <span className="ml-auto font-mono text-[12px] text-med-text/50">
-                {clock(positionSec)} / {durationSec > 0 ? clock(durationSec) : '--:--'}
+                {clock(positionSec)} / {seekable ? clock(durationSec) : '--:--'}
               </span>
             </div>
           </Panel>
@@ -508,9 +526,12 @@ function Dashboard({
                       i === activeLine ? 'text-med-text' : 'text-med-text/45'
                     }`}
                   >
+                    {/* Jump to where these words fall. Not underlined as a link when seeking is
+                        unavailable — it would advertise an action it could not perform. */}
                     <button
-                      onClick={() => seekTo(durationSec > 0 ? line.offsetSec / durationSec : 0)}
-                      className="mr-2 font-mono text-[11px] text-med-text/35 underline"
+                      onClick={() => seekable && seekTo(line.offsetSec / durationSec)}
+                      disabled={!seekable}
+                      className={`mr-2 font-mono text-[11px] text-med-text/35 ${seekable ? 'underline' : ''}`}
                     >
                       {clock(line.offsetSec)}
                     </button>
@@ -561,7 +582,8 @@ function WaveformView({
   peaks: Waveform | null;
   settled: boolean;
   progress: number;
-  onSeek: (fraction: number) => void;
+  /** null when the recording's length is not known yet, so seeking cannot work. */
+  onSeek: ((fraction: number) => void) | null;
 }): JSX.Element {
   const W = 1000;
   const H = 120;
@@ -575,12 +597,14 @@ function WaveformView({
   return (
     <div
       role="presentation"
-      onPointerDown={(e) => onSeek(fractionFrom(e))}
+      onPointerDown={(e) => onSeek?.(fractionFrom(e))}
       onPointerMove={(e) => {
         // Only while a button is held: `buttons` is a bitmask, so 0 means a bare hover.
-        if (e.buttons > 0) onSeek(fractionFrom(e));
+        if (e.buttons > 0) onSeek?.(fractionFrom(e));
       }}
-      className="relative h-[72px] w-full cursor-pointer touch-none overflow-hidden rounded border border-med-text/20 bg-black/40"
+      className={`relative h-[72px] w-full touch-none overflow-hidden rounded border border-med-text/20 bg-black/40 ${
+        onSeek ? 'cursor-pointer' : 'cursor-default'
+      }`}
     >
       {peaks && peaks.length > 0 ? (
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-full w-full">
@@ -592,6 +616,11 @@ function WaveformView({
           {settled ? 'Sound could not be drawn — playback and seeking still work' : 'Reading sound…'}
         </div>
       )}
+      {!onSeek && peaks && peaks.length > 0 ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-1 text-center text-[10px] text-med-text/35">
+          Press play to enable seeking
+        </div>
+      ) : null}
       {/* The playback cursor. */}
       <div
         className="pointer-events-none absolute inset-y-0 w-px bg-[#a0d6d6]/70"

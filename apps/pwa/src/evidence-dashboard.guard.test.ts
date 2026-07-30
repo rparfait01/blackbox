@@ -197,7 +197,25 @@ describe('the dashboard is usable on a phone and on a desktop', () => {
   });
 
   it('scrubbing works by touch — a pointer handler with touch scrolling disabled', () => {
-    expect(REVIEW_UI).toMatch(/onPointerDown=\{\(e\) => onSeek\(fractionFrom\(e\)\)\}/);
+    expect(REVIEW_UI).toMatch(/onPointerDown=\{\(e\) => onSeek\?\.\(fractionFrom\(e\)\)\}/);
     expect(REVIEW_UI).toMatch(/touch-none/);
+  });
+
+  /**
+   * A scrub target that absorbs a tap and goes nowhere reads as a broken app. Seeking needs a
+   * duration, so until one is known the waveform must SAY it cannot seek rather than swallow
+   * the gesture — the honest-status rule applied to a control, not just to a status line.
+   */
+  it('an unseekable waveform says so instead of silently absorbing the tap', () => {
+    expect(REVIEW_UI).toMatch(/const seekable = durationSec > 0 && Number\.isFinite\(durationSec\)/);
+    expect(REVIEW_UI).toMatch(/onSeek=\{seekable \? seekTo : null\}/);
+    expect(REVIEW_UI).toMatch(/Press play to enable seeking/);
+    // ...and the transcript's jump buttons are disabled rather than dead.
+    expect(REVIEW_UI).toMatch(/disabled=\{!seekable\}/);
+  });
+
+  it('the duration is requested before playback, so seeking is available without playing first', () => {
+    expect(REVIEW_UI).toMatch(/preload="metadata"/);
+    expect(REVIEW_UI).toMatch(/onLoadedMetadata=\{onDuration\}/);
   });
 });
