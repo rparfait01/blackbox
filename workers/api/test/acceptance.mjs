@@ -2248,10 +2248,9 @@ async function run() {
     // real survivor's alert. So an ordinary account asks — loudly, in every shape a client
     // could — to be treated as a test, and must be dispatched to anyway.
     const u = await signup();
-    await api('POST', '/v1/me/contacts/primary', {
-      bearer: u.session,
-      body: { contactName: 'Real', channel: 'line', destination: 'U8f53386494d2880f3c59008f2f1f64ee' },
-    });
+    const contact = await addEmail(u.session, 'primary', 'Real');
+    assert(contact.status === 200 || contact.status === 201, `contact save failed: ${contact.status}`);
+
     const ev = await api('POST', '/v1/events', {
       bearer: u.session,
       body: { source: 'acc-not-a-test', tzOffsetMinutes: 0, isTest: true, is_test: 1, test: true, canary: true },
@@ -2267,11 +2266,18 @@ async function run() {
       if (rows === 0) await sleep(1500);
     }
     assert(rows > 0, 'no delivery row at all — the alert path is dead for a real account');
+
+    // THE ASSERTION. `suppressed_test` short-circuits BEFORE any channel is built;
+    // `suppressed` is recorded per-endpoint INSIDE the ordinary dispatch loop (Brief 31,
+    // reserved address). So which of the two appears says exactly which path ran — and
+    // for a real account it must be the ordinary one, no matter what the client claimed.
     const suppressedTest = await adminDelivered(ev.data.eventId, '', 'suppressed_test');
     assert(suppressedTest === 0, 'A REAL ACCOUNT WAS SUPPRESSED AS A TEST — a client-supplied marking was honoured');
-    // …and it genuinely dispatched: LINE is a real, deliverable channel here.
-    const delivered = await adminDelivered(ev.data.eventId, 'line', 'delivered');
-    assert(delivered > 0, 'the real account was not dispatched to on its LINE channel');
+    const normal = await adminDelivered(ev.data.eventId, '', 'suppressed');
+    assert(normal > 0, `the ordinary per-endpoint dispatch never ran (rows=${rows}) — the alert path is broken`);
+    // Deliberately NOT asserting a real provider delivery: the suite's addresses are
+    // RFC 2606 reserved precisely so a test run cannot spend the quota a survivor's alert
+    // depends on, and whether a vendor physically delivered is monitoring, not a gate.
   });
 
   // ---- cleanup ----
