@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { deployTarget } from './api-origin.mjs';
+import { proveCurrent } from './assert-currency.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -131,16 +132,26 @@ if (!ADMIN) {
 }
 
 // ---- 1. the published build answers on this origin -------------------------------
+//
+// POLLED, not read once. A Worker deploy propagates across colos over some seconds, so a
+// single read taken immediately after publish can legitimately still be served the
+// previous version — and a gate that fails on that race is a gate that gets ignored,
+// which is worse than no gate. `proveCurrent` is the SAME hardened poller the currency
+// assertion uses: cache-busted, no-store, and fail-CLOSED (a stale or unreachable
+// endpoint returns ok:false, never 'unknown' and never a skip).
 step('worker reachable on the built-against origin');
 const version = await api('GET', `/version?ts=${Date.now()}`);
 if (version.status !== 200) {
   fatal(`GET /version returned ${version.status} — the PWA was built against an origin that does not answer.`);
 }
-ok(`/version → '${version.data?.version}'`);
-if (EXPECTED_BUILD && version.data?.version !== EXPECTED_BUILD) {
-  fatal(`worker reports '${version.data?.version}', expected '${EXPECTED_BUILD}' — client/server split.`);
+ok(`/version answers → '${version.data?.version}'`);
+if (EXPECTED_BUILD) {
+  const proven = await proveCurrent(`${ORIGIN}/version`, 'version', EXPECTED_BUILD);
+  if (!proven.ok) {
+    fatal(`worker never proved '${EXPECTED_BUILD}' (last seen: ${proven.seen}) — client/server split.`);
+  }
+  ok(`build matches the commit being deployed (${EXPECTED_BUILD})`);
 }
-if (EXPECTED_BUILD) ok(`build matches the commit being deployed (${EXPECTED_BUILD})`);
 
 // ---- 2. required secrets and bindings are PRESENT (never their values) ------------
 step('required bindings and secrets are present (shape only, no values)');
@@ -170,7 +181,9 @@ step('provision the canary account (reserved addresses, server-set flag)');
 await api('POST', '/v1/admin/canary/purge', { bearer: ADMIN });
 const provision = await api('POST', '/v1/admin/canary/provision', { bearer: ADMIN });
 if (provision.status !== 200 || !provision.data?.sessionToken) {
-  fatal(`provisioning failed (${provision.status}): ${JSON.stringify(provision.data)}`);
+  fatal(
+    `provisioning failed (${provision.status}): ${provision.data?.detail ?? JSON.stringify(provision.data)}`,
+  );
 }
 const canary = provision.data;
 ok(`canary account ${canary.email} (userId ${canary.userId.slice(0, 8)}…)`);

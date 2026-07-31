@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { dispatch } from '../src/channels/router';
-import { suppressionFor } from '../src/lib/canary';
+import {
+  CANARY_CONTACT_EMAIL,
+  CANARY_CONTACT_PHONE,
+  CANARY_EMAIL,
+  suppressionFor,
+} from '../src/lib/canary';
+import { isReservedEmail, isReservedPhone } from '../src/channels/reserved';
 import type { Env } from '../src/types';
 
 /**
@@ -116,6 +122,24 @@ const realEndpoints: Ep[] = [
 ];
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('§C the canary can only ever address provably undeliverable destinations', () => {
+  /**
+   * The layer UNDER the flag. Suppression is the primary guarantee; this is what holds if
+   * suppression itself is ever broken, and it is a property of the addresses rather than
+   * of any code path — Brief 31's rule, still load-bearing.
+   *
+   * It is a test and not a comment because a plausible-looking constant is exactly how
+   * this fails: `+1 555 010 0199` reads as a fictional number and is not one (555 is the
+   * area code there, not the exchange). That value shipped, and the runtime assertion in
+   * provisionCanary caught it — on a PRODUCTION deploy. This catches it in CI instead.
+   */
+  it('every canary address is RFC 2606 / NANP reserved', () => {
+    expect(isReservedEmail(CANARY_EMAIL)).toBe(true);
+    expect(isReservedEmail(CANARY_CONTACT_EMAIL)).toBe(true);
+    expect(isReservedPhone(CANARY_CONTACT_PHONE)).toBe(true);
+  });
+});
 
 describe('§C the canary is suppressed — and says so honestly', () => {
   it('a canary-owned test event reaches NO provider and records suppressed_test', async () => {

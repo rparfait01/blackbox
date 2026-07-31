@@ -40,7 +40,15 @@ canaryRoutes.post('/provision', async (c) => {
   if (!secret) {
     return c.json({ error: 'session_secret_unset', message: 'SESSION_SECRET/MAGIC_LINK_SECRET is not configured' }, 500);
   }
-  const account = await provisionCanary(c.env);
+  // Report WHY provisioning failed. A bare 500 from a deploy gate is the same disease
+  // this brief exists to cure: the operator learns that something is wrong and nothing
+  // about what. Admin-gated, and the messages here name constants and schema, not secrets.
+  let account;
+  try {
+    account = await provisionCanary(c.env);
+  } catch (error) {
+    return c.json({ error: 'provision_failed', detail: String(error) }, 500);
+  }
   const sessionToken = await mintSession(secret, account.userId);
   await audit(c.env, null, 'canary.provision', c.get('operatorUserId') ?? null, { email: CANARY_EMAIL });
   return c.json(

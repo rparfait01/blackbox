@@ -49,10 +49,18 @@ import { isReservedEmail, isReservedPhone } from '../channels/reserved';
 export const CANARY_EMAIL = 'canary@blackbox.test';
 export const CANARY_NAME = 'Deploy Canary';
 
-/** The canary's recipient. Both endpoints are reserved ranges, so even if every other
- *  guard failed, the provider boundary (Brief 31) still refuses to spend a real send. */
+/**
+ * The canary's recipient. Both endpoints are in reserved ranges, so even if every other
+ * guard failed, the provider boundary (Brief 31) still refuses to spend a real send.
+ *
+ * The phone is NPA-555-01XX — the reserved fictional block is the EXCHANGE `555` plus
+ * line `01XX`, not the area code. `+1 555 010 0199` looks reserved and is not: it parses
+ * as area code 555, exchange 010, and `isReservedPhone` rejects it. The assertion in
+ * `provisionCanary` caught exactly that mistake, which is why it is an assertion and not
+ * a comment.
+ */
 export const CANARY_CONTACT_EMAIL = 'canary-contact@example.com';
-export const CANARY_CONTACT_PHONE = '+15550100199';
+export const CANARY_CONTACT_PHONE = '+14155550199';
 
 /** Delivery-record status/reason for a suppressed canary send. Distinct from Brief 31's
  *  `suppressed`/`reserved_address_not_deliverable`, because the REASON differs and a
