@@ -89,8 +89,11 @@ describe('the in-request stagger stops before its context is reclaimed', () => {
     expect(scheduled).toMatch(/async function boundedJob/);
     expect(scheduled).toMatch(/JOB_TIMEOUT_MS/);
     const chain = scheduled.slice(scheduled.indexOf('ctx.waitUntil('));
+    // EVERY job, not most of them. The count moves when a job is added — which is the point:
+    // Brief 40 §F added `seal` and `seal_alert`, and an unbounded seal would starve the jobs
+    // behind it exactly as the original overrun starved the integrity scan and canary sweep.
     const bounded = (chain.match(/await boundedJob\(/g) ?? []).length;
-    expect(bounded).toBe(8); // every job, not most of them
+    expect(bounded).toBe(10);
     // …and nothing in the cron chain is awaited raw alongside them.
     expect(chain).not.toMatch(/await (escalateDarkDevices|advanceCascades|runIntegrityScan)\(/);
   });

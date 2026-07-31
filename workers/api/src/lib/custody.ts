@@ -97,17 +97,36 @@ export interface ExportResult {
   custodyId: string;
 }
 
+/** What sealing produces. No recipient and no custody id — those belong to an export. */
+export interface SealResult {
+  manifest: SignedManifest;
+  packageHash: string;
+  manifestHash: string;
+  vaultKey: string | null;
+  tzOffsetMinutes: number | null;
+}
+
 /**
- * Build, sign, seal, and record a custody package for an event on behalf of a
- * verified recipient. Idempotent on identical content (content-addressed vault
- * key), so repeated exports of unchanged evidence don't duplicate the seal.
+ * §F5 — SEAL. Build, sign and seal an event's custody package into the vault.
+ *
+ * THE SPLIT THIS IS HALF OF. Sealing and exporting used to be one function reachable only
+ * through a verified recipient, so a capture nobody exported was never sealed — on production
+ * that was every capture ever recorded. Recipient verification gates ACCESS to an artifact; it
+ * must not decide whether the artifact EXISTS. Those are different questions and conflating
+ * them meant the vault stayed empty while the documentation described it as full.
+ *
+ * Takes no recipient. Called by the cron drain on every terminal state, including the ones
+ * where nobody is left to act.
+ *
+ * §F4 — IDEMPOTENT. The vault key is content-addressed, the object is never overwritten, and
+ * the index insert is OR IGNORE, so a second attempt returns the existing manifest and seals
+ * nothing new. Re-export never re-seals.
  */
-export async function exportPackage(
+export async function sealEvent(
   env: Env,
   eventId: string,
   workerOrigin: string,
-  recipientId: string,
-): Promise<ExportResult | null> {
+): Promise<SealResult | null> {
   // Brief 35 §C — a canary event is NEVER sealed. The vault is write-once with a 36-month
   // retention and no delete-before-expiry, so a fixture sealed into it could not be taken
   // back out by the purge; it would sit in the chain of custody, signed, for three years,
@@ -229,15 +248,53 @@ export async function exportPackage(
       .run();
   }
 
+  return { manifest, packageHash, manifestHash, vaultKey, tzOffsetMinutes: event.tzOffsetMinutes };
+}
+
+/**
+ * §F5 — EXPORT. Hand a verified recipient the sealed package and record the custody transfer.
+ *
+ * The seal is produced by `sealEvent` and normally already exists by the time anyone asks: it
+ * is written on close, by the cron, with nobody acting. This function seals on demand only as
+ * a fallback for an event the drain has not reached yet, and that call is idempotent, so an
+ * export never creates a second seal.
+ *
+ * Recipient verification is enforced by the ROUTE, before this is reached. That gate governs
+ * who may receive the artifact — never whether it exists.
+ */
+export async function exportPackage(
+  env: Env,
+  eventId: string,
+  workerOrigin: string,
+  recipientId: string,
+): Promise<ExportResult | null> {
+  const sealed = await sealEvent(env, eventId, workerOrigin);
+  if (!sealed) {
+    return null;
+  }
   const custodyId = `CUS-${crypto.randomUUID()}`;
   await env.DB.prepare(
     'INSERT INTO custody_transfers (id, eventId, recipientId, packageHash, manifestHash, vaultKey, createdAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(custodyId, eventId, recipientId, packageHash, manifestHash, vaultKey ?? '', now, event.tzOffsetMinutes)
+    .bind(
+      custodyId,
+      eventId,
+      recipientId,
+      sealed.packageHash,
+      sealed.manifestHash,
+      sealed.vaultKey ?? '',
+      Date.now(),
+      sealed.tzOffsetMinutes,
+    )
     .run();
-  await logRecipientAction(env, recipientId, eventId, 'export', `package ${packageHash.slice(0, 12)}`);
+  await logRecipientAction(env, recipientId, eventId, 'export', `package ${sealed.packageHash.slice(0, 12)}`);
 
-  return { manifest, packageHash, vaultKey, custodyId };
+  return {
+    manifest: sealed.manifest,
+    packageHash: sealed.packageHash,
+    vaultKey: sealed.vaultKey,
+    custodyId,
+  };
 }
 
 /** Recipient acknowledges custody — feeds the trust record (#C5). */

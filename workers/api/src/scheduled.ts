@@ -18,6 +18,7 @@ import { advanceCascades, notifyEscalation, reissueExpiredLinks } from './lib/no
 import { runIntegrityScan } from './lib/integrity';
 import { closeFeedLostEvents, closeOrphanedEvents, runEscalation } from './lib/closure-timeout';
 import { sweepExpiredCanaryEvents } from './lib/canary';
+import { alertOnUnsealed, drainSealQueue } from './lib/seal';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -96,6 +97,15 @@ export const scheduled = async (
       await boundedJob('integrity', () => runIntegrityScan(env, workerOrigin(env)));
       // Brief 35 §C — TTL backstop for a canary run that died before its explicit purge.
       await boundedJob('canary_ttl', () => sweepExpiredCanaryEvents(env).then(() => undefined));
+      // Brief 40 §F3 — seal every closed-and-unsealed event. On the CRON, deliberately not on
+      // the integrity Durable Object: Brief 37 §D bounds that object to integrity appends and
+      // event-scoped ordering, and one object must not become where everything ends up.
+      // Bounded like every other job, so a slow seal cannot starve the jobs behind it.
+      await boundedJob('seal', () => drainSealQueue(env, workerOrigin(env)).then(() => undefined));
+      // §F7 — a closed event still unsealed past the threshold is an operator alert. Without
+      // it the failure mode is the one §F exists to fix: sealing quietly not happening while
+      // everything reports healthy.
+      await boundedJob('seal_alert', () => alertOnUnsealed(env));
     })(),
   );
 };

@@ -37,6 +37,7 @@
 import { audit } from './audit';
 import { buildClosureReport } from './closure-report';
 import { broadcastEventChange } from '../event-channel';
+import { enqueueSeal } from './seal';
 import type { Env } from '../types';
 
 export type ConsentResult =
@@ -159,6 +160,11 @@ async function performClose(
     .bind(now, closedBy, now, closedBy, eventId)
     .run();
   if (res.meta.changes !== 1) return false;
+  // Brief 40 §F1/§F2 — a normal close is a terminal state, so it seals. This is ONE non-
+  // throwing INSERT and nothing downstream waits on it: closure is the survivor's exit from
+  // a live alert, and no archival step may stand between her and it, delay it, or fail it.
+  // The seal itself happens later, on the cron.
+  await enqueueSeal(env, eventId, closedBy === 'survivor_solo' ? 'user_close' : 'dual_consent');
   await audit(env, eventId, closedBy === 'survivor_solo' ? 'closed_by_survivor_solo' : 'closed_by_dual_consent', null, null);
   await buildClosureReport(env, eventId);
   // §4: closure confirmation is an in-app lifecycle event — pushed live to the

@@ -25,6 +25,7 @@ import { buildClosureReport } from './closure-report';
 import { renotifyContactsNoGuardian } from './notify';
 import { FEED_LOST_NOTE } from './tampering';
 import { declareAbnormalIfUnfinished } from './completeness';
+import { enqueueSeal } from './seal';
 import type { Env } from '../types';
 
 /** A feed is "lost" after this long dark, once emergency has been notified. */
@@ -143,6 +144,10 @@ export async function closeFeedLostEvents(env: Env): Promise<void> {
     // A sustained feed loss is precisely the abnormal termination this product exists for: a
     // phone seized, destroyed, or out of battery cannot report its own ending.
     await declareAbnormalIfUnfinished(env, row.id);
+    // Brief 40 §F1 — the abnormal terminations matter MOST. A sustained feed loss is a phone
+    // that stopped: seized, smashed, or out of battery. That capture must become a sealed
+    // artifact with nobody acting, which is exactly what never happened before §F.
+    await enqueueSeal(env, row.id, 'feed_lost');
     await audit(env, row.id, 'closed_feed_lost', null, JSON.stringify({ note: FEED_LOST_NOTE }));
     await buildClosureReport(env, row.id);
     await broadcastEventChange(env, row.id, 'closed');
@@ -239,6 +244,7 @@ export async function closeOrphanedEvents(env: Env): Promise<void> {
     // unless a terminal marker already made it COMPLETE (the call is idempotent and only
     // moves a capture out of IN_PROGRESS).
     await declareAbnormalIfUnfinished(env, row.id);
+    await enqueueSeal(env, row.id, 'orphan');
     await audit(env, row.id, 'closed_orphan', null, JSON.stringify({ note: FEED_LOST_NOTE, ownerMissing: row.ownerMissing === 1 }));
     await buildClosureReport(env, row.id);
     await broadcastEventChange(env, row.id, 'closed');

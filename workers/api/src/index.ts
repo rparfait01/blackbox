@@ -7,6 +7,7 @@ import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { verifyChain } from './lib/chain-verdict';
 import { vaultCoverage } from './lib/vault-scan';
+import { enqueueSeal, sealCoverage } from './lib/seal';
 import { getCompleteness, markTerminalReceived, terminalClaimProblem } from './lib/completeness';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import {
@@ -745,6 +746,8 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
   // Brief 40 §A/§12 — vault coverage, reported the same way encryption is: counted from the
   // tables, next to the claim, so partial coverage cannot hide behind a job that merely ran.
   const vault = await vaultCoverage(c.env);
+  // §F7 — sealing coverage: pending, failures, and the oldest closed-but-unsealed event.
+  const seal = await sealCoverage(c.env);
   const plaintext = Number(row?.declaredPlaintextChunks ?? 0) + Number(row?.undeclaredPlaintextChunks ?? 0);
   return c.json(
     {
@@ -777,6 +780,13 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
         // §D — what the retention CLAIM currently rests on. Stated here because the panel is
         // the one place that reports what is true rather than what was intended.
         retentionRule: 'NOT PROVISIONED — see Brief 40 §0; no storage-layer lock exists yet.',
+      },
+      sealing: {
+        summary:
+          `SEALING: ${seal.sealedTotal} sealed · ${seal.pending} pending` +
+          `${seal.failed > 0 ? ` · ${seal.failed} FAILING` : ''}` +
+          `${seal.closedUnsealed > 0 ? ` · ${seal.closedUnsealed} closed-and-unsealed` : ''}`,
+        ...seal,
       },
       // Said explicitly so it cannot be inferred wrongly from a green-looking panel.
       claim: enforced
@@ -1107,6 +1117,8 @@ app.post('/v1/admin/events/:id/force-close', async (c) => {
   )
     .bind('closed', now, 'operator_force_close', now, 'operator', reason, eventId, 'active')
     .run();
+  // §F1 — an operator force-close is a terminal state like any other.
+  await enqueueSeal(c.env, eventId, 'force_close');
   await audit(c.env, eventId, 'operator_force_close', null, { reason });
   return c.json({ ok: true, closed: true, reason }, 200);
 });
