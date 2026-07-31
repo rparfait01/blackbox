@@ -186,6 +186,7 @@ export function uploadChunk(
   sequence: number,
   blob: Blob,
   mimeType: string,
+  isFinal = false,
 ): void {
   if (!uploadsEnabled) {
     return;
@@ -196,6 +197,7 @@ export function uploadChunk(
     sequence,
     mimeType,
     blob,
+    isFinal,
     attempts: 0,
     nextAttemptAt: 0,
     createdAt: Date.now(),
@@ -224,6 +226,38 @@ export function uploadChunk(
         reportEncryptionState(ctx);
       }
     });
+}
+
+/**
+ * Brief 38 §A — promote an already-queued chunk to terminal, in place.
+ *
+ * Used when the recorder stops without flushing a trailing payload: the last chunk is
+ * already on the queue with the right bytes, and only its marker is missing. Rewriting the
+ * queued item (rather than synthesising an empty final chunk) keeps the evidence exactly as
+ * captured and keeps the marker travelling with the item through persistence.
+ */
+export async function markQueuedChunkTerminal(
+  sessionId: string,
+  sequence: number,
+  reason: string,
+): Promise<void> {
+  try {
+    const pending = await getQueuedUploads();
+    const item = pending.find((i) => i.sessionId === sessionId && i.kind === 'chunk' && i.sequence === sequence);
+    if (!item) {
+      // Already uploaded and dequeued. The capture still ended normally, but the marker
+      // cannot be attached retroactively — the server declares the capture ABNORMAL on
+      // close, which is the honest answer rather than a marker we cannot authenticate.
+      log.error(`terminal chunk ${sequence} already left the queue; capture will close without a marker`);
+      return;
+    }
+    item.isFinal = true;
+    item.terminalReason = reason;
+    await updateQueuedUpload(item);
+    scheduleDrain(0);
+  } catch (error) {
+    log.error('markQueuedChunkTerminal failed', error);
+  }
 }
 
 export function uploadLocation(sessionId: string, fix: GeoFix): void {
@@ -594,14 +628,28 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
     headers['X-Mime-Type'] = item.mimeType ?? 'application/octet-stream';
     headers['Content-Type'] = 'application/octet-stream';
     if (decision.mode === 'ENCRYPTED') {
+      // Brief 38 §B — the marker goes into the SEAL, which puts it in the AAD Brief 36
+      // already binds (captureId ‖ chunkIndex ‖ finalFlag). That is what authenticates it:
+      // a stripped or forged marker no longer matches the AAD the chunk was sealed under,
+      // so the chunk fails to decrypt at verification. An unauthenticated terminal marker
+      // is worthless, because anyone between the device and the server could add one.
+      //
+      // This argument used to be hypothetical: every chunk was sent with isFinal:false, so
+      // the AAD field existed and was always the same value, and every capture read as
+      // truncated by the very mechanism built to prove it was not.
       const sealed = await sealChunkForSend({
         encryptor: decision.encryptor,
         plaintext,
         sequence: item.sequence ?? 0,
-        isFinal: false,
+        isFinal: item.isFinal === true,
       });
       body = sealed.body;
       headers['X-Plaintext-Commitment'] = sealed.commitment;
+      // The header ROUTES; the AAD AUTHENTICATES. The server needs to know which chunk
+      // claims to be terminal in order to store and order it, but it holds no key and so
+      // cannot verify that claim itself — verification happens at decrypt, where a forged
+      // marker breaks the tag. The server's own contribution is structural: it refuses a
+      // terminal claim that could not possibly be last (see the chunk route).
       headers['X-Is-Final'] = sealed.isFinal ? '1' : '0';
     } else {
       // DECLARED plaintext. The header is a declaration for the audit trail and the
@@ -609,6 +657,11 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
       // from inspecting the bytes itself, so a client that lied (or a client that is
       // simply wrong) cannot make an unencrypted chunk look encrypted.
       body = plaintext;
+      // §B — a declared-plaintext chunk has no envelope, so its marker CANNOT be
+      // authenticated. It is still sent and still true: the capture did end normally. The
+      // export says COMPLETE (UNAUTHENTICATED MARKER) rather than silently downgrading it
+      // to ABNORMAL, because calling a normal ending abnormal is its own dishonesty.
+      headers['X-Is-Final'] = item.isFinal === true ? '1' : '0';
       headers['X-Encryption-State'] = 'UNENCRYPTED_DECLARED';
       headers['X-Encryption-Reason'] = (decision.reason ?? 'unknown').slice(0, 120);
     }
@@ -714,6 +767,15 @@ async function drainQueue(): Promise<void> {
     // stated in this file rather than inherited from IndexedDB key order. ----
     const bulk = items.filter(isBulk).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
     for (const item of bulk) {
+      // Brief 38 §C — HOLD THE TERMINAL CHUNK until every earlier chunk of this capture has
+      // been acknowledged. The lane is already strictly ascending and stops at the first
+      // failure, so this is belt-and-braces — but the claim "this was the last chunk" is
+      // only meaningful if it ARRIVES last, and a marker that overtook an unsent predecessor
+      // would assert completeness over a hole.
+      if (item.isFinal === true && bulk.some((o) => o.sessionId === item.sessionId && (o.sequence ?? 0) < (item.sequence ?? 0))) {
+        wakeAt(Date.now() + 1000);
+        break;
+      }
       if (item.nextAttemptAt > now) {
         wakeAt(item.nextAttemptAt);
         break; // a later chunk must not overtake an earlier one

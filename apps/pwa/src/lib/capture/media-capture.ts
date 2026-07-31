@@ -5,12 +5,18 @@ export interface CaptureChunk {
   blob: Blob;
   mimeType: string;
   timestamp: number;
+  /** Brief 38 §A — true for the payload MediaRecorder flushes on stop: the actual last
+   *  chunk of a normally-terminated capture. Only this layer can know it. */
+  isFinal: boolean;
 }
 
 export interface MediaCaptureOptions {
   mode: CaptureMode;
   chunkIntervalMs?: number;
   onChunk: (chunk: CaptureChunk) => void;
+  /** §A — the recorder stopped without flushing a trailing payload, so the chunk already
+   *  emitted at `sequence` is the terminal one. Carries WHY, so the export can say so. */
+  onTerminalFallback?: (sequence: number, reason: string) => void;
   onError?: (error: unknown) => void;
 }
 
@@ -65,6 +71,11 @@ export class MediaCapture {
   private videoSink: HTMLVideoElement | null = null;
   private activeMode: CaptureMode;
   private readonly options: MediaCaptureOptions;
+  /** Set by stop() before the recorder flushes, so the flush payload is recognised. */
+  private stopping = false;
+  private terminalEmitted = false;
+  /** -1 until the first chunk; mirrors the sequence the consumer assigns. */
+  private lastSequenceEmitted = -1;
 
   constructor(options: MediaCaptureOptions) {
     this.options = options;
@@ -106,11 +117,33 @@ export class MediaCapture {
 
       recorder.ondataavailable = (event: BlobEvent) => {
         if (event.data.size > 0) {
+          // Brief 38 §A — THE TERMINAL MARKER IS BORN HERE, at the point of production.
+          //
+          // MediaRecorder.stop() flushes one last `dataavailable` before `onstop`, so the
+          // payload that arrives while we are stopping IS the last one. Only this layer
+          // knows that; the upload layer sees an indistinguishable stream of blobs and
+          // could only ever GUESS which was last — which is why every chunk was previously
+          // sent with isFinal:false and every capture looked truncated.
+          const isFinal = this.stopping;
+          if (isFinal) {
+            this.terminalEmitted = true;
+          }
+          this.lastSequenceEmitted += 1;
           this.options.onChunk({
             blob: event.data,
             mimeType: recorder.mimeType || mimeType,
             timestamp: Date.now(),
+            isFinal,
           });
+        }
+      };
+      recorder.onstop = () => {
+        // §A — "if the recorder stops with no trailing payload, the preceding chunk is
+        // marked terminal and the reason is recorded." A stop can produce nothing at all
+        // (an empty final slice, a track that ended first), and a capture that really did
+        // end normally must not be reported as truncated because of that.
+        if (!this.terminalEmitted && this.lastSequenceEmitted >= 0) {
+          this.options.onTerminalFallback?.(this.lastSequenceEmitted, 'no_trailing_payload');
         }
       };
       recorder.onerror = (event: Event) => {
@@ -225,6 +258,10 @@ export class MediaCapture {
 
   stop(): void {
     try {
+      // Set BEFORE stop() so the flush payload is recognised as terminal. The recorder
+      // fires its last `dataavailable` synchronously-ish from inside stop(), so ordering
+      // here is load-bearing rather than incidental.
+      this.stopping = true;
       if (this.recorder && this.recorder.state !== 'inactive') {
         this.recorder.stop();
       }

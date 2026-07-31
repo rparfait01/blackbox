@@ -43,6 +43,12 @@ export interface UploadQueueItem {
   attempts: number;
   nextAttemptAt: number; // epoch ms; do not retry before this
   createdAt: number;
+  /** Brief 38 §A — the terminal marker, carried THROUGH persistence. A queue that survives
+   *  a page termination must not lose which chunk was last, or a capture that ended
+   *  normally comes back looking truncated. */
+  isFinal?: boolean;
+  /** Why this chunk is terminal when the recorder produced no trailing payload. */
+  terminalReason?: string;
 }
 
 /** Append-only. Keyed by [sessionId, sequence]; never mutated once written. */

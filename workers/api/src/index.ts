@@ -6,6 +6,7 @@ import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { verifyChain } from './lib/chain-verdict';
+import { getCompleteness, markTerminalReceived, terminalClaimProblem } from './lib/completeness';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import {
   encryptionEnforced,
@@ -1053,15 +1054,20 @@ app.get('/v1/admin/events/:id/audit', async (c) => {
  */
 app.get('/v1/admin/events/:id/chain', async (c) => {
   const eventId = c.req.param('id');
-  const [verdict, records, gaps, head] = await Promise.all([
+  const [verdict, records, gaps, head, completeness] = await Promise.all([
     verifyChain(c.env, eventId),
     getChain(c.env, eventId),
     getChainGaps(c.env, eventId),
     getChainHead(c.env, eventId),
+    getCompleteness(c.env, eventId),
   ]);
   return c.json(
     {
       verdict,
+      // Brief 38 — the SECOND axis. Chain integrity and capture completeness are independent
+      // findings and are reported separately; a purged capture keeps the completeness state
+      // it held at purge.
+      completeness,
       head: head ? { seq: head.seq, chainHead: head.chainHead } : null,
       recordCount: records.length,
       sequences: records.map((r) => r.seq),
@@ -1900,7 +1906,12 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   // Brief 26 — optional envelope metadata. PRESENCE-gated: a plaintext upload sends
   // neither header and behaves exactly as before. The server never REQUIRES these (even
   // with the flag armed) — capture availability is paramount and the client fails open.
-  const isFinal = c.req.header('X-Is-Final') === '1' ? 1 : 0;
+  // Brief 38 §B — the header ROUTES, it does not decide. The server holds no key, so it
+  // cannot verify a terminal marker cryptographically; that happens at decrypt, where a
+  // stripped or forged marker no longer matches the AAD the chunk was sealed under. What the
+  // server contributes is structural: it refuses a claim that could not possibly be last.
+  const claimsFinal = c.req.header('X-Is-Final') === '1';
+  const terminalReason = (c.req.header('X-Terminal-Reason') ?? '').slice(0, 40) || null;
   const commitment = (c.req.header('X-Plaintext-Commitment') ?? '').trim();
 
   // Brief 36 §B — OBSERVE the encryption state from the bytes, never from the client's
@@ -1980,11 +1991,26 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
     );
   }
 
+  // §B/§C — reject an impossible terminal claim BEFORE storing it. A chunk that says it is
+  // last while a higher sequence already exists is asserting completeness over a hole.
+  let isFinal = 0;
+  if (claimsFinal) {
+    const problem = await terminalClaimProblem(c.env, eventId, sequence);
+    if (problem) {
+      await audit(c.env, eventId, 'capture.terminal_claim_rejected', null, { sequence, problem });
+      console.log(
+        JSON.stringify({ level: 'error', alert: 'terminal_claim_rejected', eventId, sequence, problem }),
+      );
+      return c.json({ error: 'terminal_claim_rejected', detail: problem }, 409);
+    }
+    isFinal = 1;
+  }
+
   await c.env.MEDIA.put(r2Key, bytes, { httpMetadata: { contentType: mimeType } });
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal, encryptionState) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal, encryptionState, terminalReason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal, observation.state)
+    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal, observation.state, terminalReason)
     .run();
   // §C — the natural idempotency key for a chunk is its own position. A retried upload
   // of the same sequence now returns the ORIGINAL chain result instead of appending a
@@ -2000,6 +2026,17 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
       .bind(eventId, sequence, commitment, Date.now())
       .run();
     await appendToChain(c.env, eventId, 'commitment', `${eventId}/${sequence}`, commitment, `commitment:${sequence}`);
+  }
+  // §D — a terminal chunk closes the completeness question. Which flavour of COMPLETE
+  // depends on the server's OWN observation of encryption, never the client's word: a
+  // declared-plaintext chunk carries a truthful marker that cannot be authenticated.
+  if (isFinal === 1) {
+    await markTerminalReceived(c.env, eventId, sequence, observation.state === 'ENCRYPTED');
+    await audit(c.env, eventId, 'capture.terminal_received', null, {
+      sequence,
+      authenticated: observation.state === 'ENCRYPTED',
+      reason: terminalReason,
+    });
   }
   return c.json({ ok: true, r2Key }, 201);
 });

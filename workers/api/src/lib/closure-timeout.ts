@@ -24,6 +24,7 @@ import { broadcastEventChange } from '../event-channel';
 import { buildClosureReport } from './closure-report';
 import { renotifyContactsNoGuardian } from './notify';
 import { FEED_LOST_NOTE } from './tampering';
+import { declareAbnormalIfUnfinished } from './completeness';
 import type { Env } from '../types';
 
 /** A feed is "lost" after this long dark, once emergency has been notified. */
@@ -138,6 +139,10 @@ export async function closeFeedLostEvents(env: Env): Promise<void> {
     await env.DB.prepare('UPDATE events SET status = ?, closedAt = ?, closedBy = ?, feedLostAt = ? WHERE id = ?')
       .bind('closed', now, 'feed_lost', now, row.id)
       .run();
+    // Brief 38 §D — the SERVER declares this, because the device is the thing that stopped.
+    // A sustained feed loss is precisely the abnormal termination this product exists for: a
+    // phone seized, destroyed, or out of battery cannot report its own ending.
+    await declareAbnormalIfUnfinished(env, row.id);
     await audit(env, row.id, 'closed_feed_lost', null, JSON.stringify({ note: FEED_LOST_NOTE }));
     await buildClosureReport(env, row.id);
     await broadcastEventChange(env, row.id, 'closed');
@@ -230,6 +235,10 @@ export async function closeOrphanedEvents(env: Env): Promise<void> {
     )
       .bind('closed', now, 'orphan_auto_close', now, 'system', FEED_LOST_NOTE, row.id, 'active')
       .run();
+    // §D — same reasoning: an orphaned event never received a normal stop, so it is ABNORMAL
+    // unless a terminal marker already made it COMPLETE (the call is idempotent and only
+    // moves a capture out of IN_PROGRESS).
+    await declareAbnormalIfUnfinished(env, row.id);
     await audit(env, row.id, 'closed_orphan', null, JSON.stringify({ note: FEED_LOST_NOTE, ownerMissing: row.ownerMissing === 1 }));
     await buildClosureReport(env, row.id);
     await broadcastEventChange(env, row.id, 'closed');

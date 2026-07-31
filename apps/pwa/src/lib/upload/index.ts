@@ -1,5 +1,6 @@
 export {
   registerUploadSession,
+  markQueuedChunkTerminal,
   uploadChunk,
   uploadLocation,
   uploadClassification,

@@ -52,9 +52,15 @@ describe('B [A] two lanes, life-safety first', () => {
     const lane = body.slice(body.indexOf('items.filter(isBulk)'));
     const laneEnd = lane.indexOf('const remaining');
     const bulkLoop = lane.slice(0, laneEnd);
-    // Two breaks: one for a not-yet-due chunk, one for a failed chunk. Never a `continue`,
-    // which would let a later chunk overtake an earlier one.
-    expect((bulkLoop.match(/\bbreak;/g) ?? []).length).toBe(2);
+    // THREE breaks, each a legitimate reason to STOP the lane rather than skip within it: a
+    // not-yet-due chunk, a failed chunk, and (Brief 38 §C) a TERMINAL chunk whose earlier
+    // siblings are still queued — a marker that overtook an unsent predecessor would assert
+    // completeness over a hole.
+    //
+    // What this test actually protects is the absence of `continue`, which is what would let
+    // a later chunk overtake an earlier one. The count is a tripwire on the loop's shape, so
+    // it moves when a reason is added and stays honest about how many there are.
+    expect((bulkLoop.match(/\bbreak;/g) ?? []).length).toBe(3);
     expect(bulkLoop).not.toMatch(/\bcontinue;/);
   });
 

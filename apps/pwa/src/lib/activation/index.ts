@@ -19,6 +19,7 @@ import { ToneAnalyzer } from '@/lib/tone';
 import { append, beginSession, getBuffer } from '@/lib/transcript-buffer';
 import {
   registerUploadSession,
+  markQueuedChunkTerminal,
   uploadChunk,
   uploadClassification,
   uploadLocation,
@@ -258,7 +259,13 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
           byteSize: chunk.blob.size,
           blob: chunk.blob,
         });
-        uploadChunk(newSessionId, seq, chunk.blob, chunk.mimeType);
+        uploadChunk(newSessionId, seq, chunk.blob, chunk.mimeType, chunk.isFinal);
+      },
+      // §A — the recorder stopped without a trailing payload, so the chunk already queued
+      // at `sequence` is the terminal one. Promote it in place rather than inventing an
+      // empty chunk: the bytes are already correct, only the marker was missing.
+      onTerminalFallback: (sequence, reason) => {
+        void markQueuedChunkTerminal(newSessionId, sequence, reason);
       },
       onError: (error) => log.error('capture error', error),
     });

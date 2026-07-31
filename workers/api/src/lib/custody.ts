@@ -15,6 +15,7 @@ import { formatDtg } from '@blackbox/shared';
 import type { Env } from '../types';
 import { getChain, getChainHead, hashString, publicKeyB64, sign } from './integrity';
 import { verifyChain } from './chain-verdict';
+import { getCompleteness } from './completeness';
 import { logRecipientAction } from './recipients';
 
 const RETENTION_MONTHS = 36;
@@ -53,6 +54,12 @@ export interface SignedManifest {
     closedBy: string | null;
   };
   files: Array<{ name: string; r2Key: string; sha256: string | null; bytes: number; downloadPath: string }>;
+  /** Brief 38 — capture completeness, INDEPENDENT of the chain outcome below. */
+  completeness: {
+    state: string;
+    lastSequence: number | null;
+    statement: string;
+  };
   chain: {
     algorithm: string;
     /** Brief 37 §E — VERIFIED | INCOMPLETE | PURGED_BY_CONSENT | BROKEN. Four distinct
@@ -121,6 +128,11 @@ export async function exportPackage(
   // re-linking and re-hashing every record. Without it a verifier can only tell
   // 'hashes match' from 'hashes do not', and would read a consented purge as tampering.
   const verdict = await verifyChain(env, eventId);
+  // Brief 38 — the SECOND, orthogonal axis. Chain integrity asks whether the record is
+  // trustworthy; completeness asks whether the recording ended normally. A purged capture
+  // keeps the completeness it held at purge, so both render and neither can be mistaken for
+  // the other.
+  const completeness = await getCompleteness(env, eventId);
   const now = Date.now();
 
   // Build the manifest in a FIXED key order so JSON.stringify is deterministic
@@ -149,6 +161,13 @@ export async function exportPackage(
       // Absolute path (recipient appends their access token to download).
       downloadPath: `${workerOrigin}/v1/c/${eventId}/audio/${r.sequence}`,
     })),
+    completeness: {
+      state: completeness.state,
+      lastSequence: completeness.lastSequence,
+      // §E — the exact sentence, carried in the artifact so the verifier and the report
+      // cannot describe the same capture differently.
+      statement: completeness.statement,
+    },
     chain: {
       algorithm: 'sha256-linked',
       // VERIFIED | INCOMPLETE | PURGED_BY_CONSENT | BROKEN — four distinct findings. The

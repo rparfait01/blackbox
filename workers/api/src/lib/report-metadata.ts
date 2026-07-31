@@ -32,13 +32,17 @@ export interface ReportEventRow {
   encryptionState: string | null;
   /** Whether on-device retention degraded during the capture (§D). */
   degradationState: string | null;
+  /** Brief 38 — did the recording end normally? Orthogonal to chain integrity. */
+  completenessState: string | null;
+  /** The last sequence the server received, frozen when a capture is declared ABNORMAL. */
+  lastSequenceReceived: number | null;
 }
 
 const EVENT_COLUMNS =
   // Brief 36 §E — the report states, per capture, WHICH POLICY APPLIED and WHICH STATE was
   // reached. Both are frozen on the event rather than re-derived at read time, so a later
   // policy change cannot rewrite what was true during a capture that already happened.
-  'id AS eventId, createdAt, closedAt, status, closedBy, tzOffsetMinutes, coordinatorClaimedAt, escalatedAt, escalationTier, securedAt, encryptionPolicy, encryptionState, degradationState';
+  'id AS eventId, createdAt, closedAt, status, closedBy, tzOffsetMinutes, coordinatorClaimedAt, escalatedAt, escalationTier, securedAt, encryptionPolicy, encryptionState, degradationState, completenessState, lastSequenceReceived';
 
 /**
  * The owner's own events, newest first — so she can choose which one to report on.
