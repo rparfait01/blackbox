@@ -7,6 +7,7 @@ import { triggerAlert } from '@/lib/activation';
 import { useDoubleTap } from '@/lib/use-double-tap';
 import { useActiveAlert, useActiveAlertStart } from '@/lib/active-alert';
 import { BreathingCircles } from './BreathingCircles';
+import { useBreathingCycleMs } from '@/lib/retention-signal';
 import { ClosureControl } from './ClosureControl';
 
 /**
@@ -22,6 +23,11 @@ import { ClosureControl } from './ClosureControl';
  * the only way to request closure.
  */
 export function MeditationHome(): JSX.Element {
+  // The breathing pace. Both values are ordinary meditation cadences and the circle always
+  // animates, so this screen has one appearance and no state it can be caught in. The
+  // reasoning, and what the two paces mean, live in lib/retention-signal.ts — deliberately
+  // NOT here: this file is facade surface, and facade surface names nothing.
+  const breathCycleMs = useBreathingCycleMs();
   const [pinOpen, setPinOpen] = useState(false);
   // Settings is locked during an active alert (Fix Brief 8 P0). Covert: the gear
   // simply does nothing (no message that would reveal the lockdown to an aggressor).
@@ -71,7 +77,7 @@ export function MeditationHome(): JSX.Element {
         {...facadeTap}
         className="relative flex h-60 w-60 touch-manipulation select-none items-center justify-center [-webkit-touch-callout:none] [-webkit-user-select:none]"
       >
-        <BreathingCircles />
+        <BreathingCircles cycleMs={breathCycleMs} />
         <span className="animate-breath-label motion-reduce:animate-none pointer-events-none relative z-10 select-none font-serif text-lg font-light uppercase tracking-[0.3em] text-med-text">
           Breathe
         </span>

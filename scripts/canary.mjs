@@ -37,6 +37,20 @@ import path from 'node:path';
 
 import { deployTarget } from './api-origin.mjs';
 import { proveCurrent } from './assert-currency.mjs';
+import {
+  ENVELOPE_ALG,
+  decryptChunk,
+  encryptChunk,
+  exportPublicKey,
+  generateDek,
+  generateEnvelopeKeypair,
+  importPublicKey,
+  plaintextCommitment,
+  randomIvPrefix,
+
+  unwrapDek,
+  wrapDek,
+} from './canary-envelope.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -125,6 +139,12 @@ async function signedRequest(method, urlPath, secret, eventId, bodyBytes, extraH
   return { status: res.status, data };
 }
 
+/** The server's own encryption tally, used to prove observation rather than assertion. */
+async function readiness() {
+  const r = await api('GET', '/v1/admin/encryption/readiness', { bearer: ADMIN });
+  return r.data?.chunks ?? { encrypted: 0, plaintextDeclared: 0, plaintextUndeclared: 0 };
+}
+
 console.log(`=== Brief 35 §C canary — ${ENVIRONMENT} ===`);
 console.log(`    origin: ${ORIGIN}`);
 if (!ADMIN) {
@@ -203,15 +223,103 @@ if (opened.status !== 201 || !opened.data?.eventId) {
 const { eventId, hmacSecret } = opened.data;
 ok(`event created server-side (${eventId.slice(0, 8)}…)`);
 
+// ---- 4b. THE REAL ENCRYPTION PATH (§F) --------------------------------------------
+//
+// The canary encrypts exactly as a phone does — its own keypair, a per-capture DEK
+// wrapped to it, wrapped keys uploaded BEFORE anything is sealed, a proven encryptor,
+// and only then a chunk. An exemption here would make this gate stop proving anything
+// about the path that actually carries evidence.
+//
+// Every failure below names the ENCRYPTION STATE the client-side machine would be in, so
+// a deploy that cannot encrypt says which step it died on rather than "upload failed".
+step('encryption: the canary traverses the real path');
+const encFatal = (state, why) =>
+  fatal(`encryption state ${state} — ${why}. A deploy that cannot encrypt must not publish.`);
+
+// PREPARING → the account must HAVE a key. A missing key is never terminal: mint one.
+const canaryKeys = await generateEnvelopeKeypair();
+const canaryPub = await exportPublicKey(canaryKeys.publicKey);
+const pub = await api('POST', '/v1/me/pubkey', { bearer: canary.sessionToken, body: { pubkey: canaryPub } });
+if (pub.status !== 200) {
+  encFatal('FAILED_RETRYABLE', `publishing the canary public key returned ${pub.status}`);
+}
+ok('canary keypair generated and public key published');
+
+const served = await api('GET', '/v1/me/keys', { bearer: canary.sessionToken });
+if (served.status !== 200 || served.data?.pubkey !== canaryPub) {
+  encFatal('FAILED_RETRYABLE', `the server did not serve back the published key (${served.status})`);
+}
+ok('server serves the canary public key back');
+
+// Wrap the per-capture DEK and upload the wrapped copies BEFORE encrypting anything —
+// a chunk encrypted under a DEK with no stored wrap is unrecoverable evidence.
+const dek = await generateDek();
+const ivPrefix = randomIvPrefix();
+const wrapped = await wrapDek(dek, await importPublicKey(canaryPub));
+const wrapRes = await signedRequest(
+  'POST',
+  `/v1/events/${eventId}/wrapped-keys`,
+  hmacSecret,
+  eventId,
+  Buffer.from(
+    JSON.stringify({
+      keys: [
+        {
+          recipientType: 'survivor',
+          recipientRef: null,
+          keyGeneration: 0,
+          algId: ENVELOPE_ALG,
+          wrappedDek: JSON.stringify(wrapped),
+        },
+      ],
+    }),
+  ),
+  { 'Content-Type': 'application/json' },
+);
+if (wrapRes.status !== 201 && wrapRes.status !== 200) {
+  encFatal('FAILED_RETRYABLE', `wrapped-key upload returned ${wrapRes.status}`);
+}
+ok('per-capture DEK wrapped to the canary key and stored');
+
+// READY requires PROOF, not a non-null object: seal a probe and open it again, and also
+// open the wrapped DEK back to confirm the whole chain is recoverable.
+try {
+  const probe = Buffer.from('canary-self-test');
+  const sealedProbe = await encryptChunk({ dek, plaintext: probe, captureId: eventId, chunkIndex: 0xfffffffe, isFinal: false, ivPrefix });
+  const back = await decryptChunk({ dek, framed: sealedProbe, captureId: eventId, chunkIndex: 0xfffffffe, isFinal: false });
+  if (Buffer.compare(Buffer.from(back), probe) !== 0) throw new Error('round trip mismatch');
+  await unwrapDek(wrapped, canaryKeys.privateKey); // the stored wrap really opens
+} catch (error) {
+  encFatal('FAILED_RETRYABLE', `encryptor self-test failed: ${error.message}`);
+}
+ok('encryptor PROVEN by round trip — state READY');
+
 // SYNTHETIC bytes. Fixed, recognisable, and never microphone or camera data.
 const synthetic = Buffer.alloc(64, 0xbb);
-const chunk = await signedRequest('POST', `/v1/events/${eventId}/chunks/0`, hmacSecret, eventId, synthetic, {
+const commitment = await plaintextCommitment(synthetic);
+const sealed = await encryptChunk({ dek, plaintext: synthetic, captureId: eventId, chunkIndex: 0, isFinal: false, ivPrefix });
+const before = await readiness();
+const chunk = await signedRequest('POST', `/v1/events/${eventId}/chunks/0`, hmacSecret, eventId, Buffer.from(sealed), {
   'X-Mime-Type': 'application/octet-stream',
+  'X-Plaintext-Commitment': commitment,
+  'X-Is-Final': '0',
 });
 if (chunk.status !== 201 && chunk.status !== 200) {
   fail(`chunk upload returned ${chunk.status}: ${JSON.stringify(chunk.data)}`);
 } else {
-  ok('synthetic capture chunk accepted (the upload path is alive)');
+  ok('encrypted synthetic chunk accepted (the upload path is alive)');
+}
+
+// The claim that matters: the SERVER, from its own inspection of the bytes, recorded this
+// chunk as ENCRYPTED. Not the client's word — the server's observation.
+const after = await readiness();
+if (after.encrypted === before.encrypted + 1 && after.plaintextUndeclared === before.plaintextUndeclared) {
+  ok('server OBSERVED the chunk as ENCRYPTED (undeclared-plaintext count unchanged)');
+} else {
+  fail(
+    `server did not record an encrypted chunk: encrypted ${before.encrypted}→${after.encrypted}, ` +
+      `undeclared ${before.plaintextUndeclared}→${after.plaintextUndeclared}`,
+  );
 }
 
 const beat = await signedRequest('POST', `/v1/events/${eventId}/heartbeat`, hmacSecret, eventId, Buffer.alloc(0));

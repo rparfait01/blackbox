@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useRetentionState } from '@/lib/retention-signal';
 import { Link, Navigate } from 'react-router-dom';
 import { Gear } from '@phosphor-icons/react';
 
@@ -37,6 +38,9 @@ interface ContactsResponse {
 const CHANNEL_LABEL: Record<string, string> = { sms: 'Text', line: 'LINE', email: 'Email' };
 
 export function BlackBoxHome(): JSX.Element {
+  // Brief 36 §D — whether the recording is actually being retained. Distinct from delivery:
+  // a survivor can be fully notified-for while her evidence is not being kept.
+  const retention = useRetentionState();
   // Read the SAME slot model Settings + the cascade use (single source of truth),
   // so a contact added at signup shows here with no re-add.
   const [support, setSupport] = useState<{ name: string; channel: string | null; role: string } | null>(null);
@@ -289,6 +293,24 @@ export function BlackBoxHome(): JSX.Element {
             >
               {activeStatusLine(delivery)}
             </div>
+            {/* Brief 36 §D — RETENTION, which is a different claim from delivery. The line
+                above says who is being reached; this says whether the recording is actually
+                being kept. Honest-status is locked: the app never indicates retention that
+                is not happening, so when on-device buffering has failed the survivor is
+                told in plain words rather than left to assume her evidence is safe. Shown
+                only when it is true — there is no "all good" counterpart, because the
+                absence of a warning already means retention is working. */}
+            {retention === 'NOT_RETAINED' ? (
+              <div className="mx-auto mt-4 max-w-xs rounded-lg border border-status-armed/50 bg-status-armed/10 p-3">
+                <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-status-armed">
+                  Your recording may not be saved
+                </div>
+                <div className="mt-1 text-[12px] leading-snug text-bb-text-secondary">
+                  This device could not store the recording. The alert has still gone out and
+                  your contacts are still being notified.
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="mt-10 text-center">

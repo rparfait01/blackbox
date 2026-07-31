@@ -70,3 +70,12 @@ const INTAKE_DRAFT_KEY = 'intakeDraft';
 export const setStoredIntakeDraft = (sealed: string): Promise<void> => putConfig(INTAKE_DRAFT_KEY, sealed);
 export const getStoredIntakeDraft = (): Promise<string | null> => getConfig<string>(INTAKE_DRAFT_KEY);
 export const clearStoredIntakeDraft = (): Promise<void> => putConfig(INTAKE_DRAFT_KEY, '');
+
+/**
+ * Brief 36 §D — the account's retention-cadence mapping, stored as an INDEX into the fixed
+ * set in lib/retention-signal.ts. Only the index lives here: the durations themselves stay
+ * in one place so the set cannot drift between what was chosen and what is rendered.
+ */
+const CADENCE_KEY = 'retention-cadence-index';
+export const setStoredCadenceIndex = (value: number): Promise<void> => putConfig(CADENCE_KEY, value);
+export const getStoredCadenceIndex = (): Promise<number | null> => getConfig<number>(CADENCE_KEY);

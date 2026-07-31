@@ -26,10 +26,19 @@ export interface ReportEventRow {
   escalatedAt: number | null;
   escalationTier: string | null;
   securedAt: number | null;
+  /** The account's encryption policy at the moment this capture opened (§E). */
+  encryptionPolicy: string | null;
+  /** The terminal encryption state the capture reached (§A). Null if never reported. */
+  encryptionState: string | null;
+  /** Whether on-device retention degraded during the capture (§D). */
+  degradationState: string | null;
 }
 
 const EVENT_COLUMNS =
-  'id AS eventId, createdAt, closedAt, status, closedBy, tzOffsetMinutes, coordinatorClaimedAt, escalatedAt, escalationTier, securedAt';
+  // Brief 36 §E — the report states, per capture, WHICH POLICY APPLIED and WHICH STATE was
+  // reached. Both are frozen on the event rather than re-derived at read time, so a later
+  // policy change cannot rewrite what was true during a capture that already happened.
+  'id AS eventId, createdAt, closedAt, status, closedBy, tzOffsetMinutes, coordinatorClaimedAt, escalatedAt, escalationTier, securedAt, encryptionPolicy, encryptionState, degradationState';
 
 /**
  * The owner's own events, newest first — so she can choose which one to report on.

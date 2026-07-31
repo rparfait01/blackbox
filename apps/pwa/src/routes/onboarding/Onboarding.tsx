@@ -7,6 +7,7 @@ import { cacheEntitlement, setSession, type DisplayMode } from '@/lib/auth';
 import { primePermissions } from '@/lib/permissions';
 import { enrollPasskey } from '@/lib/passkey';
 import { provisionSurvivorKey } from '@/lib/crypto/key-provisioning';
+import { ensureCadenceMapping } from '@/lib/retention-signal';
 import { osFixHint } from '@/lib/readiness';
 import { InstallHint } from '@/components/InstallHint';
 import { ContactForm, type ContactValues } from '@/components/ContactForm';
@@ -221,6 +222,14 @@ export function Onboarding(): JSX.Element {
       // armed. If it fails or hangs, captures simply stay plaintext (same fail-open rule as
       // the send path). The recovery-wrapped copy is added when the code is shown, below.
       provisionSurvivorKey();
+      // Brief 36 §D — pick THIS account's retention-cadence mapping, once. Idempotent and
+      // fire-and-forget, on the same rule as key provisioning: it must never block reaching
+      // Armed. Assigned at random from a small fixed set so there is no universal tell —
+      // for half the mappings the cadence slows when evidence is at risk and for the other
+      // half it quickens, which is what stops one account's behaviour from revealing any
+      // other's. An account that somehow reaches capture without one falls back to the
+      // facade's own default cadence, which looks exactly like it always has.
+      void ensureCadenceMapping();
       // Step 3 (once the retired email-OTP step) is now the CREDENTIAL step: the
       // session exists from here, so the passkey and recovery code can be created
       // against it. It sits before contacts so the account is never left with no

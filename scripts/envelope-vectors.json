@@ -1,0 +1,46 @@
+{
+  "alg": "p256-hkdf-sha256-aes256gcm/v1",
+  "note": "Brief 36 F — shared vectors. Both implementations must reproduce expectedFramedB64 byte-for-byte.",
+  "vectors": [
+    {
+      "captureId": "evt-vector-0001",
+      "chunkIndex": 0,
+      "isFinal": false,
+      "dekRawB64": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "ivPrefixB64": "AAECAw==",
+      "plaintextB64": "b25lLXNlY29uZC1vZi1hdWRpbw==",
+      "expectedFramedB64": "AQABAgMAAAAAAAAAAJfV4KWi3h6HkU8E4+rk1BRyckRwSNsIpPzRgv965gxiAPDB",
+      "expectedCommitment": "04280787de98cd7198e63bf87ed55d38db0c848709e4b78d402ac2662bef9ddd"
+    },
+    {
+      "captureId": "evt-vector-0001",
+      "chunkIndex": 1,
+      "isFinal": true,
+      "dekRawB64": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fg=",
+      "ivPrefixB64": "AQIDBA==",
+      "plaintextB64": "ZmluYWwgY2h1bmsgYnl0ZXM=",
+      "expectedFramedB64": "AQECAwQAAAAAAAAAAQGBqY81zlvZvvzFdDWVlqU0kzhdX85PFQKJ5D9UKe0jNw==",
+      "expectedCommitment": "72d84b524062dbdbfc378cf112f42269450701fcb7505948f58ec06344169d17"
+    },
+    {
+      "captureId": "evt-vector-0002",
+      "chunkIndex": 65535,
+      "isFinal": false,
+      "dekRawB64": "PkVMU1phaG92fYSLkpmgp661vMPK0djf5u30+wIJEBc=",
+      "ivPrefixB64": "AgMEBQ==",
+      "plaintextB64": "",
+      "expectedFramedB64": "AQIDBAUAAAAAAAD//zoEjPNa0GvtrRFml0p7w3Y=",
+      "expectedCommitment": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "captureId": "evénement-ünicode-日本",
+      "chunkIndex": 7,
+      "isFinal": false,
+      "dekRawB64": "XWRrcnmAh46VnKOqsbi/xs3U2+Lp8Pf+BQwTGiEoLzY=",
+      "ivPrefixB64": "AwQFBg==",
+      "plaintextB64": "bm9uLWFzY2lpIGNhcHR1cmVJZCBiaW5kcyBpbnRvIHRoZSBBQUQ=",
+      "expectedFramedB64": "AQMEBQYAAAAAAAAAByodGxatf50l6EbOoF7IBbpHdRRfKEpWqzJkxJsmj2Z0rBVoetfJOY3Q75W+8j/kazzyYvjUxA==",
+      "expectedCommitment": "22800dffff5f54a23ecc6c0c4ee695cf40207f2e2b03de2a1edf6bcaf97710cf"
+    }
+  ]
+}

@@ -30,8 +30,31 @@ times.**
 
 ## DESTRUCTIVE = GUARDED
 - Restore point before any destructive prod operation.
+- **The custody chain is never purged.** Only the objects it attests to are purged, on
+  recorded owner consent. Deleting evidence and erasing the record that it existed are
+  different acts, and only the first is ever authorised by an owner's consent to a purge.
+  A purge leaves the integrity chain, the events, and an audit row naming the restore point.
+- **A restore point must cover the thing being destroyed.** D1 Time Travel restores index
+  rows only — never R2 bytes. A bookmark alone is not a restore point for media; export and
+  size-verify the objects first, or say plainly that the bytes are unrecoverable.
+- **The Worker's own binding is the only authority for R2 state.** `wrangler r2 object
+  get/delete` reads and writes a LOCAL miniflare simulator (`.wrangler/state/v3/r2/`), so a
+  deleted object still "downloads" from the shadow copy and a delete can report success
+  having done nothing. Verify through the deployed Worker, and delete the local shadow copy
+  afterwards — it is an unintended second copy of whatever was just purged.
 - Dry-run/preview by default; explicit confirm required; malformed/empty input never triggers a mass action.
 - Every destructive action audited: who, what, when.
+
+## ENCRYPTION
+- Until Brief 47 is green, **no document states that capture is encrypted.** The readiness
+  panel (`GET /v1/admin/encryption/readiness`) is the only authority on what is actually
+  true; a flag reports intent, counts report the world, and those two disagreed for two
+  months without anything saying so.
+- The covert retention signal is a per-account BREATHING CADENCE and appears in no
+  public-safe or pre-patent document. A published tell is not a tell.
+- The canary encrypts through the real path, with no exemption. The two envelope
+  implementations are pinned byte-for-byte by shared vectors in CI
+  (`envelope-crossverify.test.ts`); if they can drift, the gate proves nothing.
 
 ## DEPLOY DISCIPLINE
 - Migration to prod first, deploy second, never reversed.

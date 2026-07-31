@@ -579,6 +579,61 @@ app.route('/v1/admin/canary', canaryRoutes);
  * leads with the enforcement state in the words an operator would use. Dark is fine. Dark
  * while believing otherwise is what cost this product two months of imaginary encryption.
  */
+/**
+ * §E — THE POLICY SURFACE. Relaxing encryption for an account is an explicit operator
+ * decision with a name on it, never a silent runtime fallback.
+ *
+ * The distinction this enforces is the whole point of the section: the system may end up
+ * storing plaintext for an account, but only because a person decided so, on the record,
+ * with a reason — not because some code path quietly gave up. A REQUIRED account that
+ * cannot encrypt declares itself (FAILED_TERMINAL) and alerts; it does not silently become
+ * a RELAXED one.
+ */
+app.post('/v1/admin/encryption/policy', async (c) => {
+  const body = await c.req
+    .json<{ email?: string; policy?: string; reason?: string }>()
+    .catch(() => ({}) as { email?: string; policy?: string; reason?: string });
+  const email = (body.email ?? '').trim().toLowerCase();
+  const policy = body.policy === 'RELAXED' ? 'RELAXED' : body.policy === 'REQUIRED' ? 'REQUIRED' : null;
+  const reason = (body.reason ?? '').trim();
+  if (!email || !policy) {
+    return c.json({ error: 'email_and_policy_required', policy: 'REQUIRED | RELAXED' }, 400);
+  }
+  // A reason is MANDATORY for relaxation. "Why is this account storing plaintext?" must
+  // always have an answer, and an operator who cannot articulate one should not proceed.
+  if (policy === 'RELAXED' && reason.length < 8) {
+    return c.json({ error: 'reason_required', message: 'Relaxing encryption requires a stated reason.' }, 400);
+  }
+  const user = await c.env.DB.prepare('SELECT id, encryptionPolicy FROM users WHERE lower(email) = ?')
+    .bind(email)
+    .first<{ id: string; encryptionPolicy: string }>();
+  if (!user) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+  await c.env.DB.prepare('UPDATE users SET encryptionPolicy = ?, updatedAt = ? WHERE id = ?')
+    .bind(policy, Date.now(), user.id)
+    .run();
+  // Actor, timestamp and reason, in one row. The timestamp is the audit row's own.
+  await audit(c.env, null, 'encryption.policy_changed', c.get('operatorUserId') ?? 'admin_token', {
+    userId: user.id,
+    from: user.encryptionPolicy,
+    to: policy,
+    reason,
+  });
+  if (policy === 'RELAXED') {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        alert: 'encryption_policy_relaxed',
+        message: 'an account was moved off REQUIRED encryption by an operator',
+        userId: user.id,
+        reason,
+      }),
+    );
+  }
+  return c.json({ ok: true, userId: user.id, from: user.encryptionPolicy, to: policy, reason }, 200);
+});
+
 app.get('/v1/admin/encryption/readiness', async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT
@@ -1755,6 +1810,45 @@ app.post('/v1/events/:id/closure-lockout', async (c) => {
 
 // Reason the event TRIGGERED — entered post-event (the user can't type during
 // covert activation). Part of the closure status report.
+/**
+ * Brief 36 §E — the capture's own encryption verdict, reported by the client at the end of
+ * preparation. The server already records what it OBSERVED per chunk; this records what the
+ * DEVICE concluded, so the report can state both which policy applied and which state was
+ * actually reached rather than inferring one from the other later.
+ *
+ * Deliberately advisory: nothing downstream trusts this over the per-chunk observation. It
+ * exists so a capture that never uploaded a chunk at all can still explain itself.
+ */
+app.post('/v1/events/:id/encryption-state', async (c) => {
+  const eventId = c.req.param('id');
+  const body = await c.req
+    .json<{ state?: string; degradation?: string; reason?: string }>()
+    .catch(() => ({}) as { state?: string; degradation?: string; reason?: string });
+  const STATES = ['PREPARING', 'READY', 'FAILED_RETRYABLE', 'FAILED_TERMINAL'];
+  const DEGRADED = ['NONE', 'EVIDENCE_AT_RISK', 'EVIDENCE_NOT_RETAINED'];
+  const state = STATES.includes(body.state ?? '') ? body.state! : null;
+  const degradation = DEGRADED.includes(body.degradation ?? '') ? body.degradation! : null;
+  if (!state) {
+    return c.json({ error: 'invalid_state' }, 400);
+  }
+  // Freeze the POLICY that applied to this capture the first time it is reported, from the
+  // owning account — not from the client, and not re-derived at read time, so a later policy
+  // change cannot rewrite the history of a capture that already happened.
+  await c.env.DB.prepare(
+    `UPDATE events
+        SET encryptionState = ?,
+            degradationState = COALESCE(?, degradationState),
+            encryptionPolicy = COALESCE(encryptionPolicy, (SELECT u.encryptionPolicy FROM users u WHERE u.id = events.userId))
+      WHERE id = ?`,
+  )
+    .bind(state, degradation, eventId)
+    .run();
+  if (state === 'FAILED_TERMINAL') {
+    await audit(c.env, eventId, 'encryption.capture_terminal', null, { reason: body.reason ?? null, degradation });
+  }
+  return c.json({ ok: true }, 200);
+});
+
 app.post('/v1/events/:id/reason-triggered', async (c) => {
   const eventId = c.req.param('id');
   const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });

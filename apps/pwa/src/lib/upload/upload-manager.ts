@@ -21,6 +21,7 @@ import {
 import { ensureSurvivorKey } from '@/lib/crypto/key-provisioning';
 import {
   degradationForBufferFailure,
+  getRecord,
   getState,
   markDegradation,
   markPreparing,
@@ -218,6 +219,10 @@ export function uploadChunk(
       // neither touches the alert, which has already gone out.
       log.error('chunk buffering failed — evidence retention degraded', error);
       markDegradation(sessionId, degradationForBufferFailure(getState(sessionId)));
+      const ctx = contexts.get(sessionId);
+      if (ctx) {
+        reportEncryptionState(ctx);
+      }
     });
 }
 
@@ -414,6 +419,38 @@ async function openEvent(ctx: SessionContext): Promise<boolean> {
  * a retry is FAILED_RETRYABLE (chunks keep buffering); anything that cannot is
  * FAILED_TERMINAL, which TRANSMITS but declares itself.
  */
+/**
+ * Brief 36 §E — tell the server what state this capture actually reached, so the report can
+ * state the policy that applied and the state reached rather than inferring one later.
+ *
+ * Fire-and-forget and failure-tolerant: this is a record, not a gate. It runs off the alert
+ * path like everything else in this module and can never delay or block a capture.
+ */
+function reportEncryptionState(ctx: SessionContext): void {
+  const eventId = ctx.eventId;
+  const secret = ctx.hmacSecret;
+  if (!eventId || !secret) {
+    return;
+  }
+  const record = getRecord(ctx.sessionId);
+  void (async () => {
+    try {
+      const path = `/v1/events/${eventId}/encryption-state`;
+      const payload = { state: record.state, degradation: record.degradation, reason: record.reason };
+      const bodyBytes = new TextEncoder().encode(JSON.stringify(payload));
+      const ts = Date.now();
+      const signed = await signRequest({ secret, eventId, method: 'POST', path, timestamp: ts, body: bodyBytes });
+      await fetch(`${API_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { ...signed, 'Content-Type': 'application/json' },
+        body: bodyBytes as BodyInit,
+      });
+    } catch (error) {
+      log.error('encryption-state report failed (advisory only)', error);
+    }
+  })();
+}
+
 async function prepareEncryption(ctx: SessionContext, attempt = 0): Promise<void> {
   const sessionId = ctx.sessionId;
   if (!envelopeEncryptionEnabled) {
@@ -421,6 +458,7 @@ async function prepareEncryption(ctx: SessionContext, attempt = 0): Promise<void
     // Terminal, and DECLARED — the whole point of the amendment is that unencrypted
     // transmission is a stated condition rather than a silent one.
     markTerminal(sessionId, 'envelope_encryption_disabled');
+    reportEncryptionState(ctx);
     return;
   }
   if (getState(sessionId) === 'FAILED_TERMINAL') {
@@ -429,6 +467,10 @@ async function prepareEncryption(ctx: SessionContext, attempt = 0): Promise<void
   markPreparing(sessionId);
   const retry = (reason: string): void => {
     markRetryable(sessionId, reason);
+    // A retry that escalated to terminal is a verdict worth recording immediately.
+    if (getState(sessionId) === 'FAILED_TERMINAL') {
+      reportEncryptionState(ctx);
+    }
     if (getState(sessionId) === 'FAILED_RETRYABLE') {
       window.setTimeout(() => void prepareEncryption(ctx, attempt + 1), backoff(attempt + 1));
     }
@@ -446,6 +488,7 @@ async function prepareEncryption(ctx: SessionContext, attempt = 0): Promise<void
       // tokenless (covert) trigger is a real, supported path, so this is terminal for
       // this capture rather than an error — and it declares itself.
       markTerminal(sessionId, 'no_account_session');
+      reportEncryptionState(ctx);
       return;
     }
     const keysRes = await fetch(`${API_BASE_URL}/v1/me/keys`, { headers: { Authorization: `Bearer ${token}` } });
@@ -511,6 +554,7 @@ async function prepareEncryption(ctx: SessionContext, attempt = 0): Promise<void
       return;
     }
     markReady(sessionId, encryptor);
+    reportEncryptionState(ctx);
   } catch (error) {
     log.error('encryption preparation failed', error);
     retry(`exception:${String(error).slice(0, 80)}`);
