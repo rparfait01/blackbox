@@ -198,6 +198,15 @@ async function dispatchStep(
  * ctx.waitUntil(); the 1-min cron (advanceCascades) backstops a worker that dies
  * mid-stagger and fires the emergency-services fallback.
  */
+/**
+ * How far past activation the IN-REQUEST stagger chain is allowed to reach. The runtime
+ * reclaims a request's waitUntil at roughly 30s; this leaves headroom for the dispatch and
+ * its audit writes to finish inside a context that is still alive. Steps due later belong
+ * to the Durable Object alarm, which fires at the exact window and does not inherit this
+ * request's lifetime. Deliberately a stated number rather than "as long as it lasts".
+ */
+export const STAGGER_BUDGET_MS = 20_000;
+
 export async function notifyActivation(
   env: Env,
   eventId: string,
@@ -227,6 +236,32 @@ export async function notifyActivation(
   await armCascadeSchedule(env, eventId, workerOrigin);
 
   for (let step = 0; step < contacts.length; step += 1) {
+    // STOP BEFORE THE CONTEXT DIES (Brief 36 §11 diagnosis).
+    //
+    // This loop runs inside the activation request's waitUntil, which the runtime
+    // reclaims roughly 30s after the response. It used to sleep all the way to
+    // T+40s, so the last steps executed on borrowed time and were TRUNCATED
+    // MID-SEQUENCE: a real staging trace showed step 3 firing at T+30s, its dispatch
+    // completing at T+40.7s, and its `cascade_step_undelivered` audit row never
+    // landing — the row after the one that did. Sometimes the truncation hit earlier
+    // and even `cascade_fired` was lost, which is what made acceptance check 8 read
+    // "expected 5, got 4" at random.
+    //
+    // Nobody went unnotified — every dispatch and every delivery_record landed. What
+    // was lost was the AUDIT TRAIL, which in this product is evidence: the closure
+    // report and the coordinator view are built from these rows, so a cascade that
+    // silently stops recording itself is a custody defect even when delivery is fine.
+    //
+    // The fix is not a longer budget — it is not doing late work here at all. The
+    // Durable Object alarm is the EXACT driver and is already armed above; the cron
+    // is the coarse backstop. So the in-request chain now covers only the steps it
+    // can finish honestly, and hands the tail to a driver that is not about to die.
+    // Measured from EVENT CREATION, not from "how long is left to wait". The remaining
+    // wait shrinks as the loop advances, so a relative test always looks affordable and
+    // the chain still walks off the end of its lifetime one step at a time.
+    if (step * interval > STAGGER_BUDGET_MS) {
+      return; // the DO alarm owns every remaining step, at its exact window
+    }
     // Sleep to the step's ABSOLUTE target (createdAt + step*interval) rather than
     // a per-step relative delay — so per-send latency does not compound and
     // guardian/emergency land in their windows (T+0/+10/+20/+30/+40), never drift
