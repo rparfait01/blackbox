@@ -28,7 +28,43 @@ describe('§1 deploy currency', () => {
 
   it('pins the deploy target to the production branch (no Preview-only path)', () => {
     expect(deployPages).toContain('--branch=');
-    expect(deployPages).toMatch(/PROD_BRANCH\s*=\s*'master'/);
+    // Brief 35 §B moved the target out of this script and into TRACKED config, so the
+    // origin the artifact is built against and the origin currency is asserted against
+    // cannot disagree. The pin follows the value: the branch must still be resolved from
+    // the deploy target (never a literal someone can retype) AND that target must still
+    // be the production branch.
+    expect(deployPages).toMatch(/PROD_BRANCH\s*=\s*TARGET\.pagesBranch/);
+    const targets = JSON.parse(read(join(ROOT, 'config/deploy-targets.json')));
+    expect(targets.production.pagesBranch).toBe('master');
+  });
+
+  it('§35 refuses to publish an artifact with no API origin in it', () => {
+    // The failure this closes: `.env` is gitignored, so a build on a clean machine had an
+    // EMPTY api origin — no event created, nobody notified, nothing uploaded — and the
+    // deploy went green because build ids matched. The origin must be validated from
+    // tracked config and PROVEN present in the bytes about to be published.
+    expect(deployPages).toMatch(/deployTarget\('production'\)/);
+    expect(deployPages).toMatch(/assertOriginInArtifact/);
+    expect(deployPages).toMatch(/process\.exit\(1\)/);
+    const targets = JSON.parse(read(join(ROOT, 'config/deploy-targets.json')));
+    expect(targets.production.apiOrigin).toMatch(/^https:\/\//);
+  });
+
+  it('the production BUILD itself fails without a valid origin — not a warning, not a fallback', () => {
+    // Gate one: vite refuses to compile. Gated on the mode flag, never on the variable
+    // being absent — absence used to mean "quietly disable the product".
+    expect(vite).toMatch(/assertProductionApiOrigin/);
+    expect(vite).toMatch(/assertApiOrigin\(value, 'production build'\)/);
+    expect(vite).toMatch(/mode !== 'production'/);
+    // Gate two: env.ts has no empty-string fallback left to fall back to. The exact
+    // defect — `export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '')` —
+    // must not be able to come back, and the resolver must keep BOTH the dev branch and
+    // the fatal one.
+    const env = read(join(PWA, 'src/lib/env.ts'));
+    expect(env).not.toMatch(/export const API_BASE_URL\s*=\s*\(import\.meta\.env/);
+    expect(env).toMatch(/export const API_BASE_URL = resolveApiBaseUrl\(\);/);
+    expect(env).toMatch(/if \(import\.meta\.env\.DEV\)/);
+    expect(env).toMatch(/throw new Error\(/);
   });
 
   it('delegates currency to the hardened guard — no soft/inline worker path', () => {

@@ -180,7 +180,7 @@ orgRoutes.get('/survivors', requireOrgRole('coordinator'), async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT u.id, u.name, u.createdAt,
        (SELECT COUNT(*) FROM contacts ct WHERE ct.userId = u.id) AS contactCount,
-       (SELECT COUNT(*) FROM events e WHERE e.userId = u.id AND e.status = 'active') AS activeEvents,
+       (SELECT COUNT(*) FROM events e WHERE e.userId = u.id AND e.status = 'active' AND e.isTest = 0) AS activeEvents,
        (SELECT role FROM org_members m WHERE m.userId = u.id AND m.orgId = u.orgId AND m.status = 'active') AS staffRole
      FROM users u WHERE u.orgId = ? ORDER BY u.createdAt DESC`,
   )
@@ -199,13 +199,15 @@ orgRoutes.get('/survivors', requireOrgRole('coordinator'), async (c) => {
 });
 
 // §5 Correlate — this org's active events → survivor. org-scoped by the stamped
-// events.orgId; an event from another org is never returned.
+// events.orgId; an event from another org is never returned. Canary events (Brief 35 §C)
+// are excluded too: a coordinator's live board must show people, and a deploy fixture
+// appearing there would be indistinguishable from someone in trouble.
 orgRoutes.get('/events', requireOrgRole('coordinator'), async (c) => {
   const orgId = c.get('orgId')!;
   const { results } = await c.env.DB.prepare(
     `SELECT e.id, e.createdAt, e.status, e.userId, e.cascadeStep, u.name AS survivorName
      FROM events e LEFT JOIN users u ON u.id = e.userId
-     WHERE e.orgId = ? AND e.status = 'active' ORDER BY e.createdAt DESC`,
+     WHERE e.orgId = ? AND e.status = 'active' AND e.isTest = 0 ORDER BY e.createdAt DESC`,
   )
     .bind(orgId)
     .all<{ id: string; createdAt: number; status: string; userId: string | null; cascadeStep: number; survivorName: string | null }>();

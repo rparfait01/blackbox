@@ -211,3 +211,33 @@ secrets above are required for LINE delivery, admin setup, and magic-link views;
 when they are unset the Worker degrades gracefully (notifications are audited as
 `notification_skipped` and the app keeps recording locally). `.dev.vars`
 (gitignored) holds them for local dev; see `.dev.vars.example`.
+
+## The deploy canary (Brief 35 §C)
+
+`pnpm deploy` finishes by proving the alert path EXISTS on the origin it just published —
+build ids matching only proves both halves came from one commit, not that the client can
+reach the server. `scripts/canary.mjs` opens a real event through the ordinary
+authenticated trigger path, uploads a synthetic chunk, beats a heartbeat, reads the
+delivery log back, and purges.
+
+Three admin routes support it (`ADMIN_TOKEN` or an operator session, like every
+`/v1/admin/*` route):
+
+| Route | Does |
+|---|---|
+| `POST /v1/admin/canary/provision` | Idempotently ensure this environment's canary account (`canary@blackbox.test`) + its reserved-address contact, and mint a session for it. The **only** writer of `users.isCanary`. |
+| `GET /v1/admin/canary/status` | Presence-and-shape of required bindings and secrets. Never returns a secret's value. |
+| `POST /v1/admin/canary/purge` | Delete every canary event, its R2 objects and every row keyed to them. Returns `remaining`, which the gate requires to be 0. |
+
+**Nothing is dispatched.** `events.isTest` is derived server-side at creation from the
+account (a client cannot assert it), and the notification router withholds the dispatch —
+recording `suppressed_test`, never `sent`. The canary's own addresses are RFC 2606
+reserved on top of that, so even total failure of the flag reaches nobody.
+
+The suppression predicate requires the flag **and** a still-canary owner, both re-derived
+at dispatch time. A flag found on a real account **dispatches normally** and raises an
+alertable operator condition (`canary_flag_on_non_canary_account`) — the failure costs a
+test run, never a life. Pinned by `test/canary-severance.guard.test.ts` and acceptance
+checks 82–83.
+
+A run that dies mid-way is cleaned up by the cron TTL sweep (15 minutes).

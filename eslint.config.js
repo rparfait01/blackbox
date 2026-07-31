@@ -14,6 +14,12 @@ export default tseslint.config(
       '**/.wrangler/**',
       '**/*.config.js',
       '**/*.config.ts',
+      // A vendored COPY of the repo, dropped under docs/ for an external audit. Linting
+      // it re-reports every finding twice and, because the copy sits at a different path,
+      // the `workers/**` and `**/*.mjs` overrides below do not match it — so identical
+      // source fails there and passes here. That made `pnpm verify` red for reasons that
+      // have nothing to do with the code being shipped.
+      'docs/sentinel_audit/**',
     ],
   },
   js.configs.recommended,

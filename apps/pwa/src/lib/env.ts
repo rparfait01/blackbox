@@ -27,11 +27,64 @@ function resolveHoldMs(): number {
 export const ACTIVATION_HOLD_MS = resolveHoldMs();
 
 /**
- * Backend Worker base URL. When unset, the upload pipeline is a silent no-op —
- * recording stays entirely local and the app behaves exactly as before (covert:
- * a missing/unreachable backend never changes anything on screen).
+ * Backend Worker base URL — Brief 35 §A.
+ *
+ * WHAT THIS USED TO BE, AND WHY IT WAS THE WORST BUG IN THE PRODUCT. This read
+ * `(import.meta.env.VITE_API_BASE_URL ?? '').trim()`, so a build with the variable
+ * absent got an empty origin and `uploadsEnabled === false`. Every consequence of
+ * that was SILENT: activation still started local capture, the UI still showed an
+ * active alert, and `registerUploadSession()`, the heartbeat, closure monitoring and
+ * every upload returned early. No event created. No contact notified. No evidence off
+ * the device. `.env*` is gitignored and no tracked `apps/pwa/.env` exists, so any
+ * clean machine or CI runner produced exactly that build — and the deploy reported
+ * green, because build ids matched.
+ *
+ * A production build with no API origin is not a degraded build. It is a build in
+ * which the alert path does not exist. So there is no fallback here any more:
+ *
+ *   - PRODUCTION — the build itself fails (vite.config.ts refuses to compile without
+ *     a valid HTTPS, routable origin). This module then re-states the same rule at
+ *     runtime, so an artifact produced by some other route still fails LOUDLY rather
+ *     than pretending to work. Unreachable in practice; that is the point of a guard.
+ *   - DEVELOPMENT — permissive, gated on `import.meta.env.DEV` (an explicit flag Vite
+ *     sets), NEVER on the variable being absent. Missing origin in dev means "no
+ *     backend running", uploads stay off, capture stays local.
+ *
+ * The distinction is the entire fix: absence used to mean "quietly disable the
+ * product". It now means "development", and only where development was asked for.
  */
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+function resolveApiBaseUrl(): string {
+  const raw = import.meta.env.VITE_API_BASE_URL;
+  const configured = typeof raw === 'string' ? raw.trim() : '';
+  if (configured === '') {
+    if (import.meta.env.DEV) {
+      // The DEV FLAG — not the absence of the variable — is what makes this permissible.
+      // No backend running locally: uploads stay off, capture stays local.
+      return '';
+    }
+    throw new Error(
+      'VITE_API_BASE_URL is missing or empty — this build has no alert path and must not run.',
+    );
+  }
+  if (!import.meta.env.DEV && !/^https:\/\//i.test(configured)) {
+    // Deliberately fatal. A safety product that cannot reach its backend must say so,
+    // not present a working-looking alert screen that reaches nobody. (Dev keeps http://
+    // so a local Worker on :8787 still works.)
+    throw new Error(
+      `VITE_API_BASE_URL must be https: in a production build — got '${configured}'.`,
+    );
+  }
+  return configured.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
+
+/**
+ * Whether the backend pipeline exists. In a production build this is ALWAYS true —
+ * `resolveApiBaseUrl` throws otherwise, so there is no production path on which the
+ * upload/event/heartbeat calls silently no-op. It stays a value (rather than a
+ * constant `true`) because a dev session genuinely can run without a backend.
+ */
 export const uploadsEnabled = API_BASE_URL.length > 0;
 
 /**

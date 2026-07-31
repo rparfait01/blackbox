@@ -42,6 +42,7 @@ import { handleLineWebhook } from './routes/line-webhook';
 import { handleTwilioWebhook } from './routes/twilio-webhook';
 import { handleActivationWebhook } from './routes/activation';
 import { authRoutes } from './routes/auth';
+import { canaryRoutes } from './routes/canary';
 import { guardianRoutes } from './routes/guardians';
 import { userRoutes } from './routes/user';
 import { orgRoutes } from './routes/org';
@@ -385,11 +386,18 @@ app.post('/v1/events', async (c) => {
   // dashboard query join-free and keeps the org attribution immutable if the owner
   // is later deleted.
   const owner = userId
-    ? await c.env.DB.prepare('SELECT orgId FROM users WHERE id = ?')
+    ? await c.env.DB.prepare('SELECT orgId, isCanary FROM users WHERE id = ?')
         .bind(userId)
-        .first<{ orgId: string | null }>()
+        .first<{ orgId: string | null; isCanary: number }>()
     : null;
   const orgId = owner?.orgId ?? null;
+
+  // Brief 35 §C — `isTest` is DERIVED HERE, from the owning account, and from nowhere
+  // else. The request body is not consulted: `body` has no isTest field, and adding one
+  // would change nothing, because this line is the only thing that writes the column.
+  // A tokenless (covert) trigger has no account and is therefore never a test — which is
+  // the right default, since that is the path a survivor uses when they cannot sign in.
+  const isTest = Number(owner?.isCanary ?? 0) === 1 ? 1 : 0;
 
   // ONE OPEN EVENT PER ACCOUNT (Brief 15: data-layer guarantee + resolution).
   // Resolve the account's single canonical active event — matched by userId when a
@@ -424,7 +432,7 @@ app.post('/v1/events', async (c) => {
   // flagged "dark" before the first heartbeat lands.
   try {
     await c.env.DB.prepare(
-      'INSERT INTO events (id, createdAt, status, userHash, userId, orgId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (id, createdAt, status, userHash, userId, orgId, hmacSecret, source, locale, tzOffsetMinutes, lastHeartbeatAt, isTest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
       .bind(
         eventId,
@@ -438,6 +446,7 @@ app.post('/v1/events', async (c) => {
         body.locale ?? null,
         tzOffsetMinutes,
         createdAt,
+        isTest,
       )
       .run();
   } catch (error) {
@@ -540,6 +549,16 @@ app.use('/v1/admin/*', async (c, next) => {
   await next();
   return undefined;
 });
+
+// Brief 35 §C — the deploy canary's control surface (provision / status / purge).
+//
+// REGISTERED HERE, AFTER THE GATE ABOVE, AND THAT ORDER IS THE AUTHORISATION. Hono runs
+// matching handlers in REGISTRATION order, so a router mounted before the `/v1/admin/*`
+// middleware would answer the request itself and the gate would never execute. Mounting
+// it after means every route inside is reached only through ADMIN_TOKEN or an operator
+// session, with no authorisation rule of its own to drift — a second way in is a second
+// way in, however well-intentioned. Nothing in the PWA calls any of it.
+app.route('/v1/admin/canary', canaryRoutes);
 
 interface AdminContactBody {
   userHash?: string;

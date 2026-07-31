@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "Brief 35 §B — the API origin each environment is built against, IN TRACKED CONFIG.",
+    "",
+    "This value used to live only in apps/pwa/.env, which is gitignored. A build on any",
+    "machine without that file — a fresh clone, a CI runner, a new laptop — produced a PWA",
+    "with an EMPTY API origin. That build still activated, still recorded locally, still",
+    "showed an active alert, and never created an event, never notified a contact, never",
+    "uploaded a byte. The deploy passed because the build ids matched. Same failure shape as",
+    "migration 0038 and the same reasoning as the ENVELOPE_ENCRYPTION_ENABLED var in",
+    "wrangler.toml: config the product cannot function without does not belong in a file that",
+    "does not travel with the source.",
+    "",
+    "NOT A SECRET. These are public origins — they are in every network request the PWA makes.",
+    "Secrets stay in `wrangler secret put` / .dev.vars and are never read from here.",
+    "",
+    ".env is still supported for LOCAL DEVELOPMENT only. The deploy pipeline passes the value",
+    "below into the build environment, which takes precedence over any .env file, so a stale",
+    "local .env can never decide what production points at."
+  ],
+  "production": {
+    "apiOrigin": "https://blackbox-api.stillpoint-dev.workers.dev",
+    "pwaOrigin": "https://blackbox-pwa.pages.dev",
+    "pagesProject": "blackbox-pwa",
+    "pagesBranch": "master"
+  },
+  "staging": {
+    "apiOrigin": "https://blackbox-api-staging.stillpoint-dev.workers.dev",
+    "pwaOrigin": "https://blackbox-pwa.pages.dev",
+    "pagesProject": "blackbox-pwa",
+    "pagesBranch": "master"
+  }
+}

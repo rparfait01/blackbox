@@ -57,7 +57,12 @@ describe('§2 events are stamped with the owner org at creation (frozen, join-fr
   const index = read('src/index.ts');
 
   it('POST /v1/events resolves the owner orgId and stores it on the event row', () => {
-    expect(index).toMatch(/SELECT orgId FROM users WHERE id = \?/);
+    // ONE owner lookup, and both stamps come out of it. Brief 35 added `isCanary` to the
+    // same SELECT rather than a second query: this is the trigger path, and the org stamp
+    // and the test flag must be read from the same row at the same instant — two lookups
+    // could disagree, and each extra round trip here is latency on the one request a
+    // survivor cannot afford to have slowed down.
+    expect(index).toMatch(/SELECT orgId, isCanary FROM users WHERE id = \?/);
     expect(index).toMatch(/INSERT INTO events \([^)]*\borgId\b/);
   });
 });

@@ -6,16 +6,39 @@ chosen during onboarding and switchable in settings. Hosted on Cloudflare Pages.
 
 ## Build-time env
 
-Set in `.env` (see `.env.example`):
-
-- `VITE_API_BASE_URL` — the deployed Worker origin (e.g.
-  `https://blackbox-api.<subdomain>.workers.dev`). **Required for sign-up,
-  guardian invites, and uploads.** When unset the app stays fully local and auth
-  calls fail — never ship a production build without it.
+- `VITE_API_BASE_URL` — the deployed Worker origin. For **production and staging this
+  comes from the tracked `config/deploy-targets.json`**, which `pnpm deploy` validates
+  and passes into the build. For **local development only**, set it in `.env` (see
+  `.env.example`); leaving it unset in a dev session means no backend, uploads off,
+  capture local.
 - `VITE_REVEAL_HOLD_MS` — optional override for the covert activation hold.
 
 There are no `localhost` URLs in the bundle: the API base comes entirely from
 `VITE_API_BASE_URL` at build time.
+
+### A production build without an origin FAILS TO COMPILE (Brief 35 §A)
+
+This used to be a warning-free fallback, and it was the worst bug in the product.
+`API_BASE_URL` fell back to `''`, `uploadsEnabled` became false, and every consequence
+was silent: activation still started local capture and still showed an active alert
+while `registerUploadSession()`, the heartbeat, closure monitoring and every upload
+returned early. **No event created. No contact notified. No evidence off the device.**
+Because `.env` is gitignored and no tracked `apps/pwa/.env` exists, that is what any
+clean clone or CI runner produced — and the deploy reported green, because the build ids
+matched.
+
+So a production build now refuses a missing, empty, non-HTTPS, or non-routable origin
+with a non-zero exit and nothing published. Development keeps the permissive behaviour,
+gated on Vite's `DEV`/mode flag — never on the variable being absent.
+
+Deploy currency requires **three** conditions, not one:
+
+1. the PWA and Worker build ids match (`scripts/assert-currency.mjs`);
+2. the built artifact contains a valid HTTPS production API origin (checked in the
+   bundle bytes by `scripts/deploy-pages.mjs`);
+3. a canary round trip against that origin completes (`scripts/canary.mjs`).
+
+Prove the failure paths without deploying: `node scripts/verify-hardening.mjs`.
 
 ## Develop
 

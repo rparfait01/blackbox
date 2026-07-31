@@ -20,8 +20,15 @@ export interface DeliveryRecordInput {
    *  suppressed — the address is reserved and cannot receive mail, so the provider
    *               was deliberately not called and NO production quota was spent
    *               (Brief 31). Distinct from all three above on purpose: nothing was
-   *               delivered, nothing went wrong, and nothing was silently dropped. */
-  status: 'delivered' | 'failed' | 'skipped' | 'suppressed';
+   *               delivered, nothing went wrong, and nothing was silently dropped.
+   *  suppressed_test — the event belongs to the deploy CANARY account (Brief 35 §C),
+   *               so the whole dispatch was withheld before any channel was built.
+   *               Deliberately its OWN status rather than reusing `suppressed`: the
+   *               reason differs, and the deploy gate asserts on exactly this value —
+   *               a canary run that produced `delivered` (or that produced nothing at
+   *               all) must fail the deploy, and neither is distinguishable if the
+   *               two suppression reasons share a name. */
+  status: 'delivered' | 'failed' | 'skipped' | 'suppressed' | 'suppressed_test';
   providerMessageId?: string | null;
   detail?: string | null;
 }

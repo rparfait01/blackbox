@@ -17,6 +17,7 @@ import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-
 import { advanceCascades, notifyEscalation, reissueExpiredLinks } from './lib/notify';
 import { runIntegrityScan } from './lib/integrity';
 import { closeFeedLostEvents, closeOrphanedEvents, runEscalation } from './lib/closure-timeout';
+import { sweepExpiredCanaryEvents } from './lib/canary';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -90,6 +91,16 @@ export const scheduled = async (
         await runIntegrityScan(env, workerOrigin(env));
       } catch (error) {
         console.log(JSON.stringify({ level: 'error', job: 'integrity', detail: String(error) }));
+      }
+      try {
+        // Brief 35 §C — TTL backstop for the deploy canary. The gate purges explicitly at
+        // the end of a run; this catches a run that died between opening the event and
+        // purging it. Without it a fixture would sit `active` in the events table firing
+        // cascade steps forever — the orphaned-event failure this project has already had
+        // to fix once, and a test is no excuse to reintroduce it.
+        await sweepExpiredCanaryEvents(env);
+      } catch (error) {
+        console.log(JSON.stringify({ level: 'error', job: 'canary_ttl', detail: String(error) }));
       }
     })(),
   );

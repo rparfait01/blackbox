@@ -1767,27 +1767,30 @@ async function run() {
     const u = await signup();
     await addEmail(u.session, 'primary', 'P');
     const ev = await trigger(u.session, 'acc-meta');
-    assert(ev?.eventId, `trigger did not open an event: ${JSON.stringify(ev)}`);
+    assert(ev?.eventId && ev?.hmacSecret, `trigger did not open an event: ${JSON.stringify(ev)}`);
 
-    // Write what the live classifier and transcriber write during a real incident, through
-    // the SAME ungated capture endpoints the device uses.
-    const cls = await api('POST', `/v1/events/${ev.eventId}/classifications`, {
-      body: {
-        items: [
-          {
-            timestamp: 1000,
-            threatLevel: 'high',
-            matchedCategories: [{ category: 'weapon', matches: ['knife'], weight: 3 }],
-            toneIndicators: ['elevated-volume', 'multi-speaker'],
-            summary: 'Weapon reference detected.',
-            languages: ['en'],
-          },
-        ],
-      },
+    // Write what the live detection and transcription write during a real incident, through
+    // the SAME endpoints the device uses — HMAC-signed with the event secret, exactly as the
+    // capture path does. Posting these unsigned returns 401, which is the correct behaviour
+    // and worth stating: the capture write path is authenticated by the event's own secret.
+    const cls = await signed('POST', `/v1/events/${ev.eventId}/classifications`, ev.hmacSecret, ev.eventId, {
+      items: [
+        {
+          timestamp: 1000,
+          threatLevel: 'high',
+          matchedCategories: [{ category: 'weapon', matches: ['knife'], weight: 3 }],
+          toneIndicators: ['elevated-volume', 'multi-speaker'],
+          summary: 'Weapon reference detected.',
+          languages: ['en'],
+        },
+      ],
     });
     assert(cls.status === 201, `classification write failed: ${cls.status} ${JSON.stringify(cls.data)}`);
-    const tr = await api('POST', `/v1/events/${ev.eventId}/transcripts`, {
-      body: { fragments: [{ sequence: 0, text: 'first fragment', isFinal: true }, { sequence: 1, text: 'second fragment', isFinal: false }] },
+    const tr = await signed('POST', `/v1/events/${ev.eventId}/transcripts`, ev.hmacSecret, ev.eventId, {
+      fragments: [
+        { sequence: 0, text: 'first fragment', isFinal: true },
+        { sequence: 1, text: 'second fragment', isFinal: false },
+      ],
     });
     assert(tr.status === 201, `transcript write failed: ${tr.status} ${JSON.stringify(tr.data)}`);
 
@@ -2189,6 +2192,86 @@ async function run() {
     const ev = await api('POST', '/v1/events', { bearer: u.session, body: { source: 'acc-persist' } });
     assert(ev.status === 201 && ev.data.eventId, `the trigger stopped working after failed requests: ${ev.status}`);
     created.events.push(ev.data.eventId);
+  });
+
+  // ---- Brief 35 — the deploy gate: no backend-disabled release ----
+  //
+  // The defect: `.env` is gitignored, the PWA fell back to an EMPTY api origin, and every
+  // consequence was silent — activation started local capture and showed an active alert
+  // while creating no event, notifying nobody and uploading nothing. The deploy went green
+  // because the build ids matched. §A/§B are build-time and are proven by
+  // scripts/verify-hardening.mjs; what belongs HERE is the server half: the canary
+  // suppression path, and above all that it can never touch a real alert.
+
+  await check('82. the canary round trip completes and dispatches to NOBODY', async () => {
+    if (!ADMIN) throw new Error('BBX_ADMIN_TOKEN required for the canary gate');
+    // Clean slate: a previous run that died would leave rows this check reads.
+    await api('POST', '/v1/admin/canary/purge', { bearer: ADMIN });
+
+    const prov = await api('POST', '/v1/admin/canary/provision', { bearer: ADMIN });
+    assert(prov.status === 200 && prov.data?.sessionToken, `provision failed: ${prov.status} ${JSON.stringify(prov.data)}`);
+
+    // A REAL trigger through the ordinary authenticated path — the same call the survivor's
+    // phone makes. A canary that took a special path would prove only that special path.
+    const ev = await api('POST', '/v1/events', { bearer: prov.data.sessionToken, body: { source: 'acc-canary', tzOffsetMinutes: 0 } });
+    assert(ev.status === 201 && ev.data?.eventId, `canary trigger failed: ${ev.status} ${JSON.stringify(ev.data)}`);
+    const eventId = ev.data.eventId;
+
+    // Drive the cascade the way the device does, then read the delivery log back.
+    await signed('POST', `/v1/events/${eventId}/heartbeat`, ev.data.hmacSecret, eventId, {});
+    let suppressed = 0;
+    for (let i = 0; i < 10 && suppressed === 0; i += 1) {
+      suppressed = await adminDelivered(eventId, '', 'suppressed_test');
+      if (suppressed === 0) await sleep(1500);
+    }
+    assert(suppressed > 0, 'no suppressed_test delivery row — the cascade never ran, or suppression did not engage');
+    // THE point of the whole gate: nothing reached a provider.
+    const delivered = await adminDelivered(eventId, '', 'delivered');
+    const failed = await adminDelivered(eventId, '', 'failed');
+    assert(delivered === 0 && failed === 0, `a TEST event reached a live dispatch path: delivered=${delivered} failed=${failed}`);
+
+    // Isolation: it is not evidence and must never be offerable as the subject of a report.
+    const reports = await api('GET', '/v1/me/reports/events', { bearer: prov.data.sessionToken });
+    if (reports.status === 200) {
+      assert(!(reports.data?.events ?? []).some((e) => e.eventId === eventId), 'the canary event appears in the owner report list');
+    }
+
+    // Purge, and CONFIRM. "The purge did not confirm" is a deploy failure, not a warning:
+    // a canary event left behind is a fake activation in the table real ones live in.
+    const purge = await api('POST', '/v1/admin/canary/purge', { bearer: ADMIN });
+    assert(purge.status === 200 && purge.data?.remaining === 0, `purge did not confirm: ${JSON.stringify(purge.data)}`);
+  });
+
+  await check('83. §D a REAL account is NEVER suppressed — no client-supplied marking is honoured', async () => {
+    // The hazard §C creates, tested from the outside: a code path whose purpose is to not
+    // deliver. Brief 31 refused a test-mode flag because one set wrongly would swallow a
+    // real survivor's alert. So an ordinary account asks — loudly, in every shape a client
+    // could — to be treated as a test, and must be dispatched to anyway.
+    const u = await signup();
+    await api('POST', '/v1/me/contacts/primary', {
+      bearer: u.session,
+      body: { contactName: 'Real', channel: 'line', destination: 'U8f53386494d2880f3c59008f2f1f64ee' },
+    });
+    const ev = await api('POST', '/v1/events', {
+      bearer: u.session,
+      body: { source: 'acc-not-a-test', tzOffsetMinutes: 0, isTest: true, is_test: 1, test: true, canary: true },
+    });
+    assert(ev.status === 201 && ev.data?.eventId, `trigger failed: ${ev.status}`);
+    created.events.push(ev.data.eventId);
+    await signed('POST', `/v1/events/${ev.data.eventId}/heartbeat`, ev.data.hmacSecret, ev.data.eventId, {});
+
+    // Wait for the cascade to record something, then assert on WHAT it recorded.
+    let rows = 0;
+    for (let i = 0; i < 10 && rows === 0; i += 1) {
+      rows = await adminDelivered(ev.data.eventId, '', '');
+      if (rows === 0) await sleep(1500);
+    }
+    assert(rows > 0, 'no delivery row at all — the alert path is dead for a real account');
+    const suppressedTest = await adminDelivered(ev.data.eventId, '', 'suppressed_test');
+    assert(suppressedTest === 0, 'A REAL ACCOUNT WAS SUPPRESSED AS A TEST — a client-supplied marking was honoured');
+    // …and it genuinely dispatched: LINE is a real, deliverable channel here.
+    const delivered = await adminDelivered(ev.data.eventId, 'line', 'delivered');
+    assert(delivered > 0, 'the real account was not dispatched to on its LINE channel');
   });
 
   // ---- cleanup ----

@@ -185,6 +185,12 @@ consoleRoutes.get('/me', async (c) => {
 // OVERVIEW — operational counters, per scope. NEVER derived from incident content:
 // every number below counts orgs, accounts, codes or event ROWS. Nothing reads a
 // capture, a transcript, a location or a case file.
+//
+// Brief 35 §C — every activation count here filters `isTest = 0`. A deploy canary opens
+// a real event through the real trigger path (that is the only way it can prove the path
+// exists), so without this filter each deploy would silently inflate "activations in the
+// last 30 days" — a number an org reads as "how often did our people need this". A
+// coverage metric that counts our own test runs is worse than no metric.
 // =====================================================================
 
 consoleRoutes.get('/overview', requireLevel('operator', 'admin', 'coordinator'), async (c) => {
@@ -195,7 +201,7 @@ consoleRoutes.get('/overview', requireLevel('operator', 'admin', 'coordinator'),
     const [orgs, enrolled, activations, openCodes] = await Promise.all([
       c.env.DB.prepare('SELECT COUNT(*) AS n FROM organizations').first<{ n: number }>(),
       c.env.DB.prepare('SELECT COUNT(*) AS n FROM users WHERE orgId IS NOT NULL').first<{ n: number }>(),
-      c.env.DB.prepare('SELECT COUNT(*) AS n FROM events WHERE createdAt >= ?')
+      c.env.DB.prepare('SELECT COUNT(*) AS n FROM events WHERE createdAt >= ? AND isTest = 0')
         .bind(since)
         .first<{ n: number }>(),
       c.env.DB.prepare(
@@ -227,7 +233,7 @@ consoleRoutes.get('/overview', requireLevel('operator', 'admin', 'coordinator'),
       )
         .bind(orgId)
         .first<{ n: number }>(),
-      c.env.DB.prepare('SELECT COUNT(*) AS n FROM events WHERE orgId = ? AND createdAt >= ?')
+      c.env.DB.prepare('SELECT COUNT(*) AS n FROM events WHERE orgId = ? AND createdAt >= ? AND isTest = 0')
         .bind(orgId, since)
         .first<{ n: number }>(),
       c.env.DB.prepare(
@@ -292,7 +298,7 @@ consoleRoutes.get('/orgs', requireLevel('operator'), async (c) => {
             (SELECT seatsTotal FROM org_licenses l WHERE l.orgId = o.id AND l.status = 'active' ORDER BY l.createdAt DESC LIMIT 1) AS seatsTotal,
             (SELECT seatsUsed  FROM org_licenses l WHERE l.orgId = o.id AND l.status = 'active' ORDER BY l.createdAt DESC LIMIT 1) AS seatsUsed,
             (SELECT COUNT(*) FROM users u WHERE u.orgId = o.id) AS enrolled,
-            (SELECT COUNT(*) FROM events e WHERE e.orgId = o.id AND e.createdAt >= ?) AS activations30d,
+            (SELECT COUNT(*) FROM events e WHERE e.orgId = o.id AND e.createdAt >= ? AND e.isTest = 0) AS activations30d,
             (SELECT COUNT(*) FROM org_members m WHERE m.orgId = o.id AND m.role = 'admin' AND m.status = 'active') AS admins
        FROM organizations o ORDER BY o.createdAt DESC LIMIT ?`,
   )
@@ -800,7 +806,7 @@ async function loadRoster(
       .bind(...userIds)
       .all<{ userId: string; role: string; status: string | null; channel: string }>(),
     env.DB.prepare(
-      `SELECT userId, COUNT(*) AS n FROM events WHERE userId IN (${placeholders}) AND createdAt >= ? GROUP BY userId`,
+      `SELECT userId, COUNT(*) AS n FROM events WHERE userId IN (${placeholders}) AND createdAt >= ? AND isTest = 0 GROUP BY userId`,
     )
       .bind(...userIds, since)
       .all<{ userId: string; n: number }>(),

@@ -58,4 +58,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0043_grant_operator',
   '0044_sole_operator',
   '0045_checkin_primary_only',
+  '0046_canary_isolation',
 ];

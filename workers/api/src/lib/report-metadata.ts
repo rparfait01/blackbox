@@ -31,10 +31,14 @@ export interface ReportEventRow {
 const EVENT_COLUMNS =
   'id AS eventId, createdAt, closedAt, status, closedBy, tzOffsetMinutes, coordinatorClaimedAt, escalatedAt, escalationTier, securedAt';
 
-/** The owner's own events, newest first — so she can choose which one to report on. */
+/**
+ * The owner's own events, newest first — so she can choose which one to report on.
+ * `isTest = 0` (Brief 35 §C): a deploy canary event is not evidence and must never be
+ * offerable as the subject of a certified report.
+ */
 export async function listOwnEvents(env: Env, userId: string, limit = 50): Promise<ReportEventRow[]> {
   const { results } = await env.DB.prepare(
-    `SELECT ${EVENT_COLUMNS} FROM events WHERE userId = ? ORDER BY createdAt DESC LIMIT ?`,
+    `SELECT ${EVENT_COLUMNS} FROM events WHERE userId = ? AND isTest = 0 ORDER BY createdAt DESC LIMIT ?`,
   )
     .bind(userId, limit)
     .all<ReportEventRow>();
@@ -42,7 +46,7 @@ export async function listOwnEvents(env: Env, userId: string, limit = 50): Promi
 }
 
 async function getOwnEvent(env: Env, userId: string, eventId: string): Promise<ReportEventRow | null> {
-  const row = await env.DB.prepare(`SELECT ${EVENT_COLUMNS} FROM events WHERE id = ? AND userId = ?`)
+  const row = await env.DB.prepare(`SELECT ${EVENT_COLUMNS} FROM events WHERE id = ? AND userId = ? AND isTest = 0`)
     .bind(eventId, userId)
     .first<ReportEventRow>();
   return row ?? null;

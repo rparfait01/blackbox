@@ -8,6 +8,12 @@
  */
 
 import { audit } from '../lib/audit';
+import {
+  SUPPRESSED_TEST_REASON,
+  SUPPRESSED_TEST_STATUS,
+  logSuppression,
+  suppressionFor,
+} from '../lib/canary';
 import { getContactEndpoints } from '../lib/contacts';
 import { recordDelivery } from '../lib/delivery';
 import type { Env } from '../types';
@@ -189,6 +195,48 @@ export async function dispatch(
   if (endpoints.length === 0) {
     await audit(env, message.eventId, 'all_channels_failed', actorHash, { reason: 'no_endpoints' });
     return { delivered: false, channel: null, fellBack: false, attempts: [] };
+  }
+
+  // Brief 35 §C/§D — THE CANARY SUPPRESSION GATE, and the only one in the product.
+  //
+  // It is placed here, before any channel is constructed, so no provider is reached by
+  // any message kind on any path — activation, escalation, check-in, closure, all of
+  // them come through this one function. A suppression that lived in a channel would be
+  // N gates that can drift; this is one.
+  //
+  // READ THE PREDICATE, NOT THE FLAG. `suppressionFor` suppresses only when the event
+  // is flagged AND its owner is still a canary account, both re-derived from the server
+  // at this moment. A flag on a real account falls through to the normal dispatch below
+  // and raises an alertable operator condition instead — the failure mode Brief 31
+  // warned about, made harmless by construction rather than by discipline. Everything
+  // uncertain (missing row, deleted owner, tokenless event) dispatches.
+  const suppression = await suppressionFor(env, message.eventId);
+  if (suppression.suppress) {
+    const attempts: DispatchAttempt[] = [];
+    for (const endpoint of endpoints) {
+      const channelName = endpoint.channel as ChannelName;
+      await recordDelivery(env, {
+        eventId: message.eventId,
+        messageKind: message.kind,
+        channel: channelName,
+        status: SUPPRESSED_TEST_STATUS,
+        detail: SUPPRESSED_TEST_REASON,
+      });
+      await logSuppression(env, message.eventId, suppression, channelName);
+      attempts.push({ channel: channelName, ok: false, reason: SUPPRESSED_TEST_REASON });
+    }
+    await audit(env, message.eventId, 'canary.dispatch_suppressed', actorHash, {
+      kind: message.kind,
+      channels: attempts.map((a) => a.channel).join(','),
+    });
+    // NOT delivered — nothing was sent, and a canary run that reported delivery would be
+    // proving the opposite of what it exists to prove.
+    return { delivered: false, channel: null, fellBack: false, attempts };
+  }
+  if (suppression.mismatch) {
+    // Flagged event, non-canary owner. Dispatches normally (below); this only records
+    // that it happened, at error level, because nothing user-facing can set that flag.
+    await logSuppression(env, message.eventId, suppression, 'all');
   }
   // Order by the recipient's explicit priority first; break ties by the default
   // channel preference (SMS primary, email fallback). Channel-agnostic spine.

@@ -86,8 +86,13 @@ export async function exportPackage(
   workerOrigin: string,
   recipientId: string,
 ): Promise<ExportResult | null> {
+  // Brief 35 §C — a canary event is NEVER sealed. The vault is write-once with a 36-month
+  // retention and no delete-before-expiry, so a fixture sealed into it could not be taken
+  // back out by the purge; it would sit in the chain of custody, signed, for three years,
+  // among artifacts whose whole value is that everything in there is real. `isTest = 0` in
+  // this lookup means a canary event simply has no exportable package.
   const event = await env.DB.prepare(
-    'SELECT id, createdAt, status, source, locale, tzOffsetMinutes, closedAt, closedBy FROM events WHERE id = ?',
+    'SELECT id, createdAt, status, source, locale, tzOffsetMinutes, closedAt, closedBy FROM events WHERE id = ? AND isTest = 0',
   )
     .bind(eventId)
     .first<EventRow>();
