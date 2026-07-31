@@ -284,10 +284,10 @@ ok('per-capture DEK wrapped to the canary key and stored');
 // READY requires PROOF, not a non-null object: seal a probe and open it again, and also
 // open the wrapped DEK back to confirm the whole chain is recoverable.
 try {
-  const probe = Buffer.from('canary-self-test');
+  const probe = new Uint8Array(Buffer.from('canary-self-test'));
   const sealedProbe = await encryptChunk({ dek, plaintext: probe, captureId: eventId, chunkIndex: 0xfffffffe, isFinal: false, ivPrefix });
   const back = await decryptChunk({ dek, framed: sealedProbe, captureId: eventId, chunkIndex: 0xfffffffe, isFinal: false });
-  if (Buffer.compare(Buffer.from(back), probe) !== 0) throw new Error('round trip mismatch');
+  if (Buffer.compare(Buffer.from(back), Buffer.from(probe)) !== 0) throw new Error('round trip mismatch');
   await unwrapDek(wrapped, canaryKeys.privateKey); // the stored wrap really opens
 } catch (error) {
   encFatal('FAILED_RETRYABLE', `encryptor self-test failed: ${error.message}`);
@@ -295,7 +295,7 @@ try {
 ok('encryptor PROVEN by round trip — state READY');
 
 // SYNTHETIC bytes. Fixed, recognisable, and never microphone or camera data.
-const synthetic = Buffer.alloc(64, 0xbb);
+const synthetic = new Uint8Array(64).fill(0xbb);
 const commitment = await plaintextCommitment(synthetic);
 const sealed = await encryptChunk({ dek, plaintext: synthetic, captureId: eventId, chunkIndex: 0, isFinal: false, ivPrefix });
 const before = await readiness();

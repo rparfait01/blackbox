@@ -100,6 +100,32 @@ describe('§F the two implementations agree on the wire format, byte for byte', 
   });
 });
 
+describe('§F the port survives Node’s Buffer pooling trap', () => {
+  it('a Node Buffer payload produces the SAME bytes as the equivalent Uint8Array', async () => {
+    // The canary failed its own self-test on exactly this, and the deploy correctly
+    // refused to publish. `Buffer.prototype.slice` is a deprecated alias of `subarray`, so
+    // it returns a VIEW into Node's shared 8 KB allocation pool — `bytes.slice().buffer`,
+    // which is correct in the browser, handed WebCrypto the whole pool. A Node program
+    // naturally reaches for Buffer, so this is pinned rather than merely fixed.
+    const v = fixture.vectors[0]!;
+    const dekRaw = unb64(v.dekRawB64);
+    const plain = unb64(v.plaintextB64);
+    const args = { captureId: v.captureId, chunkIndex: v.chunkIndex, isFinal: v.isFinal, ivPrefix: unb64(v.ivPrefixB64) };
+
+    const fromView = await node.encryptChunk({ dek: await node.importDekRaw(dekRaw), plaintext: plain, ...args });
+    // The same bytes, handed over as a pooled Buffer instead.
+    const asBuffer = Buffer.from(plain) as unknown as Uint8Array;
+    const fromBuffer = await node.encryptChunk({ dek: await node.importDekRaw(dekRaw), plaintext: asBuffer, ...args });
+
+    expect(b64(fromBuffer)).toBe(b64(fromView));
+    expect(b64(fromBuffer)).toBe(v.expectedFramedB64); // still agrees with the browser
+    // And a pooled Buffer KEY must import to the same key as the plain view.
+    const pooledKey = Buffer.from(dekRaw) as unknown as Uint8Array;
+    const fromPooledKey = await node.encryptChunk({ dek: await node.importDekRaw(pooledKey), plaintext: plain, ...args });
+    expect(b64(fromPooledKey)).toBe(v.expectedFramedB64);
+  });
+});
+
 describe('§F the ECIES wrap interoperates in both directions', () => {
   it('Node seals a DEK to a browser-generated key; the browser opens it', async () => {
     const kp = await browser.generateEnvelopeKeypair();

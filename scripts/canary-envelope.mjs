@@ -40,8 +40,22 @@ export function toB64(bytes) {
 export function fromB64(b64) {
   return new Uint8Array(Buffer.from(b64, 'base64'));
 }
+/**
+ * A fresh ArrayBuffer holding EXACTLY this view's bytes.
+ *
+ * The browser twin writes `bytes.slice().buffer`, which is correct there because
+ * `Uint8Array.prototype.slice` copies. In Node it is a trap: `Buffer.prototype.slice` is a
+ * deprecated alias of `subarray` and returns a VIEW into Node's shared 8 KB allocation
+ * pool, so `.buffer` hands WebCrypto the whole pool rather than the payload. The canary hit
+ * exactly this — the self-test encrypted 8 KB of pool, decrypted 8 KB back, and reported a
+ * round-trip mismatch, which is the deploy gate doing its job.
+ *
+ * Slicing by byteOffset/byteLength is correct for every TypedArray view including Buffer,
+ * so the port cannot be broken again by a caller that reaches for a Buffer — which, in a
+ * Node program, is the natural thing to reach for.
+ */
 function buf(bytes) {
-  return bytes.slice().buffer;
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 function concat(...parts) {
   const total = parts.reduce((n, p) => n + p.length, 0);
