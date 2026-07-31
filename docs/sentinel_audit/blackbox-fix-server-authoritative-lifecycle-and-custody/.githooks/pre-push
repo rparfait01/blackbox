@@ -1,0 +1,17 @@
+#!/bin/sh
+# BLACK BOX commit gate (Brief 19). The full known-good suite must pass before any
+# push: a change is not pushable unless the ENTIRE suite is green — not a subset,
+# not "the part I touched". This is the tripwire so a fixed bug (the closure gate
+# first among them) can never silently regress.
+#
+#   pnpm gate = verify (typecheck + lint + unit tests + build) + acceptance
+#               (the standing suite against the DEPLOYED app, incl. the closure gate)
+#
+# The acceptance suite's coordinator checks need MAGIC_LINK_SECRET — set it in env
+# or workers/api/test/.acceptance.env (gitignored). Activate this hook once with:
+#   pnpm setup-hooks
+# Bypass ONLY in a genuine emergency with `git push --no-verify`, then fix forward.
+set -e
+echo "[gate] running: pnpm gate (verify + acceptance) before push…"
+pnpm gate
+echo "[gate] green — push allowed."

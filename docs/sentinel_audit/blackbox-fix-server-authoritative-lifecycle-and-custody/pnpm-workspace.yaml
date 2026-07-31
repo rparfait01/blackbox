@@ -1,0 +1,22 @@
+packages:
+  - 'apps/*'
+  - 'workers/*'
+  - 'packages/*'
+  # Brief 30: the standalone public verifier. A SEPARATE deployment that shares no
+  # runtime code with the app — it only bundles packages/shared at build time.
+  - 'verifier'
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
+
+# pnpm blocks dependency build scripts by default. Allow only the ones we
+# trust and need (native binaries) so `pnpm install` runs them cleanly.
+# - esbuild: required by Vite for dev/build
+# - workerd: Cloudflare Workers runtime used by wrangler
+# - sharp:   pulled in transitively (PWA asset tooling); harmless to build
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp

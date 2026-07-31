@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /*
+   * shadcn/ui CSS-variable system, themed to the BLACK BOX instrument palette
+   * (PWA_INTERFACE_SPEC §2). The app is always dark; one amber semantic accent.
+   */
+  :root {
+    --background: 0 0% 0%; /* #000000 */
+    --foreground: 0 0% 91%; /* #E8E8E8 */
+    --card: 0 0% 6%; /* #0F0F0F */
+    --card-foreground: 0 0% 91%;
+    --popover: 0 0% 10%; /* #1A1A1A */
+    --popover-foreground: 0 0% 91%;
+    --primary: 36 100% 45%; /* #E89A00 amber */
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 91%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 53%; /* #888888 */
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 91%;
+    --destructive: 4 100% 60%; /* #FF3B30 */
+    --destructive-foreground: 0 0% 91%;
+    --border: 0 0% 20%; /* #333333 */
+    --input: 0 0% 20%;
+    --ring: 36 100% 45%;
+    --radius: 4px;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /*
+   * Touch hardening (Brief 12 P2). On iOS Safari, buttons and the activation
+   * target otherwise flash a grey overlay and offer a text/image selection +
+   * callout on press, making the UI feel like it "selected an image." Suppress
+   * the selection, callout, and tap highlight on every interactive element.
+   */
+  button,
+  a,
+  [role='button'],
+  label,
+  summary {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@layer utilities {
+  /*
+   * Standalone-PWA safe areas (viewport-fit=cover is set in index.html). When
+   * installed to the home screen the app draws under the status bar, so top-row
+   * controls (the settings gear, the Settings back button) would render behind the
+   * battery/signal indicators. env(safe-area-inset-top) is 0 in a browser tab and
+   * ~the status-bar height in standalone, so these keep controls clear there
+   * without changing the in-browser layout. The element's own background still
+   * fills full-bleed behind the inset (the inset is padding/offset, not a margin).
+   */
+  .pt-safe-6 {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+  }
+  .top-safe-6 {
+    top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+  }
+}
+
+@layer components {
+  /*
+   * The Stillpoint gradient (Fix Brief 15 §A). Soft teal radial accents over a
+   * deep blue-green diagonal base (#0a1d22 → #071416) — a calming wellness wash,
+   * no navy/purple, no amber. Pair with `animate-hue-drift` for the slow 30s
+   * hue shift, which stays inside the cyan-green range and never reads as alert.
+   */
+  .stillpoint-bg {
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(63, 125, 120, 0.4), transparent 60%),
+      radial-gradient(ellipse at 70% 80%, rgba(45, 100, 105, 0.35), transparent 60%),
+      linear-gradient(135deg, #0a1d22 0%, #0a2329 50%, #071416 100%);
+  }
+}

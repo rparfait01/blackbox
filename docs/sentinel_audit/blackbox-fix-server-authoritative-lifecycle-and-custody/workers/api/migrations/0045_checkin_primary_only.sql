@@ -1,0 +1,23 @@
+-- BLACK BOX backend schema v45 — check-in routing is PRIMARY-ONLY.
+--
+-- Retires `users.checkinContactId` (added by 0028, Brief 19). Check-in now resolves
+-- to the primary contact and nothing else, decided server-side by exactly one
+-- function (resolveCheckinContact in src/lib/checkin.ts).
+--
+-- WHY DROP RATHER THAN LEAVE IT NULLABLE AND UNREAD:
+-- A column the resolver ignores is a second routing door standing open. The next
+-- reader sees `checkinContactId` in the schema, wires a setting to it, and ships a
+-- preference that silently changes nothing — or worse, a future resolver honours it
+-- and starts routing check-ins to a contact the user believes they removed. This
+-- codebase has already had to collapse dual trigger paths and a fourth report door;
+-- the fix for that class is to delete the alternate path, not to stop calling it.
+--
+-- SAFE, PROVEN BEFORE WRITING:
+--   SELECT COUNT(*) ... FROM users  →  total 2, non-null checkinContactId 0
+-- Not one production account had a designation, so no live routing changes. It could
+-- not have meaningfully differed anyway: Contact Consent §0 cut the contact ceiling
+-- to a single `primary` slot, so the only designable contact WAS the primary.
+--
+-- Column data is unrecoverable after this. The guard is a D1 Time Travel bookmark
+-- taken immediately before applying, recorded in the session report.
+ALTER TABLE users DROP COLUMN checkinContactId;

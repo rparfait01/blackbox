@@ -1,0 +1,10 @@
+# Reference documents — do not reformat
+docs/
+
+# Generated / vendored
+node_modules/
+dist/
+dev-dist/
+.wrangler/
+pnpm-lock.yaml
+LICENSE

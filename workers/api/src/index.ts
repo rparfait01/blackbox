@@ -6,6 +6,7 @@ import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { verifyChain } from './lib/chain-verdict';
+import { vaultCoverage } from './lib/vault-scan';
 import { getCompleteness, markTerminalReceived, terminalClaimProblem } from './lib/completeness';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import {
@@ -741,6 +742,9 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
     wrappedKeys: number;
   }>();
   const enforced = encryptionEnforced(c.env);
+  // Brief 40 §A/§12 — vault coverage, reported the same way encryption is: counted from the
+  // tables, next to the claim, so partial coverage cannot hide behind a job that merely ran.
+  const vault = await vaultCoverage(c.env);
   const plaintext = Number(row?.declaredPlaintextChunks ?? 0) + Number(row?.undeclaredPlaintextChunks ?? 0);
   return c.json(
     {
@@ -764,6 +768,16 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
         plaintextUndeclared: Number(row?.undeclaredPlaintextChunks ?? 0),
       },
       wrappedKeys: Number(row?.wrappedKeys ?? 0),
+      vault: {
+        summary:
+          `VAULT: ${vault.verified}/${vault.eligible} objects verified` +
+          ` · pass ${vault.passNumber}${vault.passInFlight ? ' (in flight)' : ''}` +
+          `${vault.lastPassBacklog > 0 ? ` · BACKLOG ${vault.lastPassBacklog}` : ''}`,
+        ...vault,
+        // §D — what the retention CLAIM currently rests on. Stated here because the panel is
+        // the one place that reports what is true rather than what was intended.
+        retentionRule: 'NOT PROVISIONED — see Brief 40 §0; no storage-layer lock exists yet.',
+      },
       // Said explicitly so it cannot be inferred wrongly from a green-looking panel.
       claim: enforced
         ? 'Capture encryption is enforced for REQUIRED accounts.'

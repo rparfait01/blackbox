@@ -1,0 +1,1224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>BLACK BOX — LINE Alert Flow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-page: #141414;
+        --bg-surface: #0f0f0f;
+        --bg-elevated: #1a1a1a;
+        --border-subtle: #222222;
+        --border-defined: #333333;
+        --text-primary: #e8e8e8;
+        --text-secondary: #888888;
+        --text-tertiary: #555555;
+        --status-active: #ff3b30;
+        --status-ack: #34c759;
+
+        /* LINE-authentic colors */
+        --line-green: #06c755;
+        --line-bg: #ffffff;
+        --line-chat-bg: #8caab4;
+        --line-bubble-in: #ffffff;
+        --line-bubble-out: #b3e5fc;
+        --line-text: #222222;
+        --line-text-secondary: #666666;
+        --line-text-tertiary: #999999;
+        --line-divider: #f0f0f0;
+
+        --font-display: "IBM Plex Sans Condensed", system-ui, sans-serif;
+        --font-body: "IBM Plex Sans", system-ui, sans-serif;
+        --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+        --font-jp: "Noto Sans JP", system-ui, sans-serif;
+        --font-line: -apple-system, "Hiragino Sans", "Helvetica Neue", Arial, sans-serif;
+      }
+
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html, body {
+        background: var(--bg-page);
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body { padding: 32px 16px 64px; }
+      .container { max-width: 1440px; margin: 0 auto; }
+
+      .preview-header {
+        margin-bottom: 48px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .wordmark {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+      }
+
+      .preview-header h1 {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 32px;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        margin-bottom: 16px;
+      }
+
+      .preview-header p {
+        font-size: 15px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+        max-width: 70ch;
+      }
+
+      .section-header {
+        margin-bottom: 24px;
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .section-number {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+      }
+
+      .section-title {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 22px;
+        letter-spacing: -0.01em;
+      }
+
+      .section-desc {
+        font-size: 13px;
+        color: var(--text-secondary);
+        max-width: 60ch;
+        margin-left: auto;
+      }
+
+      .section { margin-bottom: 64px; }
+
+      .phone-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+        align-items: start;
+      }
+
+      @media (max-width: 980px) {
+        .phone-grid { grid-template-columns: 1fr; }
+      }
+
+      .phone-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 20px;
+      }
+
+      .phone-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .phone-tier {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-secondary);
+      }
+
+      .phone-tier strong {
+        color: var(--text-primary);
+        font-weight: 700;
+      }
+
+      .phone-badge {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        padding: 3px 8px;
+        border-radius: 2px;
+        background: rgba(6, 199, 85, 0.15);
+        color: var(--line-green);
+        border: 1px solid rgba(6, 199, 85, 0.3);
+        text-transform: uppercase;
+      }
+
+      .phone-frame {
+        background: #000;
+        border: 1px solid var(--border-defined);
+        border-radius: 28px;
+        padding: 8px;
+      }
+
+      .phone-screen {
+        background: var(--line-bg);
+        border-radius: 22px;
+        overflow: hidden;
+        aspect-ratio: 9 / 19.5;
+        position: relative;
+        color: var(--line-text);
+        font-family: var(--font-line);
+      }
+
+      .phone-description {
+        margin-top: 16px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+      }
+
+      .phone-description strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      /* ============================
+         LINE STATUS BAR
+         ============================ */
+      .line-status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px 4px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--line-text);
+      }
+
+      .line-status-icons {
+        font-size: 11px;
+        letter-spacing: -0.5px;
+      }
+
+      /* ============================
+         CHAT LIST VIEW
+         ============================ */
+      .line-list-header {
+        background: var(--line-bg);
+        padding: 6px 16px 12px;
+        border-bottom: 1px solid var(--line-divider);
+      }
+
+      .line-list-title {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--line-text);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .line-list-icons {
+        display: flex;
+        gap: 16px;
+        font-size: 18px;
+        color: var(--line-text-secondary);
+      }
+
+      .line-list-search {
+        margin-top: 8px;
+        background: #f0f0f0;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        color: var(--line-text-tertiary);
+      }
+
+      .chat-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line-divider);
+      }
+
+      .chat-item--alert {
+        background: rgba(255, 59, 48, 0.05);
+        animation: alert-glow 2s ease-in-out infinite;
+      }
+
+      @keyframes alert-glow {
+        0%, 100% { background: rgba(255, 59, 48, 0.05); }
+        50% { background: rgba(255, 59, 48, 0.12); }
+      }
+
+      .chat-avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        position: relative;
+      }
+
+      .chat-avatar--blackbox::before {
+        content: "";
+        width: 24px;
+        height: 24px;
+        background: linear-gradient(135deg, #333 0%, #000 100%);
+        border-radius: 4px;
+        border: 1px solid #555;
+      }
+
+      .chat-avatar--official::after {
+        content: "✓";
+        position: absolute;
+        bottom: -2px;
+        right: -2px;
+        width: 18px;
+        height: 18px;
+        background: #06c755;
+        color: white;
+        border-radius: 50%;
+        font-size: 11px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 2px solid var(--line-bg);
+      }
+
+      .chat-avatar--person-1 {
+        background: linear-gradient(135deg, #f99 0%, #d66 100%);
+        color: white;
+        font-weight: 600;
+      }
+
+      .chat-avatar--person-2 {
+        background: linear-gradient(135deg, #9cf 0%, #69c 100%);
+        color: white;
+        font-weight: 600;
+      }
+
+      .chat-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .chat-top-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 2px;
+      }
+
+      .chat-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--line-text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .chat-time {
+        font-size: 11px;
+        color: var(--line-text-tertiary);
+        white-space: nowrap;
+      }
+
+      .chat-time--alert {
+        color: var(--status-active);
+        font-weight: 700;
+      }
+
+      .chat-preview {
+        font-size: 13px;
+        color: var(--line-text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .chat-preview--alert {
+        color: var(--status-active);
+        font-weight: 600;
+      }
+
+      .chat-badge {
+        background: var(--status-active);
+        color: white;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 10px;
+        min-width: 18px;
+        text-align: center;
+      }
+
+      /* ============================
+         CHAT THREAD VIEW
+         ============================ */
+      .line-chat-header {
+        background: var(--line-bg);
+        padding: 6px 8px 12px;
+        border-bottom: 1px solid var(--line-divider);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .chat-back {
+        font-size: 18px;
+        color: var(--line-text);
+        padding: 0 4px;
+      }
+
+      .chat-header-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
+
+      .chat-header-avatar::before {
+        content: "";
+        width: 16px;
+        height: 16px;
+        background: linear-gradient(135deg, #333 0%, #000 100%);
+        border-radius: 2px;
+        border: 1px solid #555;
+      }
+
+      .chat-header-avatar::after {
+        content: "✓";
+        position: absolute;
+        bottom: -2px;
+        right: -2px;
+        width: 12px;
+        height: 12px;
+        background: #06c755;
+        color: white;
+        border-radius: 50%;
+        font-size: 8px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1.5px solid var(--line-bg);
+      }
+
+      .chat-header-name {
+        flex: 1;
+      }
+
+      .chat-header-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--line-text);
+      }
+
+      .chat-header-subtitle {
+        font-size: 10px;
+        color: var(--line-text-secondary);
+      }
+
+      .chat-header-icons {
+        display: flex;
+        gap: 16px;
+        font-size: 16px;
+        color: var(--line-text-secondary);
+      }
+
+      .chat-body {
+        flex: 1;
+        background: var(--line-chat-bg);
+        padding: 12px 8px;
+        overflow-y: auto;
+        font-family: var(--font-line);
+      }
+
+      .chat-body::-webkit-scrollbar { display: none; }
+
+      .chat-date-divider {
+        text-align: center;
+        margin: 4px 0 12px;
+      }
+
+      .chat-date-divider span {
+        background: rgba(0, 0, 0, 0.2);
+        color: white;
+        font-size: 10px;
+        padding: 3px 10px;
+        border-radius: 10px;
+      }
+
+      .chat-message {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 8px;
+        align-items: flex-end;
+      }
+
+      .chat-message-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        position: relative;
+      }
+
+      .chat-message-avatar::before {
+        content: "";
+        width: 14px;
+        height: 14px;
+        background: linear-gradient(135deg, #333 0%, #000 100%);
+        border-radius: 2px;
+        border: 1px solid #555;
+      }
+
+      .chat-message-content {
+        max-width: 75%;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .chat-message-name {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.8);
+        font-weight: 500;
+        padding-left: 4px;
+      }
+
+      .chat-bubble {
+        background: var(--line-bubble-in);
+        border-radius: 12px;
+        padding: 8px 10px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--line-text);
+        word-wrap: break-word;
+      }
+
+      .chat-bubble--alert {
+        background: var(--status-active);
+        color: white;
+        font-weight: 600;
+      }
+
+      .chat-bubble--alert strong {
+        font-weight: 700;
+      }
+
+      .chat-message-time {
+        font-size: 9px;
+        color: rgba(255, 255, 255, 0.7);
+        align-self: flex-end;
+        white-space: nowrap;
+      }
+
+      /* RICH ALERT CARD */
+      .alert-card {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        max-width: 100%;
+        font-size: 12px;
+      }
+
+      .alert-card-banner {
+        background: var(--status-active);
+        color: white;
+        padding: 10px 12px;
+        font-weight: 700;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .alert-card-banner-time {
+        font-size: 10px;
+        font-weight: 500;
+        opacity: 0.9;
+      }
+
+      .alert-card-image {
+        height: 90px;
+        background: 
+          radial-gradient(ellipse at 30% 40%, rgba(255, 59, 48, 0.3), transparent 40%),
+          linear-gradient(135deg, #0a1f1a 0%, #0d2a22 50%, #0a1f1a 100%);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .alert-card-image::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: 
+          linear-gradient(rgba(60, 80, 70, 0.3) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 80, 70, 0.3) 1px, transparent 1px);
+        background-size: 12px 12px;
+      }
+
+      .alert-card-pin {
+        position: absolute;
+        top: 50%;
+        left: 35%;
+        width: 12px;
+        height: 12px;
+        background: var(--status-active);
+        border-radius: 50%;
+        box-shadow: 0 0 0 6px rgba(255, 59, 48, 0.3), 0 0 16px var(--status-active);
+        transform: translate(-50%, -50%);
+      }
+
+      .alert-card-image-label {
+        position: absolute;
+        bottom: 6px;
+        left: 8px;
+        font-size: 9px;
+        color: white;
+        font-weight: 600;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+
+      .alert-card-body {
+        padding: 10px 12px;
+      }
+
+      .alert-card-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 6px;
+        font-size: 12px;
+        align-items: baseline;
+      }
+
+      .alert-card-row:last-child { margin-bottom: 0; }
+
+      .alert-card-label {
+        font-size: 10px;
+        color: var(--line-text-tertiary);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        width: 56px;
+        flex-shrink: 0;
+      }
+
+      .alert-card-value {
+        color: var(--line-text);
+        font-weight: 500;
+      }
+
+      .alert-card-coords {
+        font-family: var(--font-mono);
+        font-size: 11px;
+      }
+
+      /* AUDIO CLIP */
+      .audio-clip {
+        background: #f5f5f5;
+        border-radius: 20px;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--line-text);
+        margin-top: 6px;
+      }
+
+      .audio-play {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--line-green);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+
+      .audio-waveform {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 1.5px;
+        height: 18px;
+      }
+
+      .audio-bar {
+        flex: 1;
+        background: var(--status-active);
+        border-radius: 1px;
+        opacity: 0.7;
+      }
+
+      .audio-bar:nth-child(1) { height: 30%; }
+      .audio-bar:nth-child(2) { height: 60%; }
+      .audio-bar:nth-child(3) { height: 90%; }
+      .audio-bar:nth-child(4) { height: 50%; }
+      .audio-bar:nth-child(5) { height: 70%; }
+      .audio-bar:nth-child(6) { height: 100%; }
+      .audio-bar:nth-child(7) { height: 80%; }
+      .audio-bar:nth-child(8) { height: 40%; }
+      .audio-bar:nth-child(9) { height: 65%; }
+      .audio-bar:nth-child(10) { height: 30%; }
+      .audio-bar:nth-child(11) { height: 70%; }
+      .audio-bar:nth-child(12) { height: 50%; }
+      .audio-bar:nth-child(13) { height: 90%; }
+      .audio-bar:nth-child(14) { height: 60%; }
+      .audio-bar:nth-child(15) { height: 30%; }
+
+      .audio-duration {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--line-text-secondary);
+        font-weight: 500;
+      }
+
+      /* BIG CTA BUTTON */
+      .alert-cta {
+        background: var(--status-active);
+        color: white;
+        text-align: center;
+        padding: 14px;
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .alert-cta-arrow {
+        font-size: 18px;
+      }
+
+      .alert-meta {
+        background: #fafafa;
+        padding: 6px 12px;
+        font-size: 9px;
+        color: var(--line-text-tertiary);
+        text-align: center;
+        letter-spacing: 0.04em;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+      }
+
+      /* QUICK REPLY BUTTONS */
+      .quick-replies {
+        display: flex;
+        gap: 6px;
+        margin: 8px 0 0 34px;
+        flex-wrap: wrap;
+      }
+
+      .quick-reply {
+        background: white;
+        border: 1px solid var(--line-green);
+        color: var(--line-green);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 18px;
+        white-space: nowrap;
+      }
+
+      .quick-reply--urgent {
+        background: var(--status-active);
+        border-color: var(--status-active);
+        color: white;
+      }
+
+      /* CHAT INPUT */
+      .chat-input {
+        background: var(--line-bg);
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-top: 1px solid var(--line-divider);
+      }
+
+      .chat-input-icons {
+        display: flex;
+        gap: 8px;
+        font-size: 18px;
+        color: var(--line-text-secondary);
+      }
+
+      .chat-input-field {
+        flex: 1;
+        background: #f5f5f5;
+        border-radius: 16px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: var(--line-text-tertiary);
+      }
+
+      /* ============================
+         CHAT VIEW SPECIAL
+         ============================ */
+      .chat-view {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: var(--line-bg);
+      }
+
+      .list-view {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: var(--line-bg);
+      }
+
+      /* ============================
+         KEY POINTS BOX
+         ============================ */
+      .key-points {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        padding: 24px;
+        margin-top: 32px;
+      }
+
+      .key-points h3 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 18px;
+        margin-bottom: 16px;
+      }
+
+      .key-points-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 20px;
+      }
+
+      .key-point {
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .key-point-label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--status-active);
+        margin-bottom: 6px;
+      }
+
+      .key-point-body {
+        color: var(--text-primary);
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+
+      <header class="preview-header">
+        <div class="wordmark">BLACK BOX · LINE ALERT FLOW · JAPAN</div>
+        <h1>What the contact sees in LINE</h1>
+        <p>
+          LINE is dominant in Japan — over 95% of smartphone users have it. The alert arrives
+          as a verified business message with a location card, audio clip preview,
+          and one-tap access to the live dashboard. No app install required for the
+          contact. The bot is the entire delivery surface.
+        </p>
+      </header>
+
+      <!-- SECTION 1: THE THREE MOMENTS -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">FLOW</span>
+          <span class="section-title">Three moments — list, alert, dashboard</span>
+          <span class="section-desc">
+            Left: contact's normal LINE chat list with the alert arriving.
+            Middle: the rich alert message inside the BLACK BOX bot chat.
+            Right: the live dashboard that opens when they tap the link.
+          </span>
+        </div>
+
+        <div class="phone-grid">
+
+          <!-- LINE CHAT LIST -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>01</strong> · ALERT ARRIVES</div>
+              <div class="phone-badge">LINE</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="list-view">
+                  <div class="line-status-bar">
+                    <span>06:38</span>
+                    <span class="line-status-icons">📶 LTE 83%</span>
+                  </div>
+                  <div class="line-list-header">
+                    <div class="line-list-title">
+                      <span>Chats</span>
+                      <span class="line-list-icons">⊕ ⋯</span>
+                    </div>
+                    <div class="line-list-search">🔍 Search</div>
+                  </div>
+                  <div style="flex: 1; overflow-y: auto;">
+                    <!-- ALERT CHAT (at top) -->
+                    <div class="chat-item chat-item--alert">
+                      <div class="chat-avatar chat-avatar--blackbox chat-avatar--official"></div>
+                      <div class="chat-info">
+                        <div class="chat-top-row">
+                          <div class="chat-name">BLACK BOX 緊急通報</div>
+                          <div class="chat-time chat-time--alert">just now</div>
+                        </div>
+                        <div class="chat-preview chat-preview--alert">
+                          🚨 Yumi activated. View live →
+                          <span class="chat-badge">1</span>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- OTHER CHATS -->
+                    <div class="chat-item">
+                      <div class="chat-avatar chat-avatar--person-1">M</div>
+                      <div class="chat-info">
+                        <div class="chat-top-row">
+                          <div class="chat-name">Mom</div>
+                          <div class="chat-time">5:42 PM</div>
+                        </div>
+                        <div class="chat-preview">See you at dinner!</div>
+                      </div>
+                    </div>
+                    <div class="chat-item">
+                      <div class="chat-avatar chat-avatar--person-2">K</div>
+                      <div class="chat-info">
+                        <div class="chat-top-row">
+                          <div class="chat-name">Kenji 健司</div>
+                          <div class="chat-time">3:15 PM</div>
+                        </div>
+                        <div class="chat-preview">了解しました</div>
+                      </div>
+                    </div>
+                    <div class="chat-item">
+                      <div class="chat-avatar" style="background: linear-gradient(135deg, #fc9 0%, #f96 100%); color: white; font-weight: 600;">D</div>
+                      <div class="chat-info">
+                        <div class="chat-top-row">
+                          <div class="chat-name">Diving Club</div>
+                          <div class="chat-time">2:08 PM</div>
+                        </div>
+                        <div class="chat-preview">Sarah: Anyone for Saturday?</div>
+                      </div>
+                    </div>
+                    <div class="chat-item">
+                      <div class="chat-avatar" style="background: linear-gradient(135deg, #c9f 0%, #96d 100%); color: white; font-weight: 600;">A</div>
+                      <div class="chat-info">
+                        <div class="chat-top-row">
+                          <div class="chat-name">Ayaka 彩香</div>
+                          <div class="chat-time">12:20 PM</div>
+                        </div>
+                        <div class="chat-preview">Photo</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>The alert moves to the top of LINE with red highlighting,
+              the official BLACK BOX bot badge, and a sound + vibration.</strong>
+              Familiar app, unmistakable urgency. No new app to learn.
+            </p>
+          </div>
+
+          <!-- LINE CHAT THREAD -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>02</strong> · OPEN THE ALERT</div>
+              <div class="phone-badge">LINE BOT</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="chat-view">
+                  <div class="line-status-bar">
+                    <span>06:38</span>
+                    <span class="line-status-icons">📶 LTE 83%</span>
+                  </div>
+                  <div class="line-chat-header">
+                    <span class="chat-back">‹</span>
+                    <div class="chat-header-avatar"></div>
+                    <div class="chat-header-name">
+                      <div class="chat-header-title">BLACK BOX 緊急通報</div>
+                      <div class="chat-header-subtitle">Official · Verified · Always-on</div>
+                    </div>
+                    <div class="chat-header-icons">📞 ⋯</div>
+                  </div>
+
+                  <div class="chat-body">
+                    <div class="chat-date-divider">
+                      <span>Tuesday, 6:38 PM</span>
+                    </div>
+
+                    <!-- ALERT MESSAGE -->
+                    <div class="chat-message">
+                      <div class="chat-message-avatar"></div>
+                      <div class="chat-message-content">
+                        <div class="chat-message-name">BLACK BOX 緊急通報</div>
+                        <div class="chat-bubble chat-bubble--alert">
+                          🚨 <strong>EMERGENCY</strong><br/>
+                          Yumi Tanaka activated BLACK BOX.<br/>
+                          Live audio + location active.
+                        </div>
+                      </div>
+                      <div class="chat-message-time">6:38</div>
+                    </div>
+
+                    <!-- RICH ALERT CARD -->
+                    <div class="chat-message">
+                      <div class="chat-message-avatar"></div>
+                      <div class="chat-message-content" style="max-width: 85%;">
+                        <div class="alert-card">
+                          <div class="alert-card-banner">
+                            <span>● LIVE · 04:32 elapsed</span>
+                            <span class="alert-card-banner-time">just now</span>
+                          </div>
+                          <div class="alert-card-image">
+                            <div class="alert-card-pin"></div>
+                            <div class="alert-card-image-label">Naha · Okinawa</div>
+                          </div>
+                          <div class="alert-card-body">
+                            <div class="alert-card-row">
+                              <div class="alert-card-label">Where</div>
+                              <div class="alert-card-value alert-card-coords">26.3344°N, 127.7894°E</div>
+                            </div>
+                            <div class="alert-card-row">
+                              <div class="alert-card-label">Status</div>
+                              <div class="alert-card-value" style="color: var(--status-active); font-weight: 700;">Moving NE · 1.2 m/s</div>
+                            </div>
+                            <div class="alert-card-row">
+                              <div class="alert-card-label">Detected</div>
+                              <div class="alert-card-value">2 voices · 1 aggressor</div>
+                            </div>
+                          </div>
+                          <div class="alert-meta">3-SECOND AUDIO PREVIEW</div>
+                          <div style="padding: 8px 12px 12px;">
+                            <div class="audio-clip">
+                              <div class="audio-play">▶</div>
+                              <div class="audio-waveform">
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                                <div class="audio-bar"></div>
+                              </div>
+                              <div class="audio-duration">0:03</div>
+                            </div>
+                          </div>
+                          <div class="alert-cta">
+                            OPEN LIVE DASHBOARD
+                            <span class="alert-cta-arrow">→</span>
+                          </div>
+                          <div class="alert-meta">blackbox.app/live/a7f3-8e2c-4d</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- QUICK REPLIES -->
+                    <div class="quick-replies">
+                      <div class="quick-reply quick-reply--urgent">I'm responding</div>
+                      <div class="quick-reply">Call 110</div>
+                      <div class="quick-reply">Share alert</div>
+                    </div>
+
+                  </div>
+
+                  <div class="chat-input">
+                    <div class="chat-input-icons">⊕</div>
+                    <div class="chat-input-field">Message</div>
+                    <div class="chat-input-icons">😊 🎤</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Rich alert card.</strong> Map preview, structured data, 3-second
+              audio scrub of what's happening right now, and one button to the live
+              dashboard. Quick replies below let the contact respond without typing —
+              "I'm responding" pings other contacts, "Call 110" dials Japan emergency
+              with the link copied to clipboard.
+            </p>
+          </div>
+
+          <!-- DASHBOARD (after tapping link) -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>03</strong> · TAP THE LINK</div>
+              <div class="phone-badge" style="background: rgba(255, 59, 48, 0.15); color: var(--status-active); border: 1px solid rgba(255, 59, 48, 0.4);">DASHBOARD</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen" style="background: #000; font-family: var(--font-body);">
+                <div style="height: 100%; display: flex; flex-direction: column; padding: 20px 14px 14px; font-size: 12px; color: #e8e8e8;">
+                  <div style="display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 9px; color: #888; padding-bottom: 4px;">
+                    <span>06:38</span><span>● ● ● 83%</span>
+                  </div>
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0 10px; border-bottom: 1px solid #222;">
+                    <div style="display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 9px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #ff3b30;">
+                      <span style="width: 6px; height: 6px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 6px #ff3b30; animation: pulse-rec 1.2s infinite;"></span>
+                      <span>Recording</span>
+                    </div>
+                    <span style="font-family: var(--font-mono); font-size: 13px; font-weight: 500; letter-spacing: 0.04em;">04:32</span>
+                  </div>
+                  <div style="flex: 1; overflow-y: auto;">
+                    <div style="border-top: 1px solid #222; padding: 10px 0;">
+                      <div style="font-family: var(--font-mono); font-size: 8px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: #555; margin-bottom: 4px;">Location · Live</div>
+                      <div style="background: linear-gradient(135deg, #0a1f1a, #0d2a22); border: 1px solid #333; border-radius: 4px; height: 80px; position: relative; overflow: hidden;">
+                        <div style="position: absolute; inset: 0; background-image: linear-gradient(rgba(60,80,70,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(60,80,70,0.3) 1px, transparent 1px); background-size: 12px 12px;"></div>
+                        <div style="position: absolute; top: 50%; left: 25%; width: 30%; height: 1px; border-top: 1.5px dashed #ff3b30; opacity: 0.6;"></div>
+                        <div style="position: absolute; top: 50%; left: 45%; width: 10px; height: 10px; background: #ff3b30; border-radius: 50%; box-shadow: 0 0 0 4px rgba(255,59,48,0.3), 0 0 12px #ff3b30; animation: pulse-rec 1.5s infinite;"></div>
+                      </div>
+                      <div style="font-family: var(--font-mono); font-size: 11px; font-weight: 500; margin-top: 6px;">26.3344°N · 127.7894°E</div>
+                      <div style="font-family: var(--font-mono); font-size: 8px; color: #888; margin-top: 2px;">±4m · MOVING NE · 1.2 m/s</div>
+                    </div>
+
+                    <div style="border-top: 1px solid #222; padding: 10px 0;">
+                      <div style="font-family: var(--font-mono); font-size: 8px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: #555; margin-bottom: 4px;">Live Transcript</div>
+                      <div style="font-size: 11px; line-height: 1.4; margin-bottom: 4px;">"Please don't, I'll do whatever you want."</div>
+                      <div style="font-family: var(--font-mono); font-size: 10px; font-style: italic; color: #ff3b30; padding-left: 6px; border-left: 2px solid #ff3b30;">— Shut up. Don't move.</div>
+                    </div>
+
+                    <div style="border-top: 1px solid #222; padding: 10px 0;">
+                      <div style="font-family: var(--font-mono); font-size: 8px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: #555; margin-bottom: 4px;">AI Summary</div>
+                      <div style="font-size: 11px; line-height: 1.4;">Two voices · One aggressor · Compliance language</div>
+                      <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+                        <span style="font-family: var(--font-mono); font-size: 8px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #888;">Threat</span>
+                        <span style="font-family: var(--font-mono); font-size: 8px; font-weight: 700; letter-spacing: 0.08em; color: #ff3b30;">HIGH</span>
+                      </div>
+                    </div>
+
+                    <div style="background: #ff3b30; color: #fff; text-align: center; padding: 12px; margin: 12px 0 6px; border-radius: 6px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; box-shadow: 0 0 24px rgba(255,59,48,0.5);">
+                      Share Live Link
+                    </div>
+                    <div style="background: #1a1a1a; border: 1px solid #333; text-align: center; padding: 10px; font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #888; border-radius: 4px;">
+                      Hold 3s to Stand Down
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Tap the link in LINE → instant dashboard.</strong> No app
+              install, no login. The PWA opens in the contact's browser. Live audio,
+              live transcript, live location, live AI summary. SHARE button right
+              there to propagate.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- KEY POINTS -->
+      <div class="key-points">
+        <h3>Why LINE specifically (and not just SMS / Push)</h3>
+        <div class="key-points-grid">
+          <div class="key-point">
+            <div class="key-point-label">95% Penetration in Japan</div>
+            <div class="key-point-body">
+              Almost every smartphone owner in Japan has LINE. No friction to install,
+              no carrier dependencies. If the contact is reachable at all, they're
+              reachable on LINE.
+            </div>
+          </div>
+          <div class="key-point">
+            <div class="key-point-label">Free, Instant, International</div>
+            <div class="key-point-body">
+              LINE Messaging API has a generous free tier (1,000 messages/month per
+              account). No SMS costs, no Twilio overhead, delivery is instant
+              regardless of carrier.
+            </div>
+          </div>
+          <div class="key-point">
+            <div class="key-point-label">Rich Format Out of the Box</div>
+            <div class="key-point-body">
+              LINE Flex Messages support maps, audio playback, structured data,
+              quick reply buttons — all in one notification. SMS is a 160-character
+              text. The format gap is significant.
+            </div>
+          </div>
+          <div class="key-point">
+            <div class="key-point-label">Verified Business Badge</div>
+            <div class="key-point-body">
+              LINE Official Account verification shows the green badge. Recipients
+              know the alert is legitimate, not a phishing attempt. Critical for
+              authority forwarding.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <style>
+      @keyframes pulse-rec {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+    </style>
+  </body>
+</html>

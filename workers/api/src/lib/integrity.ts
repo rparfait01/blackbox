@@ -13,6 +13,7 @@
  */
 
 import { sha256Hex } from '@blackbox/shared';
+import { runVaultScan } from './vault-scan';
 import type { Env } from '../types';
 
 export const GENESIS = '0'.repeat(64);
@@ -393,41 +394,16 @@ export async function verifyManifest(
  * to its recorded packageHash. On mismatch: open an investigation + alert the
  * deployment security contact. Updates lastVerifiedAt on a clean pass.
  */
+/**
+ * Vault integrity scan (#C4) — DELEGATED to lib/vault-scan.ts (Brief 40 §A).
+ *
+ * This used to be a capped batch (`ORDER BY sealedAt ASC LIMIT 50`) that re-examined the same
+ * fifty rows on every run, so past fifty eligible objects the tail was never reached and
+ * nothing said so. Coverage is now proven by a durable cursor and recorded per pass; the
+ * implementation moved out because it grew a state machine and belongs beside its own tests.
+ */
 export async function runIntegrityScan(env: Env, workerOrigin: string): Promise<void> {
-  if (!env.VAULT) {
-    return;
-  }
-  const { results } = await env.DB.prepare(
-    'SELECT vaultKey, eventId, packageHash FROM vault_objects ORDER BY sealedAt ASC LIMIT 50',
-  ).all<{ vaultKey: string; eventId: string; packageHash: string }>();
-  for (const row of results ?? []) {
-    try {
-      const obj = await env.VAULT.get(row.vaultKey);
-      if (!obj) {
-        await openInvestigation(env, workerOrigin, {
-          eventId: row.eventId,
-          kind: 'vault_missing',
-          detail: `Sealed object ${row.vaultKey} is missing from the vault.`,
-        });
-        continue;
-      }
-      const bytes = new Uint8Array(await obj.arrayBuffer());
-      const actual = await hashBytes(bytes);
-      if (actual !== row.packageHash) {
-        await openInvestigation(env, workerOrigin, {
-          eventId: row.eventId,
-          kind: 'vault_mismatch',
-          detail: `Vault object ${row.vaultKey} hash mismatch: expected ${row.packageHash}, got ${actual}.`,
-        });
-      } else {
-        await env.DB.prepare('UPDATE vault_objects SET lastVerifiedAt = ? WHERE vaultKey = ?')
-          .bind(Date.now(), row.vaultKey)
-          .run();
-      }
-    } catch (error) {
-      console.log(JSON.stringify({ level: 'error', message: 'vault scan failed', detail: String(error) }));
-    }
-  }
+  await runVaultScan(env, workerOrigin);
 }
 
 /**

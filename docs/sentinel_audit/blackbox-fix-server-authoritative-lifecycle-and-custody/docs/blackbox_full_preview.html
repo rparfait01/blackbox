@@ -1,0 +1,2156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>BLACK BOX — Full Interface Matrix</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-primary: #000000;
+        --bg-surface: #0f0f0f;
+        --bg-elevated: #1a1a1a;
+        --bg-page: #141414;
+        --border-subtle: #222222;
+        --border-defined: #333333;
+        --text-primary: #e8e8e8;
+        --text-secondary: #888888;
+        --text-tertiary: #555555;
+        --status-armed: #e89a00;
+        --status-active: #ff3b30;
+        --status-ack: #34c759;
+        --status-info: #5ac8fa;
+
+        --font-display: "IBM Plex Sans Condensed", system-ui, sans-serif;
+        --font-body: "IBM Plex Sans", system-ui, sans-serif;
+        --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        background: var(--bg-page);
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        padding: 32px 16px 64px;
+      }
+
+      .container {
+        max-width: 1440px;
+        margin: 0 auto;
+      }
+
+      /* ============================
+         HEADER
+         ============================ */
+      .preview-header {
+        margin-bottom: 48px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .wordmark {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+      }
+
+      .preview-header h1 {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 36px;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        margin-bottom: 16px;
+      }
+
+      .preview-header p {
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+        max-width: 70ch;
+      }
+
+      /* ============================
+         SECTION HEADERS
+         ============================ */
+      .section {
+        margin-bottom: 72px;
+      }
+
+      .section-header {
+        margin-bottom: 24px;
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .section-number {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+      }
+
+      .section-title {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 24px;
+        letter-spacing: -0.01em;
+      }
+
+      .section-desc {
+        font-size: 14px;
+        color: var(--text-secondary);
+        max-width: 60ch;
+        margin-left: auto;
+      }
+
+      /* ============================
+         PHONE FRAMES
+         ============================ */
+      .phone-grid {
+        display: grid;
+        gap: 24px;
+        align-items: start;
+      }
+
+      .phone-grid--3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .phone-grid--2 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      @media (max-width: 980px) {
+        .phone-grid--3,
+        .phone-grid--2 {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .phone-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 20px;
+      }
+
+      .phone-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .phone-tier {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-secondary);
+      }
+
+      .phone-tier strong {
+        color: var(--text-primary);
+        font-weight: 700;
+      }
+
+      .phone-badge {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        padding: 3px 8px;
+        border-radius: 2px;
+        text-transform: uppercase;
+      }
+
+      .badge-free {
+        background: rgba(232, 154, 0, 0.15);
+        color: var(--status-armed);
+        border: 1px solid rgba(232, 154, 0, 0.3);
+      }
+
+      .badge-v1 {
+        background: rgba(90, 200, 250, 0.12);
+        color: var(--status-info);
+        border: 1px solid rgba(90, 200, 250, 0.3);
+      }
+
+      .badge-v2 {
+        background: rgba(232, 232, 232, 0.08);
+        color: var(--text-primary);
+        border: 1px solid rgba(232, 232, 232, 0.2);
+      }
+
+      .phone-frame {
+        background: #000;
+        border: 1px solid var(--border-defined);
+        border-radius: 28px;
+        padding: 8px;
+      }
+
+      .phone-screen {
+        background: var(--bg-primary);
+        border-radius: 22px;
+        overflow: hidden;
+        aspect-ratio: 9 / 19.5;
+        position: relative;
+      }
+
+      .phone-description {
+        margin-top: 16px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+      }
+
+      .phone-description strong {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      /* ============================
+         SCREEN BASE
+         ============================ */
+      .screen {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 20px 14px 14px;
+        font-size: 12px;
+        overflow: hidden;
+      }
+
+      .status-bar {
+        display: flex;
+        justify-content: space-between;
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        letter-spacing: 0.04em;
+        padding-bottom: 4px;
+      }
+
+      .micro {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+
+      .section-label {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 4px;
+      }
+
+      .data-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+
+      .data-section {
+        border-top: 1px solid var(--border-subtle);
+        padding: 10px 0;
+      }
+
+      /* ============================
+         USER DORMANT VIEW
+         ============================ */
+      .top-bar-dormant {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0 0;
+      }
+
+      .wordmark-app {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+      }
+
+      .gear {
+        color: var(--text-tertiary);
+        font-size: 12px;
+        font-family: var(--font-mono);
+      }
+
+      .dormant-hero {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 16px 0;
+      }
+
+      .voice-line {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .voice-armed {
+        color: var(--status-armed);
+      }
+
+      .voice-active {
+        color: var(--status-active);
+      }
+
+      .disc-dormant {
+        width: 88px;
+        height: 88px;
+        border-radius: 50%;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .disc-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 1.5px solid var(--status-armed);
+        animation: pulse-dormant 3s ease-in-out infinite;
+      }
+
+      @keyframes pulse-dormant {
+        0%, 100% { opacity: 0.5; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.02); }
+      }
+
+      .disc-center {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: var(--status-armed);
+        box-shadow: 0 0 10px var(--status-armed);
+      }
+
+      .tap-cta {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+      }
+
+      /* ============================
+         CONTACT DASHBOARD (ACTIVE)
+         ============================ */
+      .top-bar-active {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 0 10px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .recording-indicator {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--status-active);
+      }
+
+      .recording-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--status-active);
+        box-shadow: 0 0 6px var(--status-active);
+        animation: pulse-rec 1.2s ease-in-out infinite;
+      }
+
+      @keyframes pulse-rec {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      .elapsed {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        letter-spacing: 0.04em;
+      }
+
+      .dashboard-scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding-top: 2px;
+      }
+
+      .dashboard-scroll::-webkit-scrollbar {
+        display: none;
+      }
+
+      /* Mini map placeholder */
+      .map-frame {
+        background: linear-gradient(135deg, #0a1f1a 0%, #0d2a22 50%, #0a1f1a 100%);
+        border: 1px solid var(--border-defined);
+        border-radius: 4px;
+        height: 80px;
+        margin: 6px 0 4px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .map-frame::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: 
+          linear-gradient(rgba(60, 80, 70, 0.3) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(60, 80, 70, 0.3) 1px, transparent 1px);
+        background-size: 12px 12px;
+      }
+
+      .map-pin {
+        position: absolute;
+        top: 50%;
+        left: 45%;
+        width: 10px;
+        height: 10px;
+        background: var(--status-active);
+        border-radius: 50%;
+        box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.3), 0 0 12px var(--status-active);
+        animation: pulse-rec 1.5s ease-in-out infinite;
+      }
+
+      .map-trail {
+        position: absolute;
+        top: 50%;
+        left: 25%;
+        width: 30%;
+        height: 1px;
+        border-top: 1.5px dashed var(--status-active);
+        opacity: 0.6;
+      }
+
+      /* Audio waveform */
+      .waveform {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 28px;
+        margin: 6px 0;
+      }
+
+      .wave-bar {
+        flex: 1;
+        background: var(--status-active);
+        border-radius: 1px;
+        opacity: 0.8;
+        animation: wave 1.2s ease-in-out infinite;
+      }
+
+      @keyframes wave {
+        0%, 100% { height: 30%; }
+        50% { height: 100%; }
+      }
+
+      /* Video frame placeholder */
+      .video-frame {
+        background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+        border: 1px solid var(--border-defined);
+        border-radius: 4px;
+        aspect-ratio: 16/9;
+        margin: 4px 0;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .video-frame--360 {
+        aspect-ratio: 2/1;
+        background: 
+          radial-gradient(ellipse at 20% 30%, rgba(232, 154, 0, 0.1), transparent 40%),
+          radial-gradient(ellipse at 70% 60%, rgba(255, 59, 48, 0.15), transparent 35%),
+          linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+      }
+
+      .video-frame::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: 
+          linear-gradient(rgba(255,255,255, 0.02) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255, 0.02) 1px, transparent 1px);
+        background-size: 8px 8px;
+      }
+
+      .video-tag {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        font-family: var(--font-mono);
+        font-size: 7px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--text-primary);
+        background: rgba(0, 0, 0, 0.7);
+        padding: 2px 4px;
+        border-radius: 2px;
+      }
+
+      .video-tag--rec {
+        color: var(--status-active);
+      }
+
+      .video-viewport-hint {
+        position: absolute;
+        bottom: 4px;
+        right: 4px;
+        font-family: var(--font-mono);
+        font-size: 7px;
+        color: var(--text-secondary);
+        background: rgba(0, 0, 0, 0.7);
+        padding: 2px 4px;
+        border-radius: 2px;
+      }
+
+      .video-360-overlay {
+        position: absolute;
+        bottom: 4px;
+        left: 4px;
+        display: flex;
+        gap: 2px;
+      }
+
+      .video-360-dir {
+        font-family: var(--font-mono);
+        font-size: 6px;
+        font-weight: 500;
+        padding: 1px 3px;
+        background: rgba(0, 0, 0, 0.7);
+        border-radius: 2px;
+        color: var(--text-secondary);
+      }
+
+      .video-360-dir--active {
+        color: var(--status-active);
+      }
+
+      /* Coordinates */
+      .coords {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-primary);
+        letter-spacing: 0.02em;
+      }
+
+      .coords-meta {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        color: var(--text-secondary);
+        margin-top: 2px;
+        letter-spacing: 0.04em;
+      }
+
+      /* Transcript */
+      .transcript-line {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+      }
+
+      .transcript-line--aggressor {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-style: italic;
+        color: var(--status-active);
+        padding-left: 6px;
+        border-left: 2px solid var(--status-active);
+      }
+
+      /* Audio direction (v2 only) */
+      .audio-compass {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+        padding: 4px;
+        background: rgba(255, 59, 48, 0.08);
+        border-radius: 4px;
+      }
+
+      .compass-circle {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 1px solid var(--border-defined);
+        position: relative;
+        flex-shrink: 0;
+      }
+
+      .compass-needle {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 1px;
+        height: 14px;
+        background: var(--status-active);
+        transform-origin: bottom center;
+        transform: translate(-50%, -100%) rotate(45deg);
+      }
+
+      .compass-text {
+        font-family: var(--font-mono);
+        font-size: 9px;
+      }
+
+      .compass-text strong {
+        color: var(--status-active);
+        font-weight: 700;
+      }
+
+      .compass-text small {
+        display: block;
+        font-size: 7px;
+        color: var(--text-tertiary);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-top: 2px;
+      }
+
+      /* Classification */
+      .threat-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 4px;
+      }
+
+      .threat-label {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+
+      .threat-value {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--status-active);
+      }
+
+      .classification-body {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--text-primary);
+      }
+
+      /* Contacts */
+      .contact-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 0;
+        font-size: 10px;
+      }
+
+      .contact-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .contact-dot--ack { background: var(--status-ack); box-shadow: 0 0 4px var(--status-ack); }
+      .contact-dot--sent { background: var(--status-active); }
+      .contact-dot--pending { background: transparent; border: 1px solid var(--text-tertiary); }
+
+      .contact-name { flex: 1; }
+
+      .contact-status {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        color: var(--text-secondary);
+        letter-spacing: 0.04em;
+      }
+
+      .contact-status--ack { color: var(--status-ack); }
+
+      /* Tamper event banner */
+      .tamper-banner {
+        background: rgba(255, 59, 48, 0.1);
+        border: 1px solid rgba(255, 59, 48, 0.4);
+        border-radius: 4px;
+        padding: 8px;
+        margin: 6px 0;
+      }
+
+      .tamper-title {
+        font-family: var(--font-mono);
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--status-active);
+        margin-bottom: 2px;
+      }
+
+      .tamper-body {
+        font-size: 10px;
+        color: var(--text-primary);
+        line-height: 1.4;
+      }
+
+      /* Device status (v1/v2) */
+      .device-status {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 4px;
+      }
+
+      .device-stat {
+        padding: 4px 6px;
+        background: var(--bg-elevated);
+        border-radius: 3px;
+      }
+
+      .device-stat-label {
+        font-family: var(--font-mono);
+        font-size: 7px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+      }
+
+      .device-stat-value {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-top: 1px;
+      }
+
+      /* Storage bar (v2) */
+      .storage-bar {
+        height: 4px;
+        background: var(--bg-elevated);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+
+      .storage-fill {
+        height: 100%;
+        width: 23%;
+        background: var(--status-active);
+        border-radius: 2px;
+      }
+
+      /* SHARE BUTTON */
+      .share-cta {
+        background: var(--status-active);
+        color: #fff;
+        text-align: center;
+        padding: 12px;
+        margin: 12px 0 6px;
+        border-radius: 6px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        position: relative;
+        overflow: hidden;
+        cursor: pointer;
+      }
+
+      .share-cta::before {
+        content: "↗";
+        position: absolute;
+        right: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 14px;
+      }
+
+      .cancel-bar {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-defined);
+        text-align: center;
+        padding: 10px;
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        border-radius: 4px;
+      }
+
+      /* ============================
+         SHARE SHEET
+         ============================ */
+      .share-demo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 32px;
+        align-items: start;
+      }
+
+      @media (max-width: 980px) {
+        .share-demo {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .share-sheet-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 20px;
+      }
+
+      .share-sheet {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-defined);
+        border-radius: 16px 16px 0 0;
+        padding: 20px;
+        margin-top: 12px;
+      }
+
+      .share-grabber {
+        width: 40px;
+        height: 4px;
+        background: var(--border-defined);
+        border-radius: 2px;
+        margin: 0 auto 16px;
+      }
+
+      .share-sheet-title {
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      .share-sheet-subtitle {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+      }
+
+      .share-link-preview {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-defined);
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+        word-break: break-all;
+      }
+
+      .share-link-preview strong {
+        color: var(--status-active);
+        font-weight: 500;
+      }
+
+      .share-section-label {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin: 16px 0 8px;
+      }
+
+      .emergency-dispatch {
+        background: rgba(255, 59, 48, 0.08);
+        border: 1px solid rgba(255, 59, 48, 0.3);
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 12px;
+        cursor: pointer;
+      }
+
+      .emergency-dispatch-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .emergency-dispatch-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--status-active);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 14px;
+        color: #fff;
+        flex-shrink: 0;
+      }
+
+      .emergency-dispatch-text {
+        flex: 1;
+      }
+
+      .emergency-dispatch-title {
+        font-family: var(--font-display);
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--status-active);
+      }
+
+      .emergency-dispatch-subtitle {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-top: 2px;
+      }
+
+      .share-channels {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+
+      .share-channel {
+        text-align: center;
+        cursor: pointer;
+      }
+
+      .share-channel-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-defined);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 6px;
+        font-family: var(--font-mono);
+        font-weight: 500;
+        font-size: 11px;
+      }
+
+      .share-channel-name {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        color: var(--text-secondary);
+        letter-spacing: 0.04em;
+      }
+
+      .icon-telegram { color: #2aabee; }
+      .icon-line { color: #06c755; }
+      .icon-whatsapp { color: #25d366; }
+      .icon-x { color: #ffffff; }
+      .icon-fb { color: #1877f2; }
+      .icon-mail { color: #ff9500; }
+      .icon-sms { color: #34c759; }
+      .icon-copy { color: var(--text-secondary); }
+
+      .share-disclaimer {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        line-height: 1.5;
+        color: var(--text-tertiary);
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border-subtle);
+        letter-spacing: 0.02em;
+      }
+
+      /* ============================
+         SHARE NARRATIVE
+         ============================ */
+      .narrative-flow {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
+      .narrative-step {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 16px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+      }
+
+      .narrative-step-num {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--status-active);
+        flex-shrink: 0;
+        width: 24px;
+      }
+
+      .narrative-step-content h3 {
+        font-family: var(--font-display);
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      .narrative-step-content p {
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+
+      /* ============================
+         FEATURE MATRIX
+         ============================ */
+      .matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .matrix-table th,
+      .matrix-table td {
+        padding: 10px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--border-subtle);
+        font-size: 13px;
+      }
+
+      .matrix-table th {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        background: var(--bg-elevated);
+      }
+
+      .matrix-table td.feature-name {
+        font-weight: 500;
+        color: var(--text-primary);
+      }
+
+      .matrix-yes { color: var(--status-ack); font-family: var(--font-mono); font-size: 11px; }
+      .matrix-partial { color: var(--status-armed); font-family: var(--font-mono); font-size: 11px; }
+      .matrix-no { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; }
+
+      .matrix-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * { animation: none !important; }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+
+      <!-- HEADER -->
+      <header class="preview-header">
+        <div class="wordmark">BLACK BOX · INTERFACE MATRIX · V1.0</div>
+        <h1>Three views. Three hardware tiers. One share architecture.</h1>
+        <p>
+          What the user sees on their phone. What the designated contact sees when the
+          alert lands. How a tapped share button propagates the live link outward.
+          Comparison across the no-hardware Lite tier, the v1 Sentinel cube trigger,
+          and the v2 Recorder full 360° puck.
+        </p>
+      </header>
+
+      <!-- SECTION 1: USER PHONE -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">01</span>
+          <span class="section-title">The user's phone — always dormant</span>
+          <span class="section-desc">
+            During an active emergency, the victim's phone is unchanged. No banner.
+            No notification. The only difference between hardware tiers is which device
+            shows in the paired section. Hidden gesture (5-sec hold on the disc) reveals
+            the full dashboard if the user is safe enough to check.
+          </span>
+        </div>
+
+        <div class="phone-grid phone-grid--3">
+
+          <!-- USER: NO HARDWARE -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>USER PHONE</strong> · LITE</div>
+              <div class="phone-badge badge-free">No Hardware</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:34</span><span>● ● ● 84%</span></div>
+                  <div class="top-bar-dormant">
+                    <span class="wordmark-app">BLACK BOX</span>
+                    <span class="gear">⚙</span>
+                  </div>
+                  <div class="dormant-hero">
+                    <div class="voice-line voice-armed">ARMED · LISTENING</div>
+                    <div class="disc-dormant">
+                      <div class="disc-ring"></div>
+                      <div class="disc-center"></div>
+                    </div>
+                    <div class="tap-cta">TAP TO ACTIVATE</div>
+                  </div>
+                  <div class="data-section">
+                    <div class="section-label">Source</div>
+                    <div style="font-size: 11px; color: var(--text-primary);">Phone microphone &amp; camera</div>
+                    <div class="micro" style="margin-top: 2px;">No external hardware paired</div>
+                  </div>
+                  <div class="data-section">
+                    <div class="section-label">Primary Contact</div>
+                    <div style="font-size: 11px; color: var(--text-primary);">Ava Tanaka</div>
+                    <div class="micro" style="margin-top: 2px;">Telegram · Verified</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Lite tier.</strong> Phone is the recorder. No paired hardware.
+              Activation via on-screen button, shake, or voice keyword.
+            </p>
+          </div>
+
+          <!-- USER: V1 SENTINEL -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>USER PHONE</strong> · v1</div>
+              <div class="phone-badge badge-v1">Sentinel Paired</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:34</span><span>● ● ● 84%</span></div>
+                  <div class="top-bar-dormant">
+                    <span class="wordmark-app">BLACK BOX</span>
+                    <span class="gear">⚙</span>
+                  </div>
+                  <div class="dormant-hero">
+                    <div class="voice-line voice-armed">ARMED · LISTENING</div>
+                    <div class="disc-dormant">
+                      <div class="disc-ring"></div>
+                      <div class="disc-center"></div>
+                    </div>
+                    <div class="tap-cta">TAP TO ACTIVATE</div>
+                  </div>
+                  <div class="data-section">
+                    <div class="section-label">Device</div>
+                    <div style="font-size: 11px; color: var(--text-primary);">BLACK BOX Sentinel</div>
+                    <div class="micro" style="margin-top: 2px;">BAT 94% · Paired · Last seen 6s</div>
+                  </div>
+                  <div class="data-section">
+                    <div class="section-label">Trigger Modes</div>
+                    <div class="micro" style="color: var(--text-primary); line-height: 1.6;">
+                      Manual button · Triple-tap<br/>
+                      Tamper · Shock · Deadman pin
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>v1 Sentinel cube paired.</strong> Hardware trigger added —
+              tamper detection, shock, deadman release pin. Phone still records.
+            </p>
+          </div>
+
+          <!-- USER: V2 RECORDER -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>USER PHONE</strong> · v2</div>
+              <div class="phone-badge badge-v2">Recorder Paired</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:34</span><span>● ● ● 84%</span></div>
+                  <div class="top-bar-dormant">
+                    <span class="wordmark-app">BLACK BOX</span>
+                    <span class="gear">⚙</span>
+                  </div>
+                  <div class="dormant-hero">
+                    <div class="voice-line voice-armed">ARMED · LISTENING</div>
+                    <div class="disc-dormant">
+                      <div class="disc-ring"></div>
+                      <div class="disc-center"></div>
+                    </div>
+                    <div class="tap-cta">TAP TO ACTIVATE</div>
+                  </div>
+                  <div class="data-section">
+                    <div class="section-label">Device</div>
+                    <div style="font-size: 11px; color: var(--text-primary);">BLACK BOX Recorder</div>
+                    <div class="micro" style="margin-top: 2px;">BAT 87% · 64GB free · WiFi-Direct</div>
+                  </div>
+                  <div class="data-section">
+                    <div class="section-label">Capture</div>
+                    <div class="micro" style="color: var(--text-primary); line-height: 1.6;">
+                      360° dual-fisheye · 4-mic array<br/>
+                      Local SSD + cloud relay
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>v2 Recorder puck paired.</strong> Phone becomes the relay.
+              Device records 360° on its own SSD; phone streams to cloud.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- SECTION 2: CONTACT DASHBOARD -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">02</span>
+          <span class="section-title">Designated contact's dashboard — the live view</span>
+          <span class="section-desc">
+            The instant the user activates, the designated contact gets a Telegram
+            message with the dashboard link. Tapping opens this live view. SHARE
+            button is prominent. The richer the hardware tier, the richer the data.
+          </span>
+        </div>
+
+        <div class="phone-grid phone-grid--3">
+
+          <!-- CONTACT: NO HARDWARE -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>CONTACT VIEW</strong> · LITE</div>
+              <div class="phone-badge badge-free">Phone-Sourced</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:38</span><span>● ● ● 83%</span></div>
+                  <div class="top-bar-active">
+                    <div class="recording-indicator">
+                      <span class="recording-dot"></span>
+                      <span>Recording</span>
+                    </div>
+                    <span class="elapsed">04:32</span>
+                  </div>
+                  <div class="dashboard-scroll">
+                    <div class="data-section" style="border-top: none;">
+                      <div class="section-label">Location · Live</div>
+                      <div class="map-frame">
+                        <div class="map-trail"></div>
+                        <div class="map-pin"></div>
+                      </div>
+                      <div class="coords">26.3344°N · 127.7894°E</div>
+                      <div class="coords-meta">±4m · MOVING NE · 1.2 m/s</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Audio</div>
+                      <div class="waveform" id="wf1">
+                        <div class="wave-bar" style="animation-delay: 0s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.25s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.35s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                      </div>
+                      <div class="micro">Phone mic · mono · 16-bit</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Video</div>
+                      <div class="video-frame">
+                        <span class="video-tag video-tag--rec">● LIVE</span>
+                        <span class="video-viewport-hint">Phone Cam</span>
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Live Transcript</div>
+                      <div class="transcript-line">"Please don't, I'll do whatever you want."</div>
+                      <div class="transcript-line transcript-line--aggressor">— Shut up. Don't move.</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">AI Summary</div>
+                      <div class="classification-body">
+                        Two voices · One aggressor · Compliance language
+                      </div>
+                      <div class="threat-row">
+                        <span class="threat-label">Threat</span>
+                        <span class="threat-value">HIGH</span>
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Notified</div>
+                      <div class="contact-row">
+                        <span class="contact-dot contact-dot--ack"></span>
+                        <span class="contact-name">Sarah Chen</span>
+                        <span class="contact-status contact-status--ack">Responding</span>
+                      </div>
+                      <div class="contact-row">
+                        <span class="contact-dot contact-dot--pending"></span>
+                        <span class="contact-name">Mom</span>
+                        <span class="contact-status">Pending</span>
+                      </div>
+                    </div>
+
+                    <div class="share-cta">Share Live Link</div>
+                    <div class="cancel-bar">Hold 3s to Stand Down</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Phone-sourced.</strong> Single audio waveform, single camera
+              feed, phone-grade quality. Still solid for evidence — just not 360°.
+            </p>
+          </div>
+
+          <!-- CONTACT: V1 SENTINEL -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>CONTACT VIEW</strong> · v1</div>
+              <div class="phone-badge badge-v1">Sentinel Triggered</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:38</span><span>● ● ● 83%</span></div>
+                  <div class="top-bar-active">
+                    <div class="recording-indicator">
+                      <span class="recording-dot"></span>
+                      <span>Recording</span>
+                    </div>
+                    <span class="elapsed">04:32</span>
+                  </div>
+                  <div class="dashboard-scroll">
+                    <div class="tamper-banner">
+                      <div class="tamper-title">DEADMAN RELEASE</div>
+                      <div class="tamper-body">
+                        Pin pulled at 04:32 ago. Trigger irreversible.
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Location · Live</div>
+                      <div class="map-frame">
+                        <div class="map-trail"></div>
+                        <div class="map-pin"></div>
+                      </div>
+                      <div class="coords">26.3344°N · 127.7894°E</div>
+                      <div class="coords-meta">±4m · MOVING NE · 1.2 m/s</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Audio</div>
+                      <div class="waveform">
+                        <div class="wave-bar" style="animation-delay: 0s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.25s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.35s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                      </div>
+                      <div class="micro">Phone mic · mono · 16-bit</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Devices</div>
+                      <div class="device-status">
+                        <div class="device-stat">
+                          <div class="device-stat-label">Sentinel</div>
+                          <div class="device-stat-value">94%</div>
+                        </div>
+                        <div class="device-stat">
+                          <div class="device-stat-label">Phone</div>
+                          <div class="device-stat-value">83%</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Transcript</div>
+                      <div class="transcript-line">"Please don't, I'll do whatever—"</div>
+                      <div class="transcript-line transcript-line--aggressor">— Shut up.</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">AI Summary</div>
+                      <div class="classification-body">
+                        Two voices · One aggressor · Deadman trigger
+                      </div>
+                      <div class="threat-row">
+                        <span class="threat-label">Threat</span>
+                        <span class="threat-value">HIGH</span>
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Notified</div>
+                      <div class="contact-row">
+                        <span class="contact-dot contact-dot--ack"></span>
+                        <span class="contact-name">Sarah Chen</span>
+                        <span class="contact-status contact-status--ack">Responding</span>
+                      </div>
+                    </div>
+
+                    <div class="share-cta">Share Live Link</div>
+                    <div class="cancel-bar">Hold 3s to Stand Down</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>+ Hardware trigger context.</strong> Tamper banner shows the
+              deadman release fired — the trigger itself becomes signal. Device
+              health visible separately from phone.
+            </p>
+          </div>
+
+          <!-- CONTACT: V2 RECORDER -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>CONTACT VIEW</strong> · v2</div>
+              <div class="phone-badge badge-v2">Recorder · 360°</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:38</span><span>● ● ● 83%</span></div>
+                  <div class="top-bar-active">
+                    <div class="recording-indicator">
+                      <span class="recording-dot"></span>
+                      <span>360° Live</span>
+                    </div>
+                    <span class="elapsed">04:32</span>
+                  </div>
+                  <div class="dashboard-scroll">
+                    <div class="data-section" style="border-top: none;">
+                      <div class="section-label">360° Video · Live</div>
+                      <div class="video-frame video-frame--360">
+                        <span class="video-tag video-tag--rec">● 4K · 360°</span>
+                        <span class="video-viewport-hint">Drag to look</span>
+                        <div class="video-360-overlay">
+                          <span class="video-360-dir">N</span>
+                          <span class="video-360-dir video-360-dir--active">NE ◉</span>
+                          <span class="video-360-dir">E</span>
+                          <span class="video-360-dir">S</span>
+                          <span class="video-360-dir">W</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Location · Live</div>
+                      <div class="map-frame">
+                        <div class="map-trail"></div>
+                        <div class="map-pin"></div>
+                      </div>
+                      <div class="coords">26.3344°N · 127.7894°E</div>
+                      <div class="coords-meta">±2m · MOVING NE · 1.2 m/s</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Audio · 4-Mic Array</div>
+                      <div class="waveform">
+                        <div class="wave-bar" style="animation-delay: 0s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.25s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.35s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                      </div>
+                      <div class="audio-compass">
+                        <div class="compass-circle">
+                          <div class="compass-needle"></div>
+                        </div>
+                        <div class="compass-text">
+                          <strong>Aggressor: 45° NE</strong>
+                          <small>Direction of arrival</small>
+                        </div>
+                      </div>
+                      <div class="micro" style="margin-top: 4px;">24-BIT · BEAMFORMED · 4-CHANNEL</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Recorder Status</div>
+                      <div class="device-status">
+                        <div class="device-stat">
+                          <div class="device-stat-label">Battery</div>
+                          <div class="device-stat-value">87%</div>
+                        </div>
+                        <div class="device-stat">
+                          <div class="device-stat-label">SSD</div>
+                          <div class="device-stat-value">15/64GB</div>
+                        </div>
+                      </div>
+                      <div class="storage-bar">
+                        <div class="storage-fill"></div>
+                      </div>
+                      <div class="micro" style="margin-top: 4px;">Full quality on device · Cloud relay live</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Transcript</div>
+                      <div class="transcript-line">"Please don't, I'll do whatever you want."</div>
+                      <div class="transcript-line transcript-line--aggressor">— Shut up. Don't move.</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">AI Dispatch Summary</div>
+                      <div class="classification-body">
+                        Two voices · Male aggressor at 45° NE ·
+                        Weapon language ("knife") detected · Compliance fear
+                      </div>
+                      <div class="threat-row">
+                        <span class="threat-label">Threat</span>
+                        <span class="threat-value">CRITICAL</span>
+                      </div>
+                    </div>
+
+                    <div class="share-cta">Share Live Link</div>
+                    <div class="cancel-bar">Hold 3s to Stand Down</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>360° + multichannel audio + direction of arrival.</strong>
+              Recipient can drag to look around. Compass shows where aggressor
+              voice is coming from. Storage status visible — device is keeping
+              full-quality copy regardless of network.
+            </p>
+          </div>
+
+        </div>
+
+        <!-- COMPARISON TABLE -->
+        <div style="margin-top: 32px;">
+          <table class="matrix-table">
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>Lite (No HW)</th>
+                <th>v1 Sentinel</th>
+                <th>v2 Recorder</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="feature-name">Audio capture</td>
+                <td><span class="matrix-yes">✓ Phone mic, mono</span></td>
+                <td><span class="matrix-yes">✓ Phone mic, mono</span></td>
+                <td><span class="matrix-yes">✓ 4-mic array, 24-bit</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Video capture</td>
+                <td><span class="matrix-yes">✓ Phone camera</span></td>
+                <td><span class="matrix-yes">✓ Phone camera</span></td>
+                <td><span class="matrix-yes">✓ 360° dual fisheye</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Direction of arrival (audio)</td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-yes">✓ Beamforming compass</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Tamper alerts</td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-yes">✓ Switch + mesh + shock</span></td>
+                <td><span class="matrix-yes">✓ Switch + mesh + shock + temp</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Deadman trigger</td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-yes">✓ Pull-pin variant</span></td>
+                <td><span class="matrix-yes">✓ Tamper + pull-pin</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Survives phone destruction</td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-partial">~ Last-gasp packet only</span></td>
+                <td><span class="matrix-yes">✓ Device records on own SSD</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Local storage (device)</td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-no">—</span></td>
+                <td><span class="matrix-yes">✓ 64GB encrypted eMMC</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Live shareable link</td>
+                <td><span class="matrix-yes">✓ Same dashboard</span></td>
+                <td><span class="matrix-yes">✓ Same dashboard</span></td>
+                <td><span class="matrix-yes">✓ Same dashboard</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Share to authorities</td>
+                <td><span class="matrix-yes">✓ One tap</span></td>
+                <td><span class="matrix-yes">✓ One tap</span></td>
+                <td><span class="matrix-yes">✓ One tap</span></td>
+              </tr>
+              <tr>
+                <td class="feature-name">Price</td>
+                <td><span class="matrix-yes">Free / $29 Pro</span></td>
+                <td><span class="matrix-yes">$129–179</span></td>
+                <td><span class="matrix-yes">$349–499</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- SECTION 3: SHARE FLOW -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">03</span>
+          <span class="section-title">The share button — exponential propagation</span>
+          <span class="section-desc">
+            Contact taps SHARE. Native share sheet opens with an emergency-dispatch
+            block above standard messaging apps. Each share creates a sub-token —
+            link is read-only, time-limited, revocable. Recipients re-share.
+          </span>
+        </div>
+
+        <div class="share-demo">
+
+          <!-- CONTACT DASHBOARD WITH SHARE HIGHLIGHTED -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>STEP 1</strong> · CONTACT TAPS SHARE</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:38</span><span>● ● ● 83%</span></div>
+                  <div class="top-bar-active">
+                    <div class="recording-indicator">
+                      <span class="recording-dot"></span>
+                      <span>Recording</span>
+                    </div>
+                    <span class="elapsed">04:32</span>
+                  </div>
+                  <div class="dashboard-scroll">
+                    <div class="data-section" style="border-top: none;">
+                      <div class="section-label">Location · Live</div>
+                      <div class="map-frame">
+                        <div class="map-trail"></div>
+                        <div class="map-pin"></div>
+                      </div>
+                      <div class="coords">26.3344°N · 127.7894°E</div>
+                    </div>
+                    <div class="data-section">
+                      <div class="section-label">AI Summary</div>
+                      <div class="classification-body">
+                        Two voices · One aggressor · Compliance language
+                      </div>
+                    </div>
+                    <div class="data-section">
+                      <div class="section-label">Notified · 1 of 3 acknowledged</div>
+                      <div class="contact-row">
+                        <span class="contact-dot contact-dot--ack"></span>
+                        <span class="contact-name">You</span>
+                        <span class="contact-status contact-status--ack">Responding</span>
+                      </div>
+                    </div>
+                    <div class="share-cta" style="
+                      animation: pulse-rec 1.2s ease-in-out infinite;
+                      box-shadow: 0 0 24px rgba(255, 59, 48, 0.5);
+                    ">Share Live Link</div>
+                    <div class="cancel-bar">Hold 3s to Stand Down</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>One tap.</strong> The share button is the primary action.
+              The contact's job is to alert others — calling 110, calling family,
+              tweeting the location. The link does the work.
+            </p>
+          </div>
+
+          <!-- SHARE SHEET -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>STEP 2</strong> · SHARE SHEET OPENS</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen" style="padding: 0; background: rgba(0,0,0,0.5);">
+                  <div style="flex: 1; opacity: 0.3; padding: 14px;">
+                    <div class="status-bar"><span>06:38</span><span>● 83%</span></div>
+                    <div class="top-bar-active">
+                      <div class="recording-indicator">
+                        <span class="recording-dot"></span>
+                        <span>Recording</span>
+                      </div>
+                      <span class="elapsed">04:33</span>
+                    </div>
+                  </div>
+                  <div class="share-sheet">
+                    <div class="share-grabber"></div>
+                    <div class="share-sheet-title">Share live link</div>
+                    <div class="share-sheet-subtitle">
+                      Recipients see live audio, location, and dashboard
+                    </div>
+                    <div class="share-link-preview">
+                      blackbox.app/live/<strong>a7f3-8e2c-4d</strong>
+                    </div>
+
+                    <div class="share-section-label">⚠ Emergency dispatch</div>
+                    <div class="emergency-dispatch">
+                      <div class="emergency-dispatch-row">
+                        <div class="emergency-dispatch-icon">110</div>
+                        <div class="emergency-dispatch-text">
+                          <div class="emergency-dispatch-title">Call local police</div>
+                          <div class="emergency-dispatch-subtitle">
+                            Japan · 110 · Link copied to clipboard
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="share-section-label">Quick send</div>
+                    <div class="share-channels">
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-line">L</div>
+                        <div class="share-channel-name">LINE</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-sms">●</div>
+                        <div class="share-channel-name">SMS</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-telegram">T</div>
+                        <div class="share-channel-name">Telegram</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-whatsapp">W</div>
+                        <div class="share-channel-name">WhatsApp</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-x">𝕏</div>
+                        <div class="share-channel-name">X / Post</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-mail">@</div>
+                        <div class="share-channel-name">Mail</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-fb">f</div>
+                        <div class="share-channel-name">Facebook</div>
+                      </div>
+                      <div class="share-channel">
+                        <div class="share-channel-icon icon-copy">⎘</div>
+                        <div class="share-channel-name">Copy</div>
+                      </div>
+                    </div>
+
+                    <div class="share-disclaimer">
+                      EACH SHARE IS LOGGED · TOKENS AUTO-EXPIRE 6H AFTER EVENT ENDS · USER CAN REVOKE ALL LINKS
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Emergency dispatch sits above the standard share menu.</strong>
+              Tapping it dials the local emergency number and puts the link in the
+              clipboard — so when dispatch picks up, the caller pastes the link
+              and dispatch sees everything.
+            </p>
+          </div>
+
+        </div>
+
+        <!-- NARRATIVE FLOW -->
+        <div style="margin-top: 32px;">
+          <div class="narrative-flow">
+            <div class="narrative-step">
+              <div class="narrative-step-num">01</div>
+              <div class="narrative-step-content">
+                <h3>Activation creates the link</h3>
+                <p>
+                  The instant the user triggers, the backend mints
+                  <code style="font-family: var(--font-mono); font-size: 12px;">blackbox.app/live/a7f3-8e2c-4d</code>.
+                  Token is short, memorable, scoped to this single event.
+                </p>
+              </div>
+            </div>
+            <div class="narrative-step">
+              <div class="narrative-step-num">02</div>
+              <div class="narrative-step-content">
+                <h3>Contact receives the link via Telegram instantly</h3>
+                <p>
+                  Bot delivers a rich message with location pin, audio clip, and the
+                  live link. No app install required for the contact — Telegram is
+                  already on most phones, and it's free.
+                </p>
+              </div>
+            </div>
+            <div class="narrative-step">
+              <div class="narrative-step-num">03</div>
+              <div class="narrative-step-content">
+                <h3>Contact taps Share — native sheet opens</h3>
+                <p>
+                  Emergency dispatch sits at the top. Below it, every messaging and
+                  social app on the phone. One tap per destination. Link copied,
+                  link sent, link spreading.
+                </p>
+              </div>
+            </div>
+            <div class="narrative-step">
+              <div class="narrative-step-num">04</div>
+              <div class="narrative-step-content">
+                <h3>Each recipient sees the same live dashboard</h3>
+                <p>
+                  Different tokens, different tiers — full data for designated
+                  contacts, dispatch-formatted for authorities, summary for public
+                  amplification. Each can re-share. The link spreads at network speed.
+                </p>
+              </div>
+            </div>
+            <div class="narrative-step">
+              <div class="narrative-step-num">05</div>
+              <div class="narrative-step-content">
+                <h3>The user can revoke all of it with one button</h3>
+                <p>
+                  After the event resolves, the user can wipe every active token in
+                  one tap. Or let them expire automatically 6 hours after stand-down.
+                  Audit trail of every share is preserved for evidence.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 4: SHARED LINK RECIPIENT -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">04</span>
+          <span class="section-title">The shared link recipient — three viewer tiers</span>
+          <span class="section-desc">
+            Same URL pattern, different access tiers. Original contact has full
+            access. Authority links unlock dispatch-formatted data. Public links
+            are redacted for social amplification.
+          </span>
+        </div>
+
+        <div class="phone-grid phone-grid--2">
+
+          <!-- AUTHORITY VIEW -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>AUTHORITY VIEW</strong> · DISPATCH</div>
+              <div class="phone-badge" style="background: rgba(255, 59, 48, 0.15); color: var(--status-active); border: 1px solid rgba(255, 59, 48, 0.4);">DISPATCH GRADE</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:38</span><span>● ● ● 83%</span></div>
+                  <div class="top-bar-active">
+                    <div class="recording-indicator">
+                      <span class="recording-dot"></span>
+                      <span>Dispatch · LIVE</span>
+                    </div>
+                    <span class="elapsed">04:32</span>
+                  </div>
+                  <div class="dashboard-scroll">
+                    <div class="data-section" style="border-top: none;">
+                      <div class="section-label">Dispatch Summary</div>
+                      <div style="font-size: 11px; line-height: 1.5; color: var(--text-primary); padding: 6px; background: rgba(255, 59, 48, 0.08); border-radius: 4px; margin-top: 4px;">
+                        Yumi Tanaka, 28, activated 04:32 ago. Moving NE at 1.2 m/s,
+                        3.2 km from registered home. Two voices, male aggressor,
+                        weapon language ("knife") detected at 02:14.
+                      </div>
+                      <div class="micro" style="margin-top: 6px;">⎘ Tap to copy for CAD</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Coordinates</div>
+                      <div class="coords">26.3344°N · 127.7894°E</div>
+                      <div class="coords-meta">DECIMAL · ±2m</div>
+                      <div class="coords" style="margin-top: 4px; font-size: 10px;">26°20'03.8"N 127°47'21.8"E</div>
+                      <div class="coords-meta">DMS · GOOGLE COMPATIBLE</div>
+                      <div class="coords" style="margin-top: 4px; font-size: 10px;">PMG3+RQ Naha</div>
+                      <div class="coords-meta">PLUS CODE</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Nearest Response</div>
+                      <div style="font-size: 11px;">Naha Central Police</div>
+                      <div class="coords-meta">1.8 km · est. 4 min response</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Subject</div>
+                      <div style="font-size: 11px;">Female, 28, registered</div>
+                      <div class="coords-meta">Photo on file · Tap to view</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Live Audio</div>
+                      <div class="waveform">
+                        <div class="wave-bar" style="animation-delay: 0s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.25s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.35s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                      </div>
+                      <div class="micro">24-BIT · STREAM · LATENCY 1.2s</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Forwarded By</div>
+                      <div style="font-size: 11px;">Sarah Chen (Contact)</div>
+                      <div class="coords-meta">+81 90 1234 5678 · LINE Sarah_C</div>
+                      <div class="micro" style="margin-top: 4px;">⎘ Call witness back</div>
+                    </div>
+
+                    <div class="share-cta" style="background: var(--status-info);">I Am Responding</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Optimized for dispatch.</strong> One-line summary copyable to
+              CAD systems. Coordinates in three notations. Reverse callback to the
+              witness who forwarded the link. "I Am Responding" notifies all other
+              viewers that authority is en route.
+            </p>
+          </div>
+
+          <!-- PUBLIC / SOCIAL VIEW -->
+          <div class="phone-card">
+            <div class="phone-meta">
+              <div class="phone-tier"><strong>PUBLIC VIEW</strong> · SOCIAL SHARE</div>
+              <div class="phone-badge badge-free">REDACTED</div>
+            </div>
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <div class="screen">
+                  <div class="status-bar"><span>06:38</span><span>● ● ● 83%</span></div>
+                  <div class="top-bar-active">
+                    <div class="recording-indicator">
+                      <span class="recording-dot"></span>
+                      <span>Live · 147 viewers</span>
+                    </div>
+                    <span class="elapsed">04:32</span>
+                  </div>
+                  <div class="dashboard-scroll">
+                    <div class="data-section" style="border-top: none;">
+                      <div class="section-label">Public Summary</div>
+                      <div style="font-size: 11px; line-height: 1.5; color: var(--text-primary); padding: 6px; background: rgba(232, 154, 0, 0.08); border-radius: 4px; margin-top: 4px;">
+                        BLACK BOX active alert near Naha, Okinawa.
+                        Two voices detected, threat assessed HIGH.
+                        Help has been requested. Authorities notified.
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Area</div>
+                      <div class="map-frame">
+                        <div class="map-pin" style="
+                          width: 60px; height: 60px;
+                          background: rgba(255, 59, 48, 0.15);
+                          box-shadow: none;
+                          border: 1px dashed var(--status-active);
+                          animation: none;
+                        "></div>
+                      </div>
+                      <div style="font-size: 11px;">Naha Central, Okinawa</div>
+                      <div class="coords-meta">PRECISE LOCATION HIDDEN · 500m RADIUS</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">What You Can Do</div>
+                      <div style="font-size: 11px; line-height: 1.6; color: var(--text-primary);">
+                        ✓ If you are in this area, stay alert<br/>
+                        ✓ Re-share this link to amplify<br/>
+                        ✓ Do not approach — let authorities respond
+                      </div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Live Audio</div>
+                      <div class="waveform">
+                        <div class="wave-bar" style="animation-delay: 0s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.2s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.15s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.05s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.3s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.25s;"></div>
+                        <div class="wave-bar" style="animation-delay: 0.1s;"></div>
+                      </div>
+                      <div class="micro">REDACTED · IDENTIFIERS MUTED</div>
+                    </div>
+
+                    <div class="data-section">
+                      <div class="section-label">Network</div>
+                      <div style="font-size: 11px;">147 people watching live</div>
+                      <div class="coords-meta">23 SHARED · 4 REGISTERED RESPONDERS NEARBY</div>
+                    </div>
+
+                    <div class="share-cta" style="background: var(--status-armed);">Share to Amplify</div>
+                    <div class="cancel-bar" style="margin-top: 8px;">I'm Nearby · Can Help</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="phone-description">
+              <strong>Redacted for social.</strong> No exact location, no identity,
+              no full audio — just enough to draw attention and amplify pressure.
+              "147 people watching" itself becomes deterrent. Bystanders can
+              flag themselves as nearby.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- KEY TAKEAWAYS -->
+      <section class="section">
+        <div class="section-header">
+          <span class="section-number">05</span>
+          <span class="section-title">Three things this matrix makes clear</span>
+        </div>
+
+        <div class="narrative-flow">
+          <div class="narrative-step">
+            <div class="narrative-step-num">●</div>
+            <div class="narrative-step-content">
+              <h3>The user's phone never changes</h3>
+              <p>
+                Same dormant view across all three tiers. Same hidden gesture.
+                Same "ARMED · LISTENING." What changes is which device is paired,
+                and that's confined to one line on the home screen.
+              </p>
+            </div>
+          </div>
+          <div class="narrative-step">
+            <div class="narrative-step-num">●</div>
+            <div class="narrative-step-content">
+              <h3>Each hardware tier visibly upgrades the dashboard, not the workflow</h3>
+              <p>
+                The contact's workflow — open link, see live data, tap share — is
+                identical regardless of hardware. v2 adds 360° video, multichannel
+                audio, direction of arrival, and device-side storage. Same interface,
+                richer content. Upgrading hardware is upgrading evidence quality, not
+                learning a new system.
+              </p>
+            </div>
+          </div>
+          <div class="narrative-step">
+            <div class="narrative-step-num">●</div>
+            <div class="narrative-step-content">
+              <h3>Sharing is the product's superpower</h3>
+              <p>
+                The SHARE button is the most prominent action on every dashboard.
+                Emergency dispatch sits above social channels in the share sheet.
+                Every share creates a new token, lower-privileged. The link spreads
+                at network speed; the data stays in one place. Authorities receive
+                a dispatch-formatted view, social amplification gets a redacted view,
+                contacts get the full data — same URL pattern, different access.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </body>
+</html>

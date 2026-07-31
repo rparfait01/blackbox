@@ -1,0 +1,9 @@
+# Normalize all text files to LF in the repository (matches .editorconfig).
+* text=auto eol=lf
+
+# Binary assets — never normalize.
+*.woff binary
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.ico binary

@@ -1,0 +1,11 @@
+-- BLACK BOX backend schema v35 — survivor key recovery (Brief 26, Phase 1 keygen).
+--
+-- Decision A: for an INDIVIDUAL survivor, the recovery code is the only way back to
+-- their captures. So the survivor's private key, wrapped under a key derived from their
+-- recovery code, is stored here — OPAQUE to the server (it holds this but cannot open it
+-- without the code, which it never sees). A new device + the recovery code restores the
+-- key; lose the device AND the code and it is gone, stated plainly at setup.
+--
+-- Additive + nullable + DORMANT until the flag arms and keygen runs; the private half is
+-- never here in clear, only this code-wrapped blob.
+ALTER TABLE users ADD COLUMN recoveryWrappedKey TEXT;

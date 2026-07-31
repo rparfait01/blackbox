@@ -1,0 +1,182 @@
+name = "blackbox-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Principle: no telemetry. Disable Wrangler's anonymous usage metrics.
+send_metrics = false
+
+# Allowed PWA origins for CORS (comma-separated). The deployed Pages origin must
+# be here so the PWA (sign-up, guardian accept) and the contact magic-link view
+# can call the Worker.
+[vars]
+# Zero-knowledge capture envelope (Brief 26) — ARMED 2026-07-30, operator decision.
+#
+# DECLARED HERE, NOT PASSED AS `--var`. A `wrangler deploy --var` value lives only for that
+# one deploy: the very next `pnpm deploy` would drop it and silently disarm custody, with no
+# error and no sign except unencrypted captures. Vars in this file are re-applied on every
+# deploy, so the armed state survives them.
+#
+# Arming turns on: per-capture DEK wrapping, capture-time plaintext commitments, device key
+# provisioning, and the four owner-scoped report endpoints (which 404 while it is off). The
+# capture send path still FAILS OPEN to plaintext, so this can never cost a recording.
+ENVELOPE_ENCRYPTION_ENABLED = "true"
+CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blackbox-pwa.pages.dev"
+# PWA origin used to build dashboard + guardian-invite links. Set to the deployed
+# Pages URL for the pilot. When empty the Worker falls back to its own origin.
+PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
+# The Worker's own public origin — used to build dashboard magic-links from the
+# scheduled (cron) context, where there is no request URL. Set to the deployed
+# Worker URL.
+WORKER_ORIGIN = "https://blackbox-api.stillpoint-dev.workers.dev"
+# Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the family
+# pilot this is the operator/founder.
+SECURITY_CONTACT_EMAIL = "royce.ikumi.parfait@gmail.com"
+# Ed25519 PUBLIC verification key (SPKI base64) for export manifests (#C2). The
+# matching PRIVATE key is the INTEGRITY_SIGNING_KEY secret. Publish this value
+# out-of-band so recipients/courts can pin it.
+INTEGRITY_PUBLIC_KEY = "MCowBQYDK2VwAyEA0JvR9tHYACGq0mivDWifJ16CJ6mt6t5A06yLlhpwPYE="
+# ECDSA P-256 PUBLIC verification key (SPKI base64) for CERTIFIED REPORTS (Brief 30 §1).
+# The matching PRIVATE key is the REPORT_SIGNING_KEY secret. This value is PUBLISHED —
+# it is embedded in the standalone verifier and served at
+# /.well-known/blackbox-report-public-key.json so a court's own expert can check a report
+# without BLACK BOX and without the verification page. Deliberately a DIFFERENT key from
+# INTEGRITY_PUBLIC_KEY: different artifact, different audience, independent rotation.
+REPORT_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXqmajlR2iQOxIrPfF4AE8kTQdfofQIlLWaZn39L2mxyq2mwbcCb32QvqrNzQsTVHnBR1l3j9+0c/7nmbydR+GQ=="
+# StillPoint Official Account basic id (public, @-prefixed) for the QR-connect LINE
+# pairing deep link (Brief 18). Not a secret — it is the OA's public handle.
+LINE_OA_BASIC_ID = "@346hrzaa"
+# Gumroad product identifier for the consumer licence-key path (Brief 34 §1). A VAR, not
+# a secret: this id is PUBLIC (it appears in Gumroad's own embed code), and storing it as
+# a secret bought no confidentiality while creating a silent failure mode — an empty
+# secret is invisible, and the licence check simply answered "purchases cannot be
+# verified" with nothing to diagnose. As a var it is printed in every deploy's binding
+# list, so an empty or wrong value is visible before it reaches a buyer.
+GUMROAD_PRODUCT_ID = "E8v_RiJkV5Tyjwryd5rMCg=="
+
+# Secrets are NOT defined here — set them with `wrangler secret put` (see
+# README.md): LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_TOKEN,
+# MAGIC_LINK_SECRET, SESSION_SECRET, SENDGRID_API_KEY, SENDGRID_FROM_EMAIL,
+# SENDGRID_FROM_NAME, INTEGRITY_SIGNING_KEY.
+
+# Cron Trigger (Fix Brief 1 #3 escalation + Fix Brief 2 #C4 integrity scan).
+# Every minute: escalate active events whose heartbeat went stale, and re-verify
+# sealed vault artifacts.
+[triggers]
+crons = ["* * * * *"]
+
+# D1 metadata database.
+[[d1_databases]]
+binding = "DB"
+database_name = "blackbox"
+database_id = "32c52326-db43-4a39-ab58-f62d7b95b9ad"
+migrations_dir = "migrations"
+
+# R2 media bucket.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "blackbox-media"
+
+# R2 sealed custody vault (Fix Brief 2 #C3) — write-once, 36-month retention.
+# Create with: wrangler r2 bucket create blackbox-vault
+[[r2_buckets]]
+binding = "VAULT"
+bucket_name = "blackbox-vault"
+
+# Durable Object that fires each contact-cascade step at its EXACT window
+# (Brief 17) — precise timing that does not depend on the activation request's
+# waitUntil surviving. SQLite-backed (free-plan compatible).
+[[durable_objects.bindings]]
+name = "CASCADE_DO"
+class_name = "CascadeScheduler"
+
+# EventChannel (Brief 16 §4) — per-event WebSocket fan-out so the open dashboard
+# receives lifecycle changes via server push, not polling.
+[[durable_objects.bindings]]
+name = "EVENT_CHANNEL"
+class_name = "EventChannel"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CascadeScheduler"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["EventChannel"]
+# =====================================================================
+# STAGING — where the acceptance suite runs. THE POINT: tests never operate on
+# production.
+#
+# The suite is a WRITE-HEAVY integration test. It signs up accounts, bootstraps
+# organisations, mints codes, opens events and uploads capture chunks. Pointed at
+# production it did all of that to the real database — ~26 orgs and a few orphan
+# accounts per run, permanently, because its cleanup only ever deleted accounts it
+# could sign back into. That is the same class of error as the SendGrid quota bug:
+# testing the safety system was degrading the safety system.
+#
+# So this environment is a COMPLETE severance, not a flag:
+#   DB     → blackbox-test        (its own D1; prod rows are unreachable from here)
+#   MEDIA  → blackbox-media-test  (capture chunks never land in the real bucket)
+#   VAULT  → blackbox-vault-test
+#
+# Bindings and vars are NON-INHERITABLE in wrangler — every one below must be
+# restated or the environment silently falls back to having none. `main`,
+# `compatibility_date`, `compatibility_flags`, `triggers` and the Durable Object
+# `migrations` ARE inherited, so the cron and the DO classes match production and
+# the cascade-timing checks stay honest.
+#
+# Secrets are per-environment too, and staging gets its OWN — set with
+# `wrangler secret put <NAME> --env staging`. They are deliberately NOT the
+# production values: a test environment holding production credentials is not a
+# severed environment.
+[env.staging]
+name = "blackbox-api-staging"
+
+[env.staging.vars]
+# Envelope custody must MATCH PRODUCTION here, and this restatement is load-bearing.
+# Wrangler does not inherit top-level vars into a named environment — it warns and gives the
+# environment none. When prod was armed and this line was missing, staging stayed dormant, so
+# acceptance 68 went on proving a 404-as-absent contract that production no longer had: the
+# live report path was outside the tripwire while the suite still reported green. A test
+# environment that disagrees with prod about a feature's EXISTENCE tests nothing.
+ENVELOPE_ENCRYPTION_ENABLED = "true"
+# The staging PWA origin is the same Pages deployment — only the DATA is severed.
+CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,https://blackbox-pwa.pages.dev"
+PWA_ORIGIN = "https://blackbox-pwa.pages.dev"
+WORKER_ORIGIN = "https://blackbox-api-staging.stillpoint-dev.workers.dev"
+SECURITY_CONTACT_EMAIL = "security@example.com"
+# STAGING'S OWN keypairs — NOT production's. The private halves are staging secrets, so
+# reusing the production public keys here would mean signatures that never verify. More
+# importantly, a test environment must not hold production signing keys: the whole point
+# of this environment is that compromising it reaches nothing real.
+INTEGRITY_PUBLIC_KEY = "MCowBQYDK2VwAyEAukhg3BBMXLS4wV0A0Lxw46kIakd9sXOaL4lp/V6eHwQ="
+REPORT_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEINaqxgJsApfosM1lTPKROXU0fzIwknZNfzUbdTBPpAvgwKm/YoNM1zFWBP0qIcIKzKfLtPZPc4xf8v+31vNMCw=="
+LINE_OA_BASIC_ID = "@346hrzaa"
+# The REAL product id: acceptance check 75 asserts that an unrecognised licence key
+# is refused as `invalid_license`, which only happens when Gumroad is actually
+# reached with a real product. A dummy here would answer `not_configured` and the
+# check would be testing nothing. It is public (it appears in Gumroad's embed) and
+# `increment_uses_count: false` means verification never consumes a real purchase.
+GUMROAD_PRODUCT_ID = "E8v_RiJkV5Tyjwryd5rMCg=="
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "blackbox-test"
+database_id = "bbca261e-56ce-443d-9f34-056f6dbbd68a"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "MEDIA"
+bucket_name = "blackbox-media-test"
+
+[[env.staging.r2_buckets]]
+binding = "VAULT"
+bucket_name = "blackbox-vault-test"
+
+[[env.staging.durable_objects.bindings]]
+name = "CASCADE_DO"
+class_name = "CascadeScheduler"
+
+[[env.staging.durable_objects.bindings]]
+name = "EVENT_CHANNEL"
+class_name = "EventChannel"

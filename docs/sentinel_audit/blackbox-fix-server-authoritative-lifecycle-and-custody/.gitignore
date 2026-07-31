@@ -1,0 +1,76 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+dev-dist/
+build/
+*.tsbuildinfo
+
+# Cloudflare / Wrangler
+.wrangler/
+.dev.vars
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test / coverage
+coverage/
+
+# Local credential notes (never commit)
+*token*.txt
+*secret*.txt
+admin_token.txt
+Long Token - Long Lived.txt
+wrangler_secret_list.txt
+
+# Local secrets / scratch (never commit)
+workers/SendGrid Mail Send.txt
+*.secret
+
+# API keys & credentials anywhere in the tree (never commit) — added after a
+# SendGrid API-key file was scrubbed from history. Belt-and-suspenders with the
+# scoped *.txt rules below.
+*.key
+*.pem
+*.pfx
+*.p12
+*API Key*
+*api*key*
+*apikey*
+*credentials*
+.dev.vars.*
+
+# Stray scratch text files at repo root / workers (never commit; docs live in docs/*.md)
+/*.txt
+workers/*.txt
+
+# Marketing/portfolio HTML kept out of the code repo
+docs/Portfolio/
+
+# Acceptance suite privileged test creds (never commit)
+workers/api/test/.acceptance.env
+
+# Operator-local wrangler secret-list exports (may contain sensitive info)
+workers/*.html
+workers/*_files/

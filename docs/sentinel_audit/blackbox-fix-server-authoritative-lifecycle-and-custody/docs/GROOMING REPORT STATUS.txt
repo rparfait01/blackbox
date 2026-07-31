@@ -1,0 +1,36 @@
+GROOMING REPORT STATUS
+
+ Done — the critical fix is deployed (de1090a, Worker 4f257220).
+
+  Coordinator claim → deliberate POST (fixed)
+
+  - Opening the link no longer claims coordination. An opener sees the location-only view; when no one has claimed yet it shows a "TAKE COORDINATION"
+  button.
+  - Pressing it POSTs /v1/c/:id/claim-coordinator — an atomic claim (first to flip coordinatorClaimedAt wins + gets the cookie; others get 409
+  already_claimed; idempotent for the existing coordinator; dispatch-role tokens rejected). On success the client reloads into the full coordinator
+  dashboard.
+  - The cascade still halts on coordinatorClaimedAt — now set only by the deliberate claim, so a passive open can't halt the cascade or mis-route duress.
+  This closes the duress-routing corruption you flagged.
+
+  Everything else per your call: typo→notify left (won't mark passing), covert check-in / CAD-copy / contact-initiated / 6h TTL / embed-report all deferred,
+  open questions kept at current-coordinator+guardian-failsafe / guardian-last / halt-on-claim.
+
+  You're clear to live-test. Prereqs (clean relaunch)
+
+  1. Fully close/reopen the installed PWA (or re-add to home screen) so you're on the latest build.
+  2. Onboard fresh → sets the 3-digit closure pin.
+  3. Settings → add Primary/Secondary/Tertiary/Guardian on LINE channels; set Emergency to a number you control (never 911).
+  4. For mechanical passes, tell me to lower cascadeIntervalSeconds/emergencyAfterSeconds in D1 (no UI yet); do one final pass at the real 15s / 120s to
+  feel the rhythm.
+
+  What you'll be testing, behaviorally:
+  - Activate → contacts notified in priority order ~15s apart → each opener sees location-only + "Take coordination" → first to press becomes sole
+  coordinator (full), cascade halts, others stay location-only.
+  - Request closure: 3-digit pin, explicit Submit → identical "awaiting confirmation" screen for SAT and duress → coordinator's window shows SAT vs
+  UNSAT/DURESS ("threat ongoing") → two-step Secure → "Are you sure [user] is safe?" → secured → write-once closure report.
+  - No-claim run completes to the emergency fallback (your controlled number).
+
+  I'll hold here for your live-test results. When you report back, have ready (if anything fails): which step, the platform (iOS/Android), and—if you
+  can—the Worker logs (wrangler tail) during the run, so I can pin device-specific causes fast.
+
+✻ Churned for 2m 58s

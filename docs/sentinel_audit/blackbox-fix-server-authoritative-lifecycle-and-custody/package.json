@@ -1,0 +1,37 @@
+{
+  "name": "blackbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BLACK BOX — a personal safety system for people who cannot afford to be safe.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -F pwa dev",
+    "build": "pnpm -F pwa build",
+    "build:all": "pnpm -r build",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "acceptance": "pnpm -F @blackbox/api acceptance",
+    "deploy": "node scripts/deploy.mjs",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build:all",
+    "gate": "pnpm verify && pnpm acceptance",
+    "setup-hooks": "git config core.hooksPath .githooks"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2"
+  }
+}

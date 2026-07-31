@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How to verify a BLACK BOX report independently</title>
+<meta name="description" content="The full specification for verifying a BLACK BOX report without BLACK BOX and without this page.">
+<style>
+:root{color-scheme:light dark}
+body{margin:0;padding:2rem 1.25rem 4rem;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#14181d;background:#f4f6f8}
+main{max-width:46rem;margin:0 auto}
+h1{font-size:1.55rem;line-height:1.25;margin:0 0 .5rem}
+h2{font-size:1.05rem;margin:2rem 0 .6rem;padding-top:1.2rem;border-top:1px solid #dde3ea}
+h3{font-size:.95rem;margin:1.4rem 0 .4rem}
+p,li{color:#39434f}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+code{font-size:12.5px;background:#e8ecf1;padding:.1rem .3rem;border-radius:.25rem}
+pre{font-size:12px;line-height:1.55;background:#fff;border:1px solid #dde3ea;border-radius:.5rem;padding:.9rem 1rem;overflow-x:auto}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:13.5px}
+th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid #dde3ea;vertical-align:top}
+th{color:#6b7684;font-weight:600}
+.callout{background:#fffcf3;border:1px solid #e6cf9a;border-radius:.5rem;padding:.9rem 1.1rem;margin:1.1rem 0}
+.callout b{color:#8a5a10}
+a{color:#2f6fb5}
+.back{display:inline-block;margin-bottom:1.5rem;font-size:13.5px}
+@media (prefers-color-scheme:dark){
+body{background:#10141a;color:#e6eaf0}
+p,li{color:#a9b4c2}
+h2{border-color:#2c3644}
+code{background:#1c232c;color:#c7d2e0}
+pre{background:#171d25;border-color:#2c3644;color:#c7d2e0}
+th,td{border-color:#2c3644}
+.callout{background:#2a2312;border-color:#6b5322}
+.callout b{color:#e3b25f}
+a{color:#7bb3ec}
+}
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="./">← Back to the verifier</a>
+<h1>Verifying a BLACK BOX report independently</h1>
+<p>
+  This page exists so a court, an advocate, or an opposing expert can verify a BLACK BOX
+  report <b>without BLACK BOX</b>, without an account, and without the verifier page ever
+  having existed. The verifier is a convenience. This specification is the trust.
+</p>
+
+<h2>0. What the signature claims — and what it does not</h2>
+<p><b>The signature attests that:</b></p>
+<ul>
+  <li>the evidence section of the document is byte-for-byte what BLACK BOX signed, at the
+    stated time, for the stated event;</li>
+  <li>the per-chunk <b>plaintext commitments</b> shown in the document are the ones BLACK BOX
+    recorded <b>at the moment of capture</b> — the server re-derives them from its own records
+    when it signs, so they cannot be substituted afterwards;</li>
+  <li>the recording, when decrypted on the survivor's own device, hashed to exactly those
+    commitments.</li>
+</ul>
+<p><b>The signature does not claim:</b></p>
+<ul>
+  <li>that any particular thing happened, or that a recording depicts anything in particular.
+    BLACK BOX does not interpret, transcribe, or assess a recording;</li>
+  <li>that the <b>survivor statement</b> is true or checked. It is deliberately outside the
+    signature (see §4);</li>
+  <li>that the file was not copied or shown selectively. Tamper-<i>evidence</i> is not
+    tamper-<i>prevention</i>: anyone holding a file can alter any byte. The point is that
+    altering the evidence section is <i>detectable</i>.</li>
+</ul>
+
+<h2>1. The document</h2>
+<p>A report is a single self-contained HTML file with three parts:</p>
+<table>
+  <tr><th>Part</th><th>Marker</th><th>Signed</th></tr>
+  <tr><td>Visible evidence text</td><td><code>&lt;pre id="blackbox-evidence-text"&gt;…&lt;/pre&gt;</code></td><td>yes (as <code>renderedHash</code>)</td></tr>
+  <tr><td>Machine-readable payload</td><td><code>&lt;script type="application/json" id="blackbox-attestation"&gt;…&lt;/script&gt;</code></td><td>yes (as <code>evidenceHash</code>)</td></tr>
+  <tr><td>Survivor statement</td><td><code>&lt;div id="blackbox-statement"&gt;&lt;pre&gt;…&lt;/pre&gt;&lt;/div&gt;</code></td><td><b>no — deliberately</b></td></tr>
+</table>
+<p>The payload is a JSON object:</p>
+<pre><code>{
+  "evidence":    { … the evidence zone … },
+  "attestation": { … the signed object … },
+  "signature":   "base64 ECDSA P-256 signature (raw r‖s)",
+  "publicKey":   "base64 SPKI public key"
+}</code></pre>
+<p>
+  Inside the <code>&lt;script&gt;</code> block every <code>&lt;</code> is escaped as the six
+  characters <code><</code> so the JSON cannot terminate the element; un-escape before
+  parsing. In the visible blocks, <code>&amp;</code>, <code>&lt;</code> and <code>&gt;</code>
+  are HTML-escaped as <code>&amp;amp;</code>, <code>&amp;lt;</code>, <code>&amp;gt;</code> —
+  reverse in that order, with <code>&amp;amp;</code> <b>last</b>.
+</p>
+
+<h2>2. Canonical JSON</h2>
+<p>Both hashes are taken over a canonical serialization — a small, deliberately boring subset
+  of RFC 8785 (JCS), short enough to re-implement in any language:</p>
+<ol>
+  <li>Object keys sorted ascending by <b>Unicode code point</b> of the raw key string.</li>
+  <li>Members whose value is <code>undefined</code> are omitted; <code>null</code> is kept.</li>
+  <li><b>Array order is preserved</b> — order carries meaning (chunk sequence, notification order).</li>
+  <li>No insignificant whitespace: no space after <code>:</code> or <code>,</code>, no newlines.</li>
+  <li>Strings, numbers and booleans use standard JSON encoding (RFC 8259).</li>
+  <li>Non-finite numbers are invalid and never appear.</li>
+</ol>
+
+<h2>3. The verification procedure</h2>
+
+<h3>Step 1 — extract</h3>
+<p>
+  Take the text between the attestation markers, replace <code><</code> with
+  <code>&lt;</code>, and <code>JSON.parse</code> it. Take the text between the evidence
+  markers and HTML-unescape it. If either marker is absent the file is <b>not a BLACK BOX
+  report</b> — a different outcome from TAMPERED.
+</p>
+
+<h3>Step 2 — check the key is the published one</h3>
+<div class="callout">
+  <b>This step is not optional.</b> A document carries its own public key, so a forger can
+  sign an altered report with a key they control and publish that key alongside it. Such a
+  document is perfectly self-consistent and proves nothing. Always compare
+  <code>payload.publicKey</code> against the published BLACK BOX key below.
+</div>
+<p>Published key (SPKI, base64):</p>
+<pre><code>__PUBLIC_KEY__</code></pre>
+<p>
+  Also downloadable as <a href="./blackbox-report-public-key.pem" download>PEM</a> or
+  <a href="./blackbox-report-public-key.jwk.json" download>JWK</a>.
+</p>
+
+<h3>Step 3 — check the evidence data</h3>
+<pre><code>sha256_hex( utf8( canonicalize( payload.evidence ) ) )  ==  attestation.evidenceHash</code></pre>
+
+<h3>Step 4 — check the visible text</h3>
+<p>Collapse every run of whitespace in the evidence text to a single space, trim both ends, then:</p>
+<pre><code>sha256_hex( utf8( normalized ) )  ==  attestation.renderedHash</code></pre>
+<p>
+  Whitespace is normalized so that reflowing, re-saving or printing a document is not mistaken
+  for tampering. Any change that survives normalization is a real change to what the document
+  asserts.
+</p>
+
+<h3>Step 5 — check the text matches the data</h3>
+<p>
+  The visible text is a deterministic rendering of <code>payload.evidence</code>. Re-render it,
+  normalize as in step 4, and confirm it equals the document's own evidence text. This catches
+  a document that <i>displays</i> one thing while <i>carrying</i> another. If you are not
+  re-implementing the renderer, rely on steps 3 and 4 together — and read the visible evidence
+  text, since that is what a reader sees.
+</p>
+
+<h3>Step 6 — check the signature</h3>
+<pre><code>ECDSA_P256_SHA256_verify(
+  key       = payload.publicKey        (SPKI, base64)
+  message   = utf8( canonicalize( payload.attestation ) )
+  signature = payload.signature        (base64, raw r‖s)
+)</code></pre>
+<p>The signed message is the <b>canonical attestation</b> — not the document bytes, and not
+  the JSON as it happens to appear in the file.</p>
+<div class="callout">
+  <b>Interop note — signature encoding.</b> WebCrypto produces and consumes the raw
+  <i>r‖s</i> form (64 bytes for P-256). OpenSSL expects DER. Convert before using
+  <code>openssl pkeyutl</code>. This is the one real gotcha in the format.
+</div>
+<pre><code># raw r||s (64 bytes) -> DER, then verify
+python3 - &lt;&lt;'PY'
+import base64
+sig = base64.b64decode(open('sig.b64').read().strip())
+r, s = int.from_bytes(sig[:32],'big'), int.from_bytes(sig[32:],'big')
+def enc(x):
+    b = x.to_bytes((x.bit_length()+8)//8 or 1, 'big')
+    return b'\x02' + bytes([len(b)]) + b
+body = enc(r) + enc(s)
+open('sig.der','wb').write(b'\x30' + bytes([len(body)]) + body)
+PY
+
+printf '%s' "$CANONICAL_ATTESTATION" &gt; msg.bin
+openssl dgst -sha256 -verify blackbox-report-public-key.pem -signature sig.der msg.bin</code></pre>
+
+<h3>Verdicts</h3>
+<table>
+  <tr><th>Condition</th><th>Verdict</th></tr>
+  <tr><td>Markers absent / payload unparseable</td><td><b>Not a BLACK BOX report</b></td></tr>
+  <tr><td>Steps 2–6 all pass</td><td><b>CERTIFIED</b> — evidence verified, unaltered since generation</td></tr>
+  <tr><td>Any of steps 2–6 fails</td><td><b>TAMPERED</b> — evidence altered; not certified</td></tr>
+  <tr><td>Your runtime cannot perform the check</td><td><b>Could not verify</b> — never report this as certified</td></tr>
+</table>
+<p>
+  That last row matters. A verifier that cannot distinguish "unaltered" from "I could not
+  check" is worse than no verifier, because it prints a reassuring answer on faith.
+</p>
+
+<h2>4. The statement is not signed, and that is deliberate</h2>
+<p>The statement zone is excluded from every hash above. Two consequences, both intended:</p>
+<ul>
+  <li>The survivor may <b>revise her account at any time</b> — expand it, correct it, write it
+    months later — and the certification of the evidence remains valid. Her evidence is not
+    held hostage to the first words she managed to write.</li>
+  <li>A court is told plainly that the statement <b>is her account, not machine-verified</b>.
+    BLACK BOX does not vouch for it, and equally does not grade, score, or challenge it.</li>
+</ul>
+<p><b>Editing the statement must never be reported as tampering.</b> A verifier that flags an
+  edited statement is incorrect.</p>
+
+<h2>5. The attestation object</h2>
+<pre><code>{
+  "format":          "blackbox-certified-report/v1",
+  "alg":             "ECDSA-P256-SHA256",
+  "eventId":         "…",
+  "evidenceHash":    "sha256 hex — computed on the survivor's device",
+  "renderedHash":    "sha256 hex — computed on the survivor's device",
+  "commitmentsHash": "sha256 hex — recomputed SERVER-side from its own records",
+  "chainHead":       "integrity-chain head at signing, or null",
+  "chainSeq":        41,
+  "signedAt":        "UTC ISO-8601"
+}</code></pre>
+<p>
+  <code>commitmentsHash</code> is the canonical hash of the ordered commitment list, derived by
+  the server from its own records — <b>not</b> from anything the device supplied. That is what
+  makes the certification non-circular: without it, the signature would attest only that the
+  device said what the device said.
+</p>
+
+<h2>6. Zero knowledge</h2>
+<p>
+  BLACK BOX signs <b>two SHA-256 hashes and an event id</b>. It does not receive the evidence,
+  the recording, or the statement, and holds no key that can decrypt a recording — those are
+  decrypted on the survivor's own device with her own key. A BLACK BOX signature is therefore a
+  signature over a fingerprint the signer cannot invert.
+</p>
+</main>
+</body>
+</html>
