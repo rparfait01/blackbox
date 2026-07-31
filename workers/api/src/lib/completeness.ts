@@ -98,7 +98,14 @@ export async function getCompleteness(env: Env, eventId: string): Promise<Comple
   )
     .bind(eventId)
     .first<{ completenessState: string; lastSequenceReceived: number | null; closedAt: number | null; tzOffsetMinutes: number | null }>();
-  const state = (row?.completenessState ?? 'IN_PROGRESS') as CompletenessState;
+  // A CLOSED capture can never be "in progress", whatever the column happens to hold. This
+  // guard exists because a default once said otherwise on five real production events, and a
+  // report that states something false about evidence is worse than one that states nothing.
+  // Backfilled by 0050; kept here so a future column default cannot reintroduce the lie.
+  let state = (row?.completenessState ?? 'IN_PROGRESS') as CompletenessState;
+  if (state === 'IN_PROGRESS' && row?.closedAt != null) {
+    state = 'ABNORMAL';
+  }
   const lastSequence = row?.lastSequenceReceived ?? null;
   const dtg = row?.closedAt ? new Date(row.closedAt).toISOString().replace('T', ' ').slice(0, 19) + 'Z' : null;
   return { state, lastSequence, statement: completenessStatement(state, lastSequence, dtg) };

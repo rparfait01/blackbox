@@ -62,4 +62,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0047_encryption_state',
   '0048_integrity_serialization',
   '0049_capture_completeness',
+  '0050_backfill_completeness',
 ];
