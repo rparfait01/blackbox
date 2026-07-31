@@ -60,4 +60,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0045_checkin_primary_only',
   '0046_canary_isolation',
   '0047_encryption_state',
+  '0048_integrity_serialization',
 ];

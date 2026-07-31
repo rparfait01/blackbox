@@ -307,6 +307,9 @@ export async function deleteAccount(
     byEvent('event_origin'),
     byEvent('integrity_records'),
     byEvent('integrity_heads'),
+    // Brief 37 §C/§B — replay keys and declared gaps are event-scoped and expire with it.
+    byEvent('integrity_idempotency'),
+    byEvent('integrity_gaps'),
     byEvent('delivery_records'),
     byEvent('wrapped_keys'),
     byEvent('plaintext_commitments'),

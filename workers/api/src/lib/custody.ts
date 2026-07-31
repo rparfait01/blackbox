@@ -14,6 +14,7 @@
 import { formatDtg } from '@blackbox/shared';
 import type { Env } from '../types';
 import { getChain, getChainHead, hashString, publicKeyB64, sign } from './integrity';
+import { verifyChain } from './chain-verdict';
 import { logRecipientAction } from './recipients';
 
 const RETENTION_MONTHS = 36;
@@ -54,6 +55,14 @@ export interface SignedManifest {
   files: Array<{ name: string; r2Key: string; sha256: string | null; bytes: number; downloadPath: string }>;
   chain: {
     algorithm: string;
+    /** Brief 37 §E — VERIFIED | INCOMPLETE | PURGED_BY_CONSENT | BROKEN. Four distinct
+     *  findings; collapsing any two destroys the chain's diagnostic value. */
+    outcome: string;
+    outcomeDetail: string;
+    /** Set for INCOMPLETE: the sequence after which the chain is known to be missing. */
+    incompleteAtSeq: number | null;
+    /** Set for PURGED_BY_CONSENT: when consent was recorded, and against what. */
+    purge: { at: number; chunks: number; restorePoint: string | null } | null;
     head: string | null;
     records: Array<{
       seq: number;
@@ -108,6 +117,10 @@ export async function exportPackage(
 
   const chain = await getChain(env, eventId);
   const head = await getChainHead(env, eventId);
+  // Brief 37 §E — the manifest carries the chain's VERDICT, computed server-side by
+  // re-linking and re-hashing every record. Without it a verifier can only tell
+  // 'hashes match' from 'hashes do not', and would read a consented purge as tampering.
+  const verdict = await verifyChain(env, eventId);
   const now = Date.now();
 
   // Build the manifest in a FIXED key order so JSON.stringify is deterministic
@@ -138,6 +151,13 @@ export async function exportPackage(
     })),
     chain: {
       algorithm: 'sha256-linked',
+      // VERIFIED | INCOMPLETE | PURGED_BY_CONSENT | BROKEN — four distinct findings. The
+      // third is mandatory: production holds chain records attesting to objects purged on
+      // recorded owner consent, and without it the first export would read as tampered.
+      outcome: verdict.outcome,
+      outcomeDetail: verdict.detail,
+      incompleteAtSeq: verdict.incompleteAtSeq ?? null,
+      purge: verdict.purge ?? null,
       head: head?.chainHead ?? null,
       records: chain.map((r) => ({
         seq: r.seq,

@@ -9,6 +9,11 @@ export interface Env {
   /** Per-event WebSocket fan-out for live dashboard push (Brief 16 §4). Optional
    *  so the worker still runs where the binding is absent (polling fallback). */
   EVENT_CHANNEL?: DurableObjectNamespace;
+  /** Brief 37 §A — per-event integrity-chain serialization. One instance per event id owns
+   *  that event's appends, so concurrent uploads cannot race the head read. Optional so the
+   *  worker still runs where the binding is absent, but its absence is logged at error
+   *  level: without it, ordering across requests is unprotected. */
+  INTEGRITY_DO?: DurableObjectNamespace;
   CORS_ALLOWED_ORIGINS: string;
   /** PWA origin used to build the contact's magic-link dashboard URL (e.g. https://stillpoint.pages.dev). */
   PWA_ORIGIN?: string;

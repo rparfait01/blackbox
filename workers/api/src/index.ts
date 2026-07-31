@@ -4,7 +4,8 @@ import { cors } from 'hono/cors';
 import { hmacSha256Hex, randomHex } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
-import { appendToChain, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
+import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
+import { verifyChain } from './lib/chain-verdict';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import {
   encryptionEnforced,
@@ -1045,6 +1046,31 @@ app.get('/v1/admin/events/:id/audit', async (c) => {
   return c.json({ rows }, 200);
 });
 
+/**
+ * Brief 37 §E — the chain's verdict for one event, recomputed from the stored records rather
+ * than read from anything cached. Admin-only observability: the same function the export
+ * manifest embeds, so what an operator sees and what a court's verifier sees cannot diverge.
+ */
+app.get('/v1/admin/events/:id/chain', async (c) => {
+  const eventId = c.req.param('id');
+  const [verdict, records, gaps, head] = await Promise.all([
+    verifyChain(c.env, eventId),
+    getChain(c.env, eventId),
+    getChainGaps(c.env, eventId),
+    getChainHead(c.env, eventId),
+  ]);
+  return c.json(
+    {
+      verdict,
+      head: head ? { seq: head.seq, chainHead: head.chainHead } : null,
+      recordCount: records.length,
+      sequences: records.map((r) => r.seq),
+      gaps,
+    },
+    200,
+  );
+});
+
 app.get('/v1/admin/events/:id/deliveries', async (c) => {
   const eventId = c.req.param('id');
   const channel = c.req.query('channel');
@@ -1960,7 +1986,10 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   )
     .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal, observation.state)
     .run();
-  await appendToChain(c.env, eventId, 'chunk', r2Key, sha256);
+  // §C — the natural idempotency key for a chunk is its own position. A retried upload
+  // of the same sequence now returns the ORIGINAL chain result instead of appending a
+  // second record for the same bytes, which the old path did on every network retry.
+  await appendToChain(c.env, eventId, 'chunk', r2Key, sha256, `chunk:${sequence}`);
   // The signed PRE-ENCRYPTION plaintext commitment (change #1, admissibility): store it
   // and sign it into the SAME chain, so a later decryption is verifiable against a
   // capture-time commitment.
@@ -1970,7 +1999,7 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
     )
       .bind(eventId, sequence, commitment, Date.now())
       .run();
-    await appendToChain(c.env, eventId, 'commitment', `${eventId}/${sequence}`, commitment);
+    await appendToChain(c.env, eventId, 'commitment', `${eventId}/${sequence}`, commitment, `commitment:${sequence}`);
   }
   return c.json({ ok: true, r2Key }, 201);
 });
@@ -2248,6 +2277,7 @@ app.post('/v1/events/:id/close', async (c) => {
 // The Durable Object that fires each contact-cascade step at its exact window
 // (Brief 17) — exported so the runtime can construct it for the CASCADE_DO binding.
 export { CascadeScheduler } from './cascade-do';
+export { IntegrityChain } from './integrity-do';
 // Per-event WebSocket fan-out for live dashboard push (Brief 16 §4).
 export { EventChannel } from './event-channel';
 

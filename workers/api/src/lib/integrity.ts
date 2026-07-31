@@ -41,9 +41,121 @@ async function getHead(env: Env, eventId: string): Promise<HeadRow | null> {
     .first<HeadRow>();
 }
 
+export interface AppendOutcome {
+  ok: boolean;
+  seq?: number;
+  chainHash?: string;
+  /** Set when ok is false. `collision` is the §B condition; others are storage failures. */
+  error?: 'collision' | 'storage' | 'transport';
+  /** True when this was a REPLAY of an earlier idempotency key — nothing was appended. */
+  replayed?: boolean;
+}
+
 /**
- * Append one record to an event's integrity chain and advance the signed head.
- * Returns the new chainHead. Best-effort: never throws into the write path.
+ * THE SERIALIZED APPEND (Brief 37 §A/§B/§C). Called ONLY from inside the per-event
+ * IntegrityChain Durable Object, which supplies the sequence and prevHash from ITS OWN
+ * strongly-consistent storage.
+ *
+ * The sequence is a PARAMETER, not something this function derives. That is the correction
+ * the first implementation needed: deriving it here meant re-reading the head from D1, and
+ * D1 serves reads from replicas, so a perfectly ordered append could still read the head as
+ * it was before its predecessor wrote. The observed result was record seq 1 carrying a
+ * prevHash that no stored record had produced.
+ *
+ * WHAT CHANGED FROM THE VERSION THIS REPLACES:
+ *
+ *   - `INSERT OR IGNORE` is GONE. A conflicting record insert is an ERROR, surfaced to the
+ *     caller and audited. Previously the losing insert was silently dropped while its head
+ *     upsert still landed, so the signed head named a record that was never stored.
+ *   - The head write is now unconditional AND safe, because the only writer is the DO and it
+ *     hands us the sequence it has already reserved. The record insert's primary key remains
+ *     the independent backstop: if the DO's view were ever wrong, the insert fails loudly
+ *     rather than overwriting somebody else's record.
+ *   - Record and head still move in ONE D1 batch, so the head can never advance without its
+ *     record.
+ *
+ * It STILL never throws. A failed append must not fail a capture (§B) — the caller records a
+ * declared gap and keeps uploading.
+ */
+export async function appendAtSequence(
+  env: Env,
+  input: {
+    eventId: string;
+    seq: number;
+    prevHash: string;
+    recordType: string;
+    recordRef: string;
+    recordHash: string;
+    idempotencyKey?: string;
+  },
+): Promise<AppendOutcome> {
+  const { eventId, seq, prevHash, recordType, recordRef, recordHash, idempotencyKey } = input;
+  try {
+    // §C - replay first. A repeated key returns the ORIGINAL result and appends nothing.
+    if (idempotencyKey) {
+      const prior = await env.DB.prepare(
+        'SELECT seq, chainHash FROM integrity_idempotency WHERE eventId = ? AND idempotencyKey = ?',
+      )
+        .bind(eventId, idempotencyKey)
+        .first<{ seq: number; chainHash: string }>();
+      if (prior) {
+        return { ok: true, seq: prior.seq, chainHash: prior.chainHash, replayed: true };
+      }
+    }
+
+    const chainHash = await hashString(`${prevHash}${recordHash}`);
+    const now = Date.now();
+    const tz = nowOffset();
+
+    const statements = [
+      // No OR IGNORE. The (eventId, seq) primary key IS the collision detector, and a
+      // collision has to reach the caller rather than vanish.
+      env.DB.prepare(
+        'INSERT INTO integrity_records (eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, createdAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, now, tz),
+      env.DB.prepare(
+        'INSERT INTO integrity_heads (eventId, seq, chainHead, updatedAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(eventId) DO UPDATE SET seq = excluded.seq, chainHead = excluded.chainHead, updatedAt = excluded.updatedAt',
+      ).bind(eventId, seq, chainHash, now, tz),
+    ];
+    if (idempotencyKey) {
+      statements.push(
+        env.DB.prepare(
+          'INSERT INTO integrity_idempotency (eventId, idempotencyKey, seq, chainHash, createdAt) VALUES (?, ?, ?, ?, ?)',
+        ).bind(eventId, idempotencyKey, seq, chainHash, now),
+      );
+    }
+    await env.DB.batch(statements);
+    return { ok: true, seq, chainHash };
+  } catch (error) {
+    // A primary-key conflict on integrity_records means the sequence was already taken -
+    // which, with the DO owning sequence allocation, means something is badly wrong rather
+    // than merely contended. Loud, distinguishable, audited; never a silent short chain.
+    const detail = String(error);
+    const collision = /UNIQUE|PRIMARY KEY|constraint/i.test(detail);
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        alert: collision ? 'integrity_sequence_collision' : 'integrity_append_failed',
+        eventId,
+        seq,
+        recordType,
+        recordRef,
+        detail: detail.slice(0, 200),
+      }),
+    );
+    return { ok: false, error: collision ? 'collision' : 'storage' };
+  }
+}
+
+/**
+ * Append one record to an event's chain, THROUGH the serialization point.
+ *
+ * Every caller in the worker comes here, and this function's only job is to route to the
+ * per-event Durable Object. It keeps the old name and the old never-throws contract so the
+ * capture path is unchanged in shape: a chain failure returns null and the caller carries on.
+ * What is new is that the failure is now RECORDED as a declared gap (§B) instead of being a
+ * null that nobody ever sees.
  */
 export async function appendToChain(
   env: Env,
@@ -51,28 +163,101 @@ export async function appendToChain(
   recordType: string,
   recordRef: string,
   recordHash: string,
+  idempotencyKey?: string,
 ): Promise<string | null> {
   try {
-    const head = await getHead(env, eventId);
-    const seq = head ? head.seq + 1 : 0;
-    const prevHash = head ? head.chainHead : GENESIS;
-    const chainHash = await hashString(`${prevHash}${recordHash}`);
-    const now = Date.now();
-    const tz = nowOffset();
-    await env.DB.batch([
-      env.DB.prepare(
-        'INSERT OR IGNORE INTO integrity_records (eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, createdAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).bind(eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, now, tz),
-      env.DB.prepare(
-        'INSERT INTO integrity_heads (eventId, seq, chainHead, updatedAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?) ' +
-          'ON CONFLICT(eventId) DO UPDATE SET seq = excluded.seq, chainHead = excluded.chainHead, updatedAt = excluded.updatedAt',
-      ).bind(eventId, seq, chainHash, now, tz),
-    ]);
-    return chainHash;
+    if (!env.INTEGRITY_DO) {
+      // No binding (local dev, or a deployment without the DO). Fall back to the SAME
+      // serialized routine, accepting that cross-request ordering is unprotected there.
+      // Deliberately loud: a production deployment without this binding is a
+      // misconfiguration, and the chain's correctness depends on it.
+      console.log(JSON.stringify({ level: 'error', alert: 'integrity_do_unbound', eventId }));
+      const head = await getHead(env, eventId);
+      const direct = await appendAtSequence(env, {
+        eventId,
+        seq: head ? head.seq + 1 : 0,
+        prevHash: head ? head.chainHead : GENESIS,
+        recordType,
+        recordRef,
+        recordHash,
+        idempotencyKey,
+      });
+      if (!direct.ok) {
+        await recordChainGap(env, eventId, recordType, recordRef, direct.error ?? 'storage');
+      }
+      return direct.chainHash ?? null;
+    }
+    const stub = env.INTEGRITY_DO.get(env.INTEGRITY_DO.idFromName(eventId));
+    const res = await stub.fetch('https://integrity-do/append', {
+      method: 'POST',
+      body: JSON.stringify({ eventId, recordType, recordRef, recordHash, idempotencyKey }),
+    });
+    const outcome = (await res.json()) as AppendOutcome;
+    if (!outcome.ok) {
+      await recordChainGap(env, eventId, recordType, recordRef, outcome.error ?? 'storage');
+      return null;
+    }
+    return outcome.chainHash ?? null;
   } catch (error) {
     console.log(JSON.stringify({ level: 'error', message: 'appendToChain failed', detail: String(error) }));
+    await recordChainGap(env, eventId, recordType, recordRef, 'transport');
     return null;
   }
+}
+
+/**
+ * §B - declare a gap. The capture is NOT failed: the chunk still uploads and the evidence is
+ * still retained, because losing evidence to protect a hash chain inverts the priority. What
+ * we refuse to do is pretend the chain is whole. A verifier reads this and reports INCOMPLETE
+ * at a named sequence rather than silently accepting a shorter chain that is internally
+ * consistent and quietly missing a record.
+ */
+export async function recordChainGap(
+  env: Env,
+  eventId: string,
+  recordType: string,
+  recordRef: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const head = await getHead(env, eventId);
+    await env.DB.prepare(
+      'INSERT OR REPLACE INTO integrity_gaps (eventId, seq, recordType, recordRef, reason, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+      .bind(eventId, head?.seq ?? -1, recordType, recordRef, reason, Date.now())
+      .run();
+    await env.DB.prepare(
+      'INSERT INTO audit_log (id, eventId, action, actorHash, timestamp, metadataJson) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+      .bind(
+        crypto.randomUUID(),
+        eventId,
+        'integrity.chain_gap',
+        null,
+        Date.now(),
+        JSON.stringify({ recordRef, reason }),
+      )
+      .run();
+  } catch (error) {
+    console.log(JSON.stringify({ level: 'error', message: 'recordChainGap failed', detail: String(error) }));
+  }
+}
+
+export interface ChainGapRow {
+  seq: number;
+  recordType: string;
+  recordRef: string;
+  reason: string;
+  createdAt: number;
+}
+
+export async function getChainGaps(env: Env, eventId: string): Promise<ChainGapRow[]> {
+  const { results } = await env.DB.prepare(
+    'SELECT seq, recordType, recordRef, reason, createdAt FROM integrity_gaps WHERE eventId = ? ORDER BY seq ASC',
+  )
+    .bind(eventId)
+    .all<ChainGapRow>();
+  return results ?? [];
 }
 
 export interface IntegrityRecordRow {

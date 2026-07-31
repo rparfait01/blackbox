@@ -96,6 +96,15 @@ class_name = "CascadeScheduler"
 name = "EVENT_CHANNEL"
 class_name = "EventChannel"
 
+# IntegrityChain (Brief 37 §A) — ONE instance per event owns that event's hash-chain
+# appends, so two concurrent chunk uploads cannot both read the same head. A SEPARATE
+# namespace from CASCADE_DO on purpose (§0): a Durable Object has one alarm, and the cascade
+# tail already owns CascadeScheduler's. This object additionally sets NO alarm at all, so
+# there is nothing here to contend with the cascade even in principle.
+[[durable_objects.bindings]]
+name = "INTEGRITY_DO"
+class_name = "IntegrityChain"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CascadeScheduler"]
@@ -103,6 +112,10 @@ new_sqlite_classes = ["CascadeScheduler"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["EventChannel"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["IntegrityChain"]
 # =====================================================================
 # STAGING — where the acceptance suite runs. THE POINT: tests never operate on
 # production.
@@ -180,3 +193,7 @@ class_name = "CascadeScheduler"
 [[env.staging.durable_objects.bindings]]
 name = "EVENT_CHANNEL"
 class_name = "EventChannel"
+
+[[env.staging.durable_objects.bindings]]
+name = "INTEGRITY_DO"
+class_name = "IntegrityChain"
