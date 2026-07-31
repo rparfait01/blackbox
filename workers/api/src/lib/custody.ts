@@ -14,6 +14,7 @@
 import { formatDtg } from '@blackbox/shared';
 import type { Env } from '../types';
 import { getChain, getChainHead, hashString, publicKeyB64, sign } from './integrity';
+import { TRUST_SET_VERSION, fingerprintSpki } from '@blackbox/shared';
 import { verifyChain } from './chain-verdict';
 import { getCompleteness } from './completeness';
 import { logRecipientAction } from './recipients';
@@ -81,6 +82,11 @@ export interface SignedManifest {
     }>;
   };
   publicKey: string | null;
+  /** Brief 39 §B — sha256 of the signer SPKI, `sha256:`-prefixed. This is what the verifier
+   *  looks up in the trust set it carries; `publicKey` above is an assertion to be checked,
+   *  never the authority that checks. */
+  signerFingerprint: string;
+  trustSetVersion: string;
   signature: string | null;
 }
 
@@ -188,6 +194,13 @@ export async function exportPackage(
       })),
     },
     publicKey: publicKeyB64(env),
+    // Brief 39 §B — the FINGERPRINT of the signer, so a reviewer can name who vouched for
+    // this package against a trust set they hold themselves. `publicKey` above stays in the
+    // manifest because a reader may want the bytes, but it is an ASSERTION TO BE CHECKED and
+    // never the authority that checks: the verifier looks this fingerprint up in its own set
+    // and verifies against its own copy.
+    signerFingerprint: await fingerprintSpki(publicKeyB64(env) || ''),
+    trustSetVersion: TRUST_SET_VERSION,
   };
 
   const canonical = JSON.stringify(manifestUnsigned);

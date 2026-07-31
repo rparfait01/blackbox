@@ -22,6 +22,13 @@ h1{font-size:1.6rem;line-height:1.25;margin:0 0 .4rem;letter-spacing:-.01em}
 .card.tampered{border-color:#c22d2d;background:#fff5f5}
 .card.unverifiable,.card.not_a_report{border-color:#b8791b;background:#fffcf3}
 .headline{font-weight:700;margin:0 0 .5rem;font-size:1.08rem;line-height:1.35}
+.trustset{font:11px ui-monospace,monospace;color:#6b7280;margin:0 0 .6rem;letter-spacing:.04em}
+.signer{margin:.75rem 0 0;padding:.6rem .7rem;border-radius:6px;border:1px solid #d5d8dd}
+.signer.signer_trusted{border-color:#0a7c56;background:#f2fbf7}
+.signer.signer_unknown,.signer.signer_revoked,.signer.signature_invalid{border-color:#9d1c1c;background:#fdf3f3}
+.signer-outcome{margin:0 0 .25rem;font-weight:700;font-size:.82rem;letter-spacing:.06em}
+.signer-detail{margin:0 0 .3rem;font-size:.86rem}
+.fingerprint{margin:0;font:11px ui-monospace,monospace;color:#4b5563;word-break:break-all}
 .card.certified .headline{color:#075c40}
 .card.tampered .headline{color:#9d1c1c}
 .card.unverifiable .headline,.card.not_a_report .headline{color:#8a5a10}
@@ -138,13 +145,30 @@ function el(tag, cls, text) {
 function render(result) {
   out.textContent = '';
   const card = el('div', 'card ' + result.verdict);
+
+  // Brief 39 §E — the trust set version is printed BEFORE any result. A reviewer needs to
+  // know which set of signers was in force when reading the verdict; a verdict without that
+  // is a claim without a scope.
+  card.appendChild(el('p', 'trustset', 'Trust set ' + (result.trustSetVersion || 'unknown')));
+
   card.appendChild(el('p', 'headline', result.headline));
   card.appendChild(el('p', 'detail', result.detail));
+
+  // §B — WHO signed, by fingerprint. "Verified" without an identified signer is not an
+  // improvement on unsigned, and SIGNER_UNKNOWN is the condition that used to pass as
+  // certified — so it is stated here, not footnoted.
+  if (result.signer) {
+    const sg = el('div', 'signer ' + result.signer.outcome.toLowerCase());
+    sg.appendChild(el('p', 'signer-outcome', result.signer.outcome.replace(/_/g, ' ')));
+    sg.appendChild(el('p', 'signer-detail', result.signer.statement));
+    sg.appendChild(el('p', 'fingerprint', result.signer.fingerprint));
+    card.appendChild(sg);
+  }
 
   if (result.checks) {
     const list = el('ul', 'checks');
     const rows = [
-      ['Signature valid against the published BLACK BOX key', result.checks.signatureValid],
+      ['Signature valid against a BLACK BOX key we hold independently', result.checks.signatureValid],
       ['Evidence data matches the signed hash', result.checks.evidenceHashMatches],
       ['Visible evidence text matches the signed text', result.checks.renderedTextMatches],
       ['Visible text is what the signed data renders to', result.checks.renderingConsistent],

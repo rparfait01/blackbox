@@ -91,8 +91,23 @@ export interface SigningFixture {
   sign: (data: string) => Promise<string>;
 }
 
-/** A throwaway ECDSA P-256 keypair standing in for the Worker's REPORT_SIGNING_KEY. */
+/**
+ * A throwaway ECDSA P-256 keypair standing in for the Worker's REPORT_SIGNING_KEY.
+ *
+ * CACHED per module load. Brief 39 made this matter: a test that renders a document and then
+ * builds a trust set for "the fixture key" needs both to be the SAME key, and a fresh keypair
+ * per call silently gave them different ones — the document then verified as SIGNER_UNKNOWN
+ * for a reason that had nothing to do with what was under test. Tests that need a DIFFERENT
+ * key call `freshSigningFixture()`.
+ */
+let cachedFixture: Promise<SigningFixture> | null = null;
 export async function signingFixture(): Promise<SigningFixture> {
+  cachedFixture ??= freshSigningFixture();
+  return cachedFixture;
+}
+
+/** A genuinely different keypair — for tests that need a second, untrusted signer. */
+export async function freshSigningFixture(): Promise<SigningFixture> {
   const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
     'sign',
     'verify',

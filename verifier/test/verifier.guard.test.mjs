@@ -12,6 +12,34 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+/**
+ * Brief 39 — the verifier no longer takes a public key to trust. It carries a pinned trust
+ * set, and a key inside the package is never the authority. These tests sign with throwaway
+ * keypairs, so they hand in an EXPLICIT trust set; production callers pass nothing and get
+ * the pinned set — which is the point, because forgetting the argument now TIGHTENS the
+ * check instead of disabling it, the inverse of the optional pin this replaced.
+ */
+async function trusting(spki) {
+  const bytes = Buffer.from(spki, 'base64');
+  const digest = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
+  return {
+    trustedSigners: [
+      {
+        fingerprint: `sha256:${digest}`,
+        spki,
+        algorithm: 'ECDSA-P256-SHA256',
+        role: 'report',
+        label: 'test key',
+        environment: 'staging',
+        validFrom: 0,
+        validUntil: null,
+        revokedAt: null,
+        revokedReason: null,
+      },
+    ],
+  };
+}
 import { before, describe, it } from 'node:test';
 import { build } from 'esbuild';
 
@@ -139,7 +167,7 @@ before(async () => {
 
 describe('ACCEPTANCE — the four verdicts, through the shipped verifier', () => {
   it('a correctly signed document → CERTIFIED', async () => {
-    const result = await verifier.verifyReportDocument(await makeDocument(), publishedKey);
+    const result = await verifier.verifyReportDocument(await makeDocument(), await trusting(publishedKey));
     assert.equal(result.verdict, 'certified');
     assert.match(result.headline, /BLACK BOX CERTIFIED/);
     assert.deepEqual(result.checks, {
@@ -154,7 +182,7 @@ describe('ACCEPTANCE — the four verdicts, through the shipped verifier', () =>
     const doc = await makeDocument();
     const tampered = doc.replace('Total bytes: 2048', 'Total bytes: 2049');
     assert.notEqual(tampered, doc);
-    const result = await verifier.verifyReportDocument(tampered, publishedKey);
+    const result = await verifier.verifyReportDocument(tampered, await trusting(publishedKey));
     assert.equal(result.verdict, 'tampered');
     assert.match(result.headline, /TAMPERED/);
   });
@@ -163,21 +191,21 @@ describe('ACCEPTANCE — the four verdicts, through the shipped verifier', () =>
     const doc = await makeDocument();
     const tampered = doc.replace('"totalBytes":2048', '"totalBytes":9999');
     assert.notEqual(tampered, doc);
-    assert.equal((await verifier.verifyReportDocument(tampered, publishedKey)).verdict, 'tampered');
+    assert.equal((await verifier.verifyReportDocument(tampered, await trusting(publishedKey))).verdict, 'tampered');
   });
 
   it('ONLY the statement zone altered → still CERTIFIED', async () => {
     const doc = await makeDocument('First draft.');
     const edited = doc.replace('First draft.', 'A much longer account, written weeks later.');
     assert.notEqual(edited, doc);
-    const result = await verifier.verifyReportDocument(edited, publishedKey);
+    const result = await verifier.verifyReportDocument(edited, await trusting(publishedKey));
     assert.equal(result.verdict, 'certified');
     assert.match(result.statement.note, /not machine-verified/);
   });
 
   it('a random non-report file → "not a report", gracefully, no crash', async () => {
     for (const junk of ['', '<html><body>shopping list</body></html>', '%PDF-1.4 binary junk', '{"a":1}']) {
-      const result = await verifier.verifyReportDocument(junk, publishedKey);
+      const result = await verifier.verifyReportDocument(junk, await trusting(publishedKey));
       assert.equal(result.verdict, 'not_a_report', `junk input misclassified: ${junk.slice(0, 20)}`);
       assert.ok(result.headline.length > 0);
     }
@@ -201,10 +229,17 @@ describe('ACCEPTANCE — the four verdicts, through the shipped verifier', () =>
     publishedKey = realKey;
     sign = realSign;
 
-    // Self-consistent, so it verifies against its OWN key...
-    assert.equal((await verifier.verifyReportDocument(forged, attackerKey)).verdict, 'certified');
-    // ...and is exposed against the published one. This is why the page pins.
-    assert.equal((await verifier.verifyReportDocument(forged, realKey)).verdict, 'tampered');
+    // With NO trust set supplied, the pinned production roots are in force — and the
+    // attacker's key is not among them. This is the defect closed: previously a caller who
+    // passed no pin got `certified` from a document that had signed itself.
+    const unpinned = await verifier.verifyReportDocument(forged);
+    assert.notEqual(unpinned.verdict, 'certified');
+    assert.equal(unpinned.signer.outcome, 'SIGNER_UNKNOWN');
+
+    // Self-consistent, so it certifies only if someone explicitly trusts the attacker key...
+    assert.equal((await verifier.verifyReportDocument(forged, await trusting(attackerKey))).verdict, 'certified');
+    // ...and it is exposed against the real published one.
+    assert.notEqual((await verifier.verifyReportDocument(forged, await trusting(realKey))).verdict, 'certified');
   });
 });
 

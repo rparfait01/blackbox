@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
-import { hmacSha256Hex, randomHex } from '@blackbox/shared';
+import { hmacSha256Hex, randomHex, TRUSTED_SIGNERS, TRUST_SET_VERSION, evaluateSigner, fingerprintSpki } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
 import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
@@ -199,6 +199,40 @@ app.get('/.well-known/blackbox-integrity-public-key.json', async (c) => {
 // expert can verify a report WITHOUT this server and without the verification page. This
 // endpoint is NOT flag-gated: publishing a public key commits to nothing and reveals nothing,
 // and a report signed today must stay checkable years from now.
+/**
+ * Brief 39 §0 — the trust set, served for ROTATION DISCOVERY ONLY.
+ *
+ * This endpoint is NOT authority. The verifier embeds the same set at build time and that
+ * embedded copy decides; this exists so an operator (or a reviewer holding an older verifier)
+ * can see that a key has been added, retired or revoked, and go and check. Treating a fetched
+ * list as authority would put trust back in the network, which is the shape of the defect
+ * this brief closes — just one layer further out.
+ *
+ * Everything here is already public: these keys are published, embedded in the standalone
+ * verifier, and served at the well-known endpoints. Nothing secret is exposed.
+ */
+app.get('/.well-known/blackbox-trust-roots.json', async (c) => {
+  return c.json(
+    {
+      version: TRUST_SET_VERSION,
+      note: 'Rotation discovery only. The verifier embeds this set; the embedded copy is authoritative.',
+      keys: TRUSTED_SIGNERS.map((k) => ({
+        fingerprint: k.fingerprint,
+        algorithm: k.algorithm,
+        role: k.role,
+        label: k.label,
+        environment: k.environment,
+        validFrom: k.validFrom,
+        validUntil: k.validUntil,
+        revokedAt: k.revokedAt,
+        revokedReason: k.revokedReason,
+        spki: k.spki,
+      })),
+    },
+    200,
+  );
+});
+
 app.get('/.well-known/blackbox-report-public-key.json', async (c) => {
   const publicKey = c.env.REPORT_PUBLIC_KEY;
   if (!publicKey) {
@@ -636,6 +670,57 @@ app.post('/v1/admin/encryption/policy', async (c) => {
   return c.json({ ok: true, userId: user.id, from: user.encryptionPolicy, to: policy, reason }, 200);
 });
 
+/**
+ * §C — record a key rotation or revocation as an OPERATOR ACTION: actor, timestamp, reason.
+ *
+ * IT DOES NOT CHANGE WHAT IS TRUSTED, and that is deliberate. The trust set lives in
+ * version-controlled source (packages/shared/src/trust-roots.ts) so that widening it is a
+ * reviewed code change with a visible diff. An endpoint that could add a trusted key would be
+ * a dynamic path to widening trust — exactly what §A forbids. This writes the operational
+ * record; the code change is the enforcement, and the two are expected to agree.
+ */
+app.post('/v1/admin/trust/record', async (c) => {
+  const body = await c.req
+    .json<{ fingerprint?: string; action?: string; reason?: string }>()
+    .catch(() => ({}) as { fingerprint?: string; action?: string; reason?: string });
+  const fingerprint = (body.fingerprint ?? '').trim();
+  const action = body.action === 'rotate' || body.action === 'revoke' ? body.action : null;
+  const reason = (body.reason ?? '').trim();
+  if (!fingerprint || !action || reason.length < 8) {
+    return c.json(
+      { error: 'fingerprint_action_reason_required', action: 'rotate | revoke' },
+      400,
+    );
+  }
+  const known = TRUSTED_SIGNERS.find((k) => k.fingerprint === fingerprint) ?? null;
+  await audit(c.env, null, `trust.key_${action}`, c.get('operatorUserId') ?? 'admin_token', {
+    fingerprint,
+    reason,
+    knownInTrustSet: !!known,
+    trustSetVersion: TRUST_SET_VERSION,
+  });
+  console.log(
+    JSON.stringify({
+      level: 'warn',
+      alert: `trust_key_${action}`,
+      fingerprint,
+      reason,
+      knownInTrustSet: !!known,
+    }),
+  );
+  return c.json(
+    {
+      ok: true,
+      recorded: action,
+      fingerprint,
+      knownInTrustSet: !!known,
+      trustSetVersion: TRUST_SET_VERSION,
+      note: 'Recorded only. Update packages/shared/src/trust-roots.ts to change what is actually trusted.',
+    },
+    200,
+  );
+});
+
 app.get('/v1/admin/encryption/readiness', async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT
@@ -1054,6 +1139,14 @@ app.get('/v1/admin/events/:id/audit', async (c) => {
  */
 app.get('/v1/admin/events/:id/chain', async (c) => {
   const eventId = c.req.param('id');
+  // Brief 39 §D — the FOURTH axis. The custody manifest is signed with the integrity key;
+  // report which published key that is, by fingerprint, from the set we hold.
+  const integritySigner = await (async () => {
+    const spki = publicKeyB64(c.env);
+    if (!spki) return null;
+    const fp = await fingerprintSpki(spki);
+    return evaluateSigner({ fingerprint: fp, signatureValid: true, signedAt: Date.now(), role: 'integrity' });
+  })();
   const [verdict, records, gaps, head, completeness] = await Promise.all([
     verifyChain(c.env, eventId),
     getChain(c.env, eventId),
@@ -1068,6 +1161,10 @@ app.get('/v1/admin/events/:id/chain', async (c) => {
       // findings and are reported separately; a purged capture keeps the completeness state
       // it held at purge.
       completeness,
+      // Brief 39 — the FOURTH axis: who vouches for this deployment's signatures, named by
+      // fingerprint against a trust set held independently of any package.
+      signer: integritySigner,
+      trustSetVersion: TRUST_SET_VERSION,
       head: head ? { seq: head.seq, chainHead: head.chainHead } : null,
       recordCount: records.length,
       sequences: records.map((r) => r.seq),
