@@ -16,6 +16,7 @@ import {
   CANARY_EMAIL,
   CANARY_TTL_MS,
   canaryEnvironmentReport,
+  findRoutableCanaryContacts,
   provisionCanary,
   purgeCanaryEvents,
 } from '../lib/canary';
@@ -73,9 +74,13 @@ canaryRoutes.get('/status', async (c) => {
   const counts = await c.env.DB.prepare(
     'SELECT (SELECT COUNT(*) FROM users WHERE isCanary = 1) AS accounts, (SELECT COUNT(*) FROM events WHERE isTest = 1) AS events',
   ).first<{ accounts: number; events: number }>();
+  // §G — surfaced in STATUS, which the deploy gate reads, so a canary that could reach a
+  // real person fails the deploy rather than being found when an alert goes quiet.
+  const routable = await findRoutableCanaryContacts(c.env);
   return c.json(
     {
-      ok: true,
+      ok: routable.length === 0,
+      routableContacts: routable.length,
       environment: canaryEnvironmentReport(c.env),
       canaryAccounts: Number(counts?.accounts ?? 0),
       canaryEvents: Number(counts?.events ?? 0),

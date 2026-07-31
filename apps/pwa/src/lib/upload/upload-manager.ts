@@ -14,10 +14,21 @@ import {
 } from '@/lib/crypto/envelope';
 import {
   makeEncryptor,
+  proveEncryptor,
   sealChunkForSend,
   serializeWrap,
-  type CaptureEncryptor,
 } from './capture-encryptor';
+import { ensureSurvivorKey } from '@/lib/crypto/key-provisioning';
+import {
+  degradationForBufferFailure,
+  getState,
+  markDegradation,
+  markPreparing,
+  markReady,
+  markRetryable,
+  markTerminal,
+  transmitDecision,
+} from './encryption-state';
 import {
   deleteQueuedUpload,
   enqueueUpload,
@@ -54,11 +65,10 @@ interface SessionContext {
    *  queue drain) never create two events for one session — which would fire two
    *  activation notifications (Brief 12 P3 duplicate-LINE). */
   openInFlight?: Promise<boolean>;
-  /** Brief 26 — the per-capture encryptor, prepared off the send path after event open.
-   *  `undefined` = not yet attempted; `null` = attempted and NOT available (flag off, no
-   *  survivor key, or setup failed) → every chunk uploads plaintext (fail-open). A
-   *  ready CaptureEncryptor = chunks encrypt. sendItem never blocks on this. */
-  encryptor?: CaptureEncryptor | null;
+  /** Brief 36 §A — encryption state is NOT held here. It lives in encryption-state.ts,
+   *  which is its single owner; this context used to carry an `encryptor` field whose
+   *  null-ness WAS the state, which is precisely how "not ready yet" became
+   *  indistinguishable from "never will be" and produced silent plaintext. */
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -188,7 +198,27 @@ export function uploadChunk(
     attempts: 0,
     nextAttemptAt: 0,
     createdAt: Date.now(),
-  }).then(() => scheduleDrain(0));
+  })
+    .then(() => {
+      // A successful buffer clears any prior at-risk declaration: storage recovered.
+      markDegradation(sessionId, 'NONE');
+      scheduleDrain(0);
+    })
+    .catch((error: unknown) => {
+      // Brief 36 §D — THE FAILURE THAT MAKES BUFFERING A LIE.
+      //
+      // Holding chunks on the device is only a safe answer while the device can actually
+      // store them. If IndexedDB is denied, full, or evicted, a capture that is waiting
+      // for an encryptor is not "held" — it is GONE, and without this the policy quietly
+      // becomes "confidential but lost", which is worse than plaintext.
+      //
+      // The severity depends on whether anything will ever transmit: in a terminal state
+      // the chunk had a route out and lost it (EVIDENCE_NOT_RETAINED); otherwise it is
+      // still waiting on one (EVIDENCE_AT_RISK). Both are declared, surfaced and logged;
+      // neither touches the alert, which has already gone out.
+      log.error('chunk buffering failed — evidence retention degraded', error);
+      markDegradation(sessionId, degradationForBufferFailure(getState(sessionId)));
+    });
 }
 
 export function uploadLocation(sessionId: string, fix: GeoFix): void {
@@ -355,38 +385,85 @@ async function openEvent(ctx: SessionContext): Promise<boolean> {
   ctx.eventId = data.eventId;
   ctx.hmacSecret = data.hmacSecret;
   await setSessionBackend(ctx.sessionId, data.eventId, data.hmacSecret);
-  // Brief 26 — prepare the capture encryptor OFF the send path. Fire-and-forget: it can
-  // never block event-open or the alert notification. Until it resolves (or if it never
-  // does), ctx.encryptor is undefined/null and chunks upload plaintext — fail-open.
-  void prepareEncryptor(ctx);
+  // Brief 36 §C — STILL fire-and-forget, and that is load-bearing. Event creation and the
+  // contact cascade have already happened server-side by the time this line runs; nothing
+  // below is awaited, so encryption cannot add a millisecond to trigger dispatch. What
+  // changed is only what happens to CHUNKS while it is in flight: they are now held on the
+  // device instead of racing it onto the wire in the clear.
+  void prepareEncryption(ctx);
   return true;
 }
 
 /**
- * Set up the per-capture encryptor: fetch the account's public keys, generate one DEK,
- * wrap it to the survivor (+ org) key, upload the wrapped keys, and only THEN mark the
- * encryptor ready. Every early return leaves ctx.encryptor null → plaintext. This runs
- * entirely off the send path; a failure here never touches a capture's availability.
+ * Establish the per-capture encryptor and drive the state machine (Brief 36 §A).
+ *
+ * Runs entirely OFF the alert path — never awaited by event open, and it cannot delay the
+ * cascade, location, heartbeat or closure. What it governs is chunks, and only chunks.
+ *
+ * The order is deliberate and every step is a precondition of the next:
+ *   1. ensure the account HAS a public key — minting and publishing one if it does not,
+ *      because a missing key is a step to take, not a dead end (it was the universal case);
+ *   2. generate the per-capture DEK and wrap it to the survivor (+ org);
+ *   3. upload the wrapped keys BEFORE anything is encrypted — a chunk encrypted under a
+ *      DEK the server holds no wrapped copy of is unrecoverable evidence, which is worse
+ *      than plaintext for the person it belongs to;
+ *   4. PROVE the encryptor round-trips;
+ *   5. only then declare READY.
+ *
+ * Failures are classified rather than swallowed: anything that could plausibly succeed on
+ * a retry is FAILED_RETRYABLE (chunks keep buffering); anything that cannot is
+ * FAILED_TERMINAL, which TRANSMITS but declares itself.
  */
-async function prepareEncryptor(ctx: SessionContext): Promise<void> {
-  if (!envelopeEncryptionEnabled || ctx.encryptor !== undefined) {
-    return; // flag off, or already attempted — leave plaintext
+async function prepareEncryption(ctx: SessionContext, attempt = 0): Promise<void> {
+  const sessionId = ctx.sessionId;
+  if (!envelopeEncryptionEnabled) {
+    // The flag is the operator's statement that captures are not to be encrypted at all.
+    // Terminal, and DECLARED — the whole point of the amendment is that unencrypted
+    // transmission is a stated condition rather than a silent one.
+    markTerminal(sessionId, 'envelope_encryption_disabled');
+    return;
   }
-  ctx.encryptor = null; // mark attempted; stays null (plaintext) unless we fully succeed
+  if (getState(sessionId) === 'FAILED_TERMINAL') {
+    return; // terminal for this capture; never re-attempted
+  }
+  markPreparing(sessionId);
+  const retry = (reason: string): void => {
+    markRetryable(sessionId, reason);
+    if (getState(sessionId) === 'FAILED_RETRYABLE') {
+      window.setTimeout(() => void prepareEncryption(ctx, attempt + 1), backoff(attempt + 1));
+    }
+  };
   try {
     const eventId = ctx.eventId;
     const secret = ctx.hmacSecret;
     const token = getSessionToken();
-    if (!eventId || !secret || !token) {
+    if (!eventId || !secret) {
+      retry('event_not_open');
+      return;
+    }
+    if (!token) {
+      // No account session: the capture cannot be wrapped to anyone recoverably. A
+      // tokenless (covert) trigger is a real, supported path, so this is terminal for
+      // this capture rather than an error — and it declares itself.
+      markTerminal(sessionId, 'no_account_session');
       return;
     }
     const keysRes = await fetch(`${API_BASE_URL}/v1/me/keys`, { headers: { Authorization: `Bearer ${token}` } });
     if (!keysRes.ok) {
+      retry(`keys_endpoint_${keysRes.status}`);
       return;
     }
     const keys = (await keysRes.json()) as { pubkey: string | null; org: { orgPubkey: string; generation: number } | null };
-    if (!keys.pubkey) {
-      return; // no survivor public key yet → cannot encrypt recoverably → plaintext
+    let survivorPubkey = keys.pubkey;
+    if (!survivorPubkey) {
+      // SELF-HEAL. Before this, "no survivor public key" returned early and every chunk
+      // went out in the clear — and it was the state of every account in production,
+      // because provisioning only ever ran during onboarding.
+      survivorPubkey = await ensureSurvivorKey();
+      if (!survivorPubkey) {
+        retry('no_survivor_key');
+        return;
+      }
     }
     const dek = await generateDek();
     const ivPrefix = randomIvPrefix();
@@ -396,7 +473,7 @@ async function prepareEncryptor(ctx: SessionContext): Promise<void> {
         recipientRef: null,
         keyGeneration: 0,
         algId: ENVELOPE_ALG,
-        wrappedDek: serializeWrap(await wrapDek(dek, await importPublicKey(keys.pubkey))),
+        wrappedDek: serializeWrap(await wrapDek(dek, await importPublicKey(survivorPubkey))),
       },
     ];
     if (keys.org) {
@@ -420,12 +497,23 @@ async function prepareEncryptor(ctx: SessionContext): Promise<void> {
       body: bodyBytes as BodyInit,
     });
     if (!up.ok) {
-      return; // wrapped keys not stored → keep plaintext
+      // The DEK's wrapped copies are not stored, so anything encrypted under it would be
+      // unrecoverable. Retryable — the network is the usual reason.
+      retry(`wrapped_keys_${up.status}`);
+      return;
     }
-    ctx.encryptor = makeEncryptor(dek, eventId, ivPrefix); // ready — chunks now encrypt
+    const encryptor = makeEncryptor(dek, eventId, ivPrefix);
+    // §A — PROVE it before declaring READY. A non-null object is not proof: a key can
+    // exist and still be unusable, and every one of those cases previously surfaced as
+    // silent plaintext on the first chunk.
+    if (!(await proveEncryptor(encryptor))) {
+      retry('encryptor_self_test_failed');
+      return;
+    }
+    markReady(sessionId, encryptor);
   } catch (error) {
-    log.error('encryptor prep failed; capture continues plaintext', error);
-    // ctx.encryptor stays null → fail-open to plaintext.
+    log.error('encryption preparation failed', error);
+    retry(`exception:${String(error).slice(0, 80)}`);
   }
 }
 
@@ -441,23 +529,44 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
   const headers: Record<string, string> = {};
 
   if (item.kind === 'chunk') {
+    // THE TRANSMISSION RULE (Brief 36 §B). Read the capture's encryption STATE — never
+    // the presence of a key object, which is the inference that produced silent plaintext.
+    //
+    //   PREPARING / FAILED_RETRYABLE → hold. The chunk stays queued on the device and is
+    //     retried; this is the ordinary-timing race the brief closes, where early chunks
+    //     of a normal capture used to beat the encryptor onto the network.
+    //   READY            → encrypted, or nothing (sealChunkForSend throws rather than
+    //     degrading, so a timeout or a crypto failure leaves the bytes on the device).
+    //   FAILED_TERMINAL  → transmitted and DECLARED unencrypted. Brief 26's rule that
+    //     availability outranks confidentiality is intact: a phone that is taken takes
+    //     buffered-only evidence with it. What is gone is doing it quietly — the server
+    //     marks the chunk from its OWN observation and an operator alert fires.
+    const decision = transmitDecision(item.sessionId);
+    if (!decision.transmit) {
+      return false; // held on device, deliberately — not a failure to report
+    }
     path = `/v1/events/${eventId}/chunks/${item.sequence}`;
     const plaintext = new Uint8Array(await (item.blob ?? new Blob()).arrayBuffer());
-    // Brief 26 — fail-open by construction: the body STARTS as the plaintext bytes and is
-    // only replaced with ciphertext when a ready encryptor seals it within a time bound.
-    // Flag off, no key, a throw, or a hang all leave the plaintext body — the chunk lands.
-    const sealed = await sealChunkForSend({
-      encryptor: ctx.encryptor ?? null,
-      plaintext,
-      sequence: item.sequence ?? 0,
-      isFinal: false,
-    });
-    body = sealed.body;
     headers['X-Mime-Type'] = item.mimeType ?? 'application/octet-stream';
     headers['Content-Type'] = 'application/octet-stream';
-    if (sealed.encrypted && sealed.commitment) {
+    if (decision.mode === 'ENCRYPTED') {
+      const sealed = await sealChunkForSend({
+        encryptor: decision.encryptor,
+        plaintext,
+        sequence: item.sequence ?? 0,
+        isFinal: false,
+      });
+      body = sealed.body;
       headers['X-Plaintext-Commitment'] = sealed.commitment;
       headers['X-Is-Final'] = sealed.isFinal ? '1' : '0';
+    } else {
+      // DECLARED plaintext. The header is a declaration for the audit trail and the
+      // report — it is NOT what the server records. The server derives the stored state
+      // from inspecting the bytes itself, so a client that lied (or a client that is
+      // simply wrong) cannot make an unencrypted chunk look encrypted.
+      body = plaintext;
+      headers['X-Encryption-State'] = 'UNENCRYPTED_DECLARED';
+      headers['X-Encryption-Reason'] = (decision.reason ?? 'unknown').slice(0, 120);
     }
   } else {
     path = `/v1/events/${eventId}/${item.kind}`;

@@ -54,6 +54,45 @@ async function runProvision(recoveryCode?: string): Promise<void> {
   }
 }
 
+/**
+ * Brief 36 §A — AWAITABLE provisioning, for the one caller that legitimately needs to wait:
+ * the capture encryption state machine, which runs entirely off the alert path.
+ *
+ * WHY THIS EXISTS. `provisionSurvivorKey` is fire-and-forget and is only ever called during
+ * onboarding. Every account created before the envelope was armed therefore has no public
+ * key and no path to ever getting one — at the time of writing that was ALL of them: zero
+ * production accounts had a key, so `prepareEncryptor` hit "no survivor public key" every
+ * time and silently produced plaintext. Once transmission depends on encryption, that same
+ * condition would have meant no evidence at all.
+ *
+ * So a missing key is a step to take, not a verdict: the device mints a keypair, custodies
+ * the private half locally, publishes the public half, and the capture proceeds encrypted.
+ * Returns the public key, or null if it genuinely cannot be established.
+ *
+ * This never runs on the alert path. Event creation, cascade, location, heartbeat and
+ * closure do not call it and are not delayed by it.
+ */
+export async function ensureSurvivorKey(): Promise<string | null> {
+  try {
+    let kp = await getStoredEnvelopeKeypair();
+    if (!kp) {
+      kp = await generateAccountKeypair();
+      // Device custody FIRST — the private key is safe locally before anything is uploaded.
+      // Publishing a public key whose private half was never stored would produce captures
+      // nobody can ever open, which is worse than plaintext.
+      await setStoredEnvelopeKeypair(kp);
+    }
+    const res = await api('/v1/me/pubkey', { body: { pubkey: kp.publicKey } });
+    if (!res.ok) {
+      return null;
+    }
+    return kp.publicKey;
+  } catch (error) {
+    log.error('ensureSurvivorKey failed', error);
+    return null;
+  }
+}
+
 /** Resolve to null if not settled within ms — a hang can never keep a caller waiting. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return new Promise((resolve) => {

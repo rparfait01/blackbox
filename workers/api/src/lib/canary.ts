@@ -37,7 +37,7 @@
 
 import type { Env } from '../types';
 import { audit } from './audit';
-import { isReservedEmail, isReservedPhone } from '../channels/reserved';
+import { isReservedDestination, isReservedEmail, isReservedPhone } from '../channels/reserved';
 
 /**
  * The canary identity. `.test` is an RFC 2606 §2 permanently-reserved TLD: it can never
@@ -194,7 +194,65 @@ export async function provisionCanary(env: Env): Promise<CanaryAccount> {
     ).bind(crypto.randomUUID(), contact.id, 'email', CANARY_CONTACT_EMAIL, now, now),
   ]);
 
+  // §G — refuse to hand back a canary that could reach a real person. Checked AFTER the
+  // endpoints are written, so it validates what is actually stored rather than intent.
+  await assertCanaryContactsReserved(env);
+
   return { userId, email: CANARY_EMAIL, contactId: contact.id };
+}
+
+/**
+ * Brief 36 §G — a canary account may hold ONLY reserved-range contacts, and this is
+ * checked at STARTUP rather than at dispatch.
+ *
+ * Brief 35's two-condition suppression was tight against a stray `isTest` and not against a
+ * stray `isCanary`: promote a real account and its alerts become suppressible. 0047 makes
+ * `isCanary` immutable in the database so that promotion cannot happen quietly. This closes
+ * the same gap from the other side — even if an account somehow became a canary, it could
+ * only ever suppress messages to destinations that are provably incapable of receiving
+ * anything. The unsafe state stops being improbable and becomes unrepresentable.
+ *
+ * Checked where the deploy gate will actually see it (provision + status), so a violation
+ * FAILS THE DEPLOY instead of being discovered when a real alert goes quiet.
+ */
+export async function findRoutableCanaryContacts(
+  env: Env,
+): Promise<Array<{ userId: string; channel: string; identifier: string }>> {
+  const { results } = await env.DB.prepare(
+    `SELECT c.userId AS userId, ep.channel AS channel, ep.channelIdentifier AS identifier
+       FROM users u JOIN contacts c ON c.userId = u.id
+       JOIN contact_endpoints ep ON ep.contactId = c.id
+      WHERE u.isCanary = 1`,
+  ).all<{ userId: string; channel: string; identifier: string }>();
+  return (results ?? []).filter((r) => !isReservedDestination(r.channel, r.identifier));
+}
+
+/**
+ * The mirror of `canary_flag_on_non_canary_account` (§G). Error level, because a canary
+ * holding a routable contact means the deploy gate could message a real person.
+ */
+export async function assertCanaryContactsReserved(env: Env): Promise<void> {
+  const routable = await findRoutableCanaryContacts(env);
+  if (routable.length === 0) {
+    return;
+  }
+  for (const r of routable) {
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        alert: 'routable_contact_on_canary_account',
+        message: 'a canary account holds a contact that can actually receive messages',
+        userId: r.userId,
+        channel: r.channel,
+      }),
+    );
+    await audit(env, null, 'canary.routable_contact', null, { userId: r.userId, channel: r.channel });
+  }
+  throw new Error(
+    `canary account holds ${routable.length} routable contact(s) on: ${routable
+      .map((r) => r.channel)
+      .join(', ')} — refusing to proceed (Brief 36 §G)`,
+  );
 }
 
 export interface PurgeResult {

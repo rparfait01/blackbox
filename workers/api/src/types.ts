@@ -33,6 +33,14 @@ export interface Env {
    *  the client fails open — the server never rejects a plaintext capture for lacking an
    *  envelope while migration is in flight. */
   ENVELOPE_ENCRYPTION_ENABLED?: string;
+  /** Brief 36 §B — whether a REQUIRED-policy account's non-conforming chunk is actually
+   *  REJECTED (422) rather than merely recorded and alerted. Deliberately separate from
+   *  the per-account policy: the policy ships armed (REQUIRED is the §E default) while the
+   *  enforcement ships DARK, because on the day it shipped no production account had an
+   *  envelope key and enforcing would have refused every chunk from every account. Arming
+   *  this is Brief 47's acceptance; until that is green no document may state that capture
+   *  is encrypted. Unset means OFF — never "probably on". */
+  ENCRYPTION_ENFORCED?: string;
   /** Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the
    *  family pilot this is the operator/founder. */
   SECURITY_CONTACT_EMAIL?: string;

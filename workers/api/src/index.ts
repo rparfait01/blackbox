@@ -7,6 +7,11 @@ import { audit } from './lib/audit';
 import { appendToChain, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
 import {
+  encryptionEnforced,
+  observeChunkEncryption,
+  satisfiesRequiredPolicy,
+} from './lib/encryption-observed';
+import {
   evaluateConsent,
   overrideTamperingClose,
   recordSupportAssent,
@@ -559,6 +564,72 @@ app.use('/v1/admin/*', async (c, next) => {
 // session, with no authorisation rule of its own to drift — a second way in is a second
 // way in, however well-intentioned. Nothing in the PWA calls any of it.
 app.route('/v1/admin/canary', canaryRoutes);
+
+/**
+ * ENCRYPTION READINESS — Brief 36, operator amendment 2. Plain language, no interpretation
+ * required.
+ *
+ * WHY THIS EXISTS AND WHY IT IS WORDED LIKE THIS. ENVELOPE_ENCRYPTION_ENABLED was set to
+ * "true" on 2026-07-30 and the system was described from then on as encryption-armed. It
+ * had encrypted nothing: 62 chunks stored, 0 wrapped keys, 0 commitments, 0 accounts with a
+ * public key. Nothing anywhere said so, because the only signal was a flag that reported
+ * its own intent rather than the world.
+ *
+ * So this reports the WORLD — counted from the tables, every time it is asked — and it
+ * leads with the enforcement state in the words an operator would use. Dark is fine. Dark
+ * while believing otherwise is what cost this product two months of imaginary encryption.
+ */
+app.get('/v1/admin/encryption/readiness', async (c) => {
+  const row = await c.env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM users WHERE isCanary = 0) AS accounts,
+       (SELECT COUNT(*) FROM users WHERE isCanary = 0 AND pubkey IS NOT NULL AND pubkey <> '') AS withKeys,
+       (SELECT COUNT(*) FROM users WHERE isCanary = 0 AND encryptionPolicy = 'REQUIRED') AS policyRequired,
+       (SELECT COUNT(*) FROM chunks_index WHERE encryptionState = 'ENCRYPTED') AS encryptedChunks,
+       (SELECT COUNT(*) FROM chunks_index WHERE encryptionState = 'UNENCRYPTED_DECLARED') AS declaredPlaintextChunks,
+       (SELECT COUNT(*) FROM chunks_index WHERE encryptionState = 'UNENCRYPTED_UNDECLARED') AS undeclaredPlaintextChunks,
+       (SELECT COUNT(*) FROM wrapped_keys) AS wrappedKeys`,
+  ).first<{
+    accounts: number;
+    withKeys: number;
+    policyRequired: number;
+    encryptedChunks: number;
+    declaredPlaintextChunks: number;
+    undeclaredPlaintextChunks: number;
+    wrappedKeys: number;
+  }>();
+  const enforced = encryptionEnforced(c.env);
+  const plaintext = Number(row?.declaredPlaintextChunks ?? 0) + Number(row?.undeclaredPlaintextChunks ?? 0);
+  return c.json(
+    {
+      // The headline, in the operator's own words. Read this and nothing else and you
+      // still know whether the product is protecting anything.
+      summary:
+        `ENCRYPTION: ${enforced ? 'ENFORCED' : 'NOT ENFORCED'}` +
+        ` · ${Number(row?.accounts ?? 0)} accounts` +
+        ` · ${Number(row?.withKeys ?? 0)} with keys` +
+        ` · ${plaintext} plaintext chunks stored`,
+      enforced,
+      // The flag says what was INTENDED; the counts say what is TRUE. Both, side by side,
+      // because the gap between them is the whole story.
+      envelopeFlag: c.env.ENVELOPE_ENCRYPTION_ENABLED === 'true',
+      accounts: Number(row?.accounts ?? 0),
+      accountsWithKeys: Number(row?.withKeys ?? 0),
+      accountsPolicyRequired: Number(row?.policyRequired ?? 0),
+      chunks: {
+        encrypted: Number(row?.encryptedChunks ?? 0),
+        plaintextDeclared: Number(row?.declaredPlaintextChunks ?? 0),
+        plaintextUndeclared: Number(row?.undeclaredPlaintextChunks ?? 0),
+      },
+      wrappedKeys: Number(row?.wrappedKeys ?? 0),
+      // Said explicitly so it cannot be inferred wrongly from a green-looking panel.
+      claim: enforced
+        ? 'Capture encryption is enforced for REQUIRED accounts.'
+        : 'Capture is NOT encrypted. No document may state otherwise until Brief 47 is green.',
+    },
+    200,
+  );
+});
 
 interface AdminContactBody {
   userHash?: string;
@@ -1711,11 +1782,89 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   // with the flag armed) — capture availability is paramount and the client fails open.
   const isFinal = c.req.header('X-Is-Final') === '1' ? 1 : 0;
   const commitment = (c.req.header('X-Plaintext-Commitment') ?? '').trim();
+
+  // Brief 36 §B — OBSERVE the encryption state from the bytes, never from the client's
+  // word. `declared` is kept only so a disagreement can be reported; it is not what gets
+  // stored. This is what makes "dark observably dark": before this the schema had no way
+  // to contradict a deployment that called itself encryption-armed while shipping clear
+  // bytes, which is exactly what it had been doing since 2026-07-30.
+  const observation = observeChunkEncryption(
+    bytes,
+    commitment,
+    c.req.header('X-Encryption-State') ?? null,
+    c.req.header('X-Encryption-Reason') ?? null,
+  );
+  const owner = await c.env.DB.prepare(
+    'SELECT u.encryptionPolicy AS policy FROM events e LEFT JOIN users u ON u.id = e.userId WHERE e.id = ?',
+  )
+    .bind(eventId)
+    .first<{ policy: string | null }>();
+  const policy = owner?.policy ?? 'REQUIRED';
+
+  if (observation.state === 'UNENCRYPTED_UNDECLARED') {
+    // THE ORIGINAL DEFECT, now loud. Plaintext with no declaration means a client believes
+    // it is encrypting and is not. Error level: nothing legitimate produces this once the
+    // client-side state machine is deployed.
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        alert: 'plaintext_chunk_undeclared',
+        message: 'capture chunk arrived unencrypted with no declaration',
+        eventId,
+        sequence,
+        policy,
+      }),
+    );
+    await audit(c.env, eventId, 'encryption.undeclared_plaintext', null, { sequence, policy });
+  } else if (observation.state === 'UNENCRYPTED_DECLARED') {
+    // Legitimate (FAILED_TERMINAL) but never silent — it is recorded with its reason so
+    // the report can state why this capture is not confidential.
+    await audit(c.env, eventId, 'encryption.declared_plaintext', null, {
+      sequence,
+      reason: observation.reason,
+      policy,
+    });
+  }
+  if (observation.mismatch) {
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        alert: 'encryption_declaration_mismatch',
+        message: 'client declaration disagrees with the observed bytes',
+        eventId,
+        sequence,
+        declared: observation.declared,
+        observed: observation.state,
+      }),
+    );
+  }
+
+  // §B — the rejection path. Built, tested, and DARK: `encryptionEnforced` is off, so
+  // today a non-conforming chunk is recorded and alerted rather than refused. Arming it is
+  // Brief 47. Enforcing it now would reject every chunk from every existing account, none
+  // of which can yet encrypt — the same shape of silent total failure this brief exists to
+  // remove, just with a 4xx instead of a no-op.
+  if (policy === 'REQUIRED' && encryptionEnforced(c.env) && !satisfiesRequiredPolicy(observation)) {
+    await audit(c.env, eventId, 'encryption.chunk_rejected', null, {
+      sequence,
+      observed: observation.state,
+      policy,
+    });
+    return c.json(
+      {
+        error: 'encryption_required',
+        observed: observation.state,
+        message: 'This account requires encrypted capture. The chunk was not stored.',
+      },
+      422,
+    );
+  }
+
   await c.env.MEDIA.put(r2Key, bytes, { httpMetadata: { contentType: mimeType } });
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal, encryptionState) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal)
+    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal, observation.state)
     .run();
   await appendToChain(c.env, eventId, 'chunk', r2Key, sha256);
   // The signed PRE-ENCRYPTION plaintext commitment (change #1, admissibility): store it

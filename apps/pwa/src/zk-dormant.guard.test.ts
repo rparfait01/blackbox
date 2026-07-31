@@ -49,16 +49,23 @@ describe('the send path is fail-open by construction', () => {
     expect(sendItem).not.toMatch(/\bencryptChunk\(/);
   });
 
-  it('the body defaults to plaintext and is only replaced on a successful seal', () => {
-    // sealChunkForSend returns { body } starting from the plaintext; sendItem assigns it.
-    expect(uploadMgr).toMatch(/body = sealed\.body/);
-    expect(sealer).toMatch(/const plaintextResult: SealResult = \{ body: opts\.plaintext/);
+  it('Brief 36 §B — there is NO plaintext default left in the sealer', () => {
+    // This assertion is the inverse of the one it replaces. The old contract was "the body
+    // STARTS as the plaintext and is only replaced with ciphertext on success", which made
+    // every failure mode — no key, not ready yet, throw, hang — a silent clear-text upload.
+    // The sealer now throws instead, and the bytes stay queued on the device.
+    expect(sealer).not.toMatch(/plaintextResult/);
+    expect(sealer).toMatch(/refusing to send plaintext/);
+    // Whether a chunk may leave at all is decided by the state machine, not by the sealer.
+    expect(uploadMgr).toMatch(/transmitDecision\(item\.sessionId\)/);
+    expect(uploadMgr).toMatch(/if \(!decision\.transmit\)/);
   });
 
-  it('encryptor setup is fire-and-forget — never awaited on the open path', () => {
-    expect(uploadMgr).toMatch(/void prepareEncryptor\(ctx\)/);
-    // prepareEncryptor must not be awaited (that could delay the alert / block capture).
-    expect(uploadMgr).not.toMatch(/await prepareEncryptor\(/);
+  it('§C encryption setup is fire-and-forget — never awaited on the open path', () => {
+    // Unchanged and load-bearing: the alert path must never wait on encryption. Event
+    // creation and the cascade have already happened server-side by the time this runs.
+    expect(uploadMgr).toMatch(/void prepareEncryption\(ctx\)/);
+    expect(uploadMgr).not.toMatch(/await prepareEncryption\(/);
   });
 
   it('the seal is time-bounded so a hung crypto call cannot wedge the send', () => {
