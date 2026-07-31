@@ -26,7 +26,17 @@ async function liveJson(url) {
  * expected build. Anything else — mismatch, missing field, unreachable, error —
  * returns ok:false with a human-readable `seen`. It never returns 'unknown'.
  */
-export async function proveCurrent(url, field, expected, { tries = 12, delayMs = 3000 } = {}) {
+/**
+ * `tries` was 12 (≈36s), and Cloudflare Pages routinely takes longer than that to serve a
+ * fresh deploy from every edge. That produced a FALSE deploy failure — the artifact was
+ * published and correct, both halves reported the new build twenty seconds later, and the
+ * gate had already aborted and skipped the canary.
+ *
+ * Waiting longer does not weaken the gate: it still fails CLOSED if the build never
+ * propagates, which is the failure it exists to catch. What it removes is the other kind of
+ * dishonesty — a gate that cries wolf trains an operator to rerun it without reading it.
+ */
+export async function proveCurrent(url, field, expected, { tries = 20, delayMs = 3000 } = {}) {
   let seen = 'unreachable';
   for (let i = 0; i < tries; i += 1) {
     try {
