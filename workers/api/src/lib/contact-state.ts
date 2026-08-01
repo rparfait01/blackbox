@@ -8,6 +8,7 @@
  * render of GET /c/:id (the no-JS fallback), so the two never drift.
  */
 
+import { formatDtg } from '@blackbox/shared';
 import type { Env } from '../types';
 
 const TRAIL_WINDOW_MS = 5 * 60 * 1000; // last 5 minutes of positions
@@ -22,6 +23,12 @@ export interface ContactState {
   active: boolean;
   status: string;
   startedAt: number;
+  /** Brief 49 §A — when the event closed, and the SAME DTG string the rest of the product
+   *  renders. Preformatted server-side deliberately: the dashboard's poller runs as inline
+   *  browser JS, and a second DTG formatter written there would be free to drift from
+   *  `formatDtg` (Brief 29 §-1 — reuse, never re-implement). Null while the event is live. */
+  closedAt: number | null;
+  closedDtg: string | null;
   durationMs: number;
   /** Canonical tz offset of the event (UTC + offset; render-only). #C6 */
   tzOffsetMinutes: number | null;
@@ -358,6 +365,8 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
     active,
     status: event.status,
     startedAt: event.createdAt,
+    closedAt: event.closedAt,
+    closedDtg: event.closedAt ? formatDtg(event.closedAt) : null,
     durationMs: Math.max(0, endRef - event.createdAt),
     tzOffsetMinutes: event.tzOffsetMinutes,
     lastHeartbeatAt: event.lastHeartbeatAt,

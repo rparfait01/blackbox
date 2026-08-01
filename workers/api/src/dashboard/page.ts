@@ -323,6 +323,12 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     Session ended — recording has stopped.
   </div>
 
+  <!-- Brief 49 §C — shown only after the socket has given up entirely. The 3s poll is the
+       correctness guarantee, so losing the socket costs latency and not correctness; the
+       notice exists because a silently degraded page is how a coordinator stops trusting
+       what they are looking at. -->
+  <div class="ended-banner" id="wsNotice" hidden></div>
+
   <!-- Share-with-authorities modal (Fix Brief 4 G1): QR + dispatch link. -->
   <div class="modal" id="dispatchModal">
     <div class="modal-card">
@@ -383,6 +389,9 @@ export function renderNotifiedPage(opts: {
         ? `${state.location.lat.toFixed(4)}°, ${state.location.lon.toFixed(4)}°`
         : '—'
     }</div>
+    <!-- Brief 49 §D — shown when the poll stops because the event closed, so the last
+         coordinates on screen are never mistaken for current ones. -->
+    <div class="muted" id="notifiedEnded" style="margin-top:8px;font-size:13px" hidden></div>
   </section>
 
   <section class="sec">
@@ -406,17 +415,51 @@ export function renderNotifiedPage(opts: {
 </html>`;
 }
 
-// Location-only poll for the notified view — refreshes coordinates every 5s.
-// Deliberately fetches NOTHING but /state.location (no audio).
+// Location-only poll for the notified view (Brief 49 §D). Deliberately fetches NOTHING but
+// /state.location (no audio).
+//
+// This carried the same defect as the coordinator view in a quieter form: setInterval at 5s,
+// never cleared, no visibility check, no stop on closure — 17,280 requests a day per tab, for
+// a view that shows one pair of coordinates. It is treated identically here rather than being
+// judged less important, because "less important" is how the second copy of a bug survives the
+// fix to the first.
 const NOTIFIED_JS = `
 (function(){
   var CFG=window.__CFG;
-  function poll(){
-    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){return r.ok?r.json():null;}).then(function(st){
-      if(st&&st.location){ var c=document.getElementById('coords'); if(c){ c.textContent=st.location.lat.toFixed(4)+'°, '+st.location.lon.toFixed(4)+'°'; } }
-    }).catch(function(){});
+  var POLL_LIVE_MS=5000, POLL_HIDDEN_MS=30000;
+  var timer=null, stopped=false;
+  function intervalMs(){ return document.hidden ? POLL_HIDDEN_MS : POLL_LIVE_MS; }
+  function schedule(){
+    if(stopped) return;
+    if(timer!==null){ clearTimeout(timer); }
+    timer=setTimeout(function(){ poll(); }, intervalMs());
   }
-  setInterval(poll,5000);
+  function stop(st){
+    if(stopped) return;
+    stopped=true;
+    if(timer!==null){ clearTimeout(timer); timer=null; }
+    var n=document.getElementById('notifiedEnded');
+    if(n){
+      var dtg=(st&&st.closedDtg)?st.closedDtg:null;
+      n.textContent=dtg?('This event closed at '+dtg+'. Reload for current state.')
+                       :'This event has closed. Reload for current state.';
+      n.hidden=false;
+    }
+  }
+  function poll(){
+    if(stopped) return;
+    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){return r.ok?r.json():null;}).then(function(st){
+      if(!st){ schedule(); return; }
+      if(st.location){ var c=document.getElementById('coords'); if(c){ c.textContent=st.location.lat.toFixed(4)+'°, '+st.location.lon.toFixed(4)+'°'; } }
+      if(st.active===false){ stop(st); return; }
+      schedule();
+    }).catch(function(){ schedule(); });
+  }
+  poll();
+  document.addEventListener('visibilitychange', function(){
+    if(stopped) return;
+    if(!document.hidden){ poll(); } else { schedule(); }
+  });
   // Take coordination: deliberate claim, then reload into the full coordinator view.
   var tc=document.getElementById('takeCoord');
   if(tc){ tc.onclick=function(){
@@ -760,10 +803,58 @@ const CLIENT_JS = `
     }
   }
 
-  // ---- /state polling backbone (every 3s) — drives transcript/location/situation.
+  // ---- /state polling backbone (Brief 49 §A/§B) ---------------------------------------
+  //
+  // WHAT THIS REPLACED, AND WHY IT MATTERED. This was 'setInterval(poll,3000)' with no
+  // clearInterval anywhere, no visibility handling, and no stop on closure. A tab left open
+  // on an event that closed days ago kept asking the Worker for its state every three
+  // seconds — 28,800 requests a day, per tab, about nothing. That, plus the reconnect loop
+  // below, is what exhausted the account's request budget; when the budget went, the alert
+  // path went with it. A poll with no exit condition is a load generator, not a guarantee.
+  //
+  // The 3s cadence is still the correctness guarantee WHILE THE EVENT IS LIVE AND WATCHED
+  // (SSE and the socket are latency enhancements on top). It is only the other three states
+  // that were wrong: closed, hidden, and unreachable.
+  var POLL_LIVE_MS=3000, POLL_HIDDEN_MS=30000;
+  var pollTimer=null, pollStopped=false;
+
+  function pollIntervalMs(){
+    // Hidden tabs still poll — a coordinator with the tab in the background is still
+    // coordinating — but at 30s rather than 3s. Browsers already throttle background
+    // timers unevenly, so this makes the intent explicit rather than leaving the rate to
+    // whatever the engine decides.
+    return document.hidden ? POLL_HIDDEN_MS : POLL_LIVE_MS;
+  }
+
+  function schedulePoll(){
+    if(pollStopped) return;
+    if(pollTimer!==null){ clearTimeout(pollTimer); }
+    // setTimeout, re-armed each tick, rather than setInterval: the cadence has to change
+    // with visibility, and an interval cannot be re-rated without being torn down anyway.
+    pollTimer=setTimeout(function(){ poll(); }, pollIntervalMs());
+  }
+
+  // §A — a closed event is terminal for this page. Stop asking, say so, and offer the one
+  // action that gets current state: a reload. Silence would be worse than the old
+  // behaviour; an unexplained frozen dashboard is how a coordinator misses something.
+  function stopPolling(st){
+    if(pollStopped) return;
+    pollStopped=true;
+    if(pollTimer!==null){ clearTimeout(pollTimer); pollTimer=null; }
+    closeSocket();
+    var b=el('endedBanner');
+    if(b){
+      var dtg=(st&&st.closedDtg)?st.closedDtg:null;
+      b.textContent=dtg?('This event closed at '+dtg+'. Reload for current state.')
+                       :'This event has closed. Reload for current state.';
+      b.hidden=false;
+    }
+  }
+
   function poll(){
+    if(pollStopped) return;
     fetch(api('/state')).then(function(r){ return r.ok?r.json():null; }).then(function(st){
-      if(!st) return;
+      if(!st){ schedulePoll(); return; }
       S.closure=st.closure; S.active=st.active; // keep S fresh for the closure control
       durationMs=st.durationMs; baseNow=Date.now();
       if(st.location){ lastLoc=st.location; lastTrail=st.trail; applyLocation(st.location, st.trail); }
@@ -772,23 +863,71 @@ const CLIENT_JS = `
       applyClosure(st.closure);
       if(st.audio){ if(window.__pumpAudio) window.__pumpAudio(st.audio.latestSequence); }
       applyStatus(st);
-    }).catch(function(){});
+      if(st.active===false){ stopPolling(st); return; }
+      schedulePoll();
+    }).catch(function(){ schedulePoll(); });
   }
-  var pollTimer=setInterval(poll,3000);
+  poll();
 
-  // §4: live server push. The worker pushes "changed" the instant any LIFECYCLE
-  // event fires (close request, support assent, closure, duress, tampering) and
-  // we re-fetch /state immediately — no waiting for the next poll, no email. The
-  // 3s poll remains the guarantee if the socket drops; reconnect with backoff.
-  (function connectWS(){
+  // §B — react to visibility the instant it changes rather than waiting out the current
+  // interval, so a coordinator who returns to the tab sees live state immediately instead
+  // of up to 30 seconds stale.
+  document.addEventListener('visibilitychange', function(){
+    if(pollStopped) return;
+    if(!document.hidden){ poll(); } else { schedulePoll(); }
+  });
+
+  // ---- §4 live server push, with a BOUNDED reconnect (Brief 49 §C) ---------------------
+  //
+  // THE P0. This was 'ws.onclose = setTimeout(connectWS,3000)' — a fixed 3s
+  // retry with no backoff, no ceiling, and no closed-event check. When the Worker was
+  // failing, every tab retried twenty times a minute, and those retries were themselves
+  // requests against the budget that was already exhausted. The failure generated the load
+  // that sustained the failure. Nothing in that loop could ever decide to stop.
+  //
+  // Backoff is 3/6/12/24/48 capped at 60s, and after WS_MAX_ATTEMPTS it stops for good and
+  // says so. The 3s poll above remains the correctness guarantee, so giving up on the
+  // socket costs latency, never correctness.
+  var WS_BACKOFF_MS=[3000,6000,12000,24000,48000], WS_CAP_MS=60000, WS_MAX_ATTEMPTS=8;
+  var wsAttempts=0, wsTimer=null, wsSock=null, wsGaveUp=false;
+
+  function closeSocket(){
+    if(wsTimer!==null){ clearTimeout(wsTimer); wsTimer=null; }
+    if(wsSock){ try{ wsSock.onclose=null; wsSock.close(); }catch(x){} wsSock=null; }
+  }
+
+  function wsGiveUp(){
+    if(wsGaveUp) return;
+    wsGaveUp=true;
+    closeSocket();
+    var n=el('wsNotice');
+    if(n){ n.textContent='Connection lost — reload.'; n.hidden=false; }
+  }
+
+  function connectWS(){
+    // §C — never reconnect on a closed event. The old loop had no idea the event had ended,
+    // so it kept dialling for something that would never send again.
+    if(pollStopped||wsGaveUp) return;
+    if(wsAttempts>=WS_MAX_ATTEMPTS){ wsGiveUp(); return; }
     try{
       var wsUrl=base.replace(/^http/,'ws')+'/v1/c/'+CFG.eventId+'/subscribe'+q;
       var ws=new WebSocket(wsUrl);
+      wsSock=ws;
+      ws.onopen=function(){ wsAttempts=0; }; // a real connection resets the ladder
       ws.onmessage=function(e){ try{ var d=JSON.parse(e.data); if(d.type==='changed'){ poll(); } }catch(x){} };
-      ws.onclose=function(){ setTimeout(connectWS,3000); };
+      ws.onclose=function(){
+        wsSock=null;
+        if(pollStopped||wsGaveUp) return;
+        var delay=WS_BACKOFF_MS[Math.min(wsAttempts, WS_BACKOFF_MS.length-1)];
+        if(delay>WS_CAP_MS) delay=WS_CAP_MS;
+        wsAttempts++;
+        if(wsAttempts>=WS_MAX_ATTEMPTS){ wsGiveUp(); return; }
+        wsTimer=setTimeout(connectWS, delay);
+      };
       ws.onerror=function(){ try{ws.close();}catch(x){} };
-    }catch(x){ /* the 3s poll covers push being unavailable */ }
-  })();
+    }catch(x){ /* the poll above covers push being unavailable */ }
+  }
+  connectWS();
 
   // ---- SSE enhancement (lower latency); polling remains the guarantee ----
   try{
