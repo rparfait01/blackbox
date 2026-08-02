@@ -75,3 +75,4 @@ workers/api/test/.acceptance.env
 workers/*.html
 workers/*_files/
 .gate-run
+.latency/
