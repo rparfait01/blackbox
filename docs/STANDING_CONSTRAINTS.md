@@ -28,6 +28,34 @@ times.**
 - Honest status always — never claim delivery/success that didn't happen; never a silent failure.
 - §0a Hidden facade byte-identical on every brief that touches the client.
 
+## BRIEF CONVENTION (Brief 34 §1/§2 — non-negotiable, from Brief 035 forward)
+
+- **Every brief opens with `## CORRECTIONS`, before scope, before context, before anything.**
+  A brief that supersedes nothing writes `## CORRECTIONS — None.` A missing block is a defect
+  and the brief is rejected. Enforced mechanically: `scripts/supersession-index.mjs --check`
+  runs FIRST in the pre-push gate, before anything that costs a network request.
+- **New text only.** The correction IS the current reading. Never state what the prior text
+  said — a reader arriving at the newest brief must need nothing earlier. A block that
+  narrates the old wording is a delta, and deltas force the reader backward, which defeats
+  the whole convention.
+- **One correction per entry**, machine-findable address (zero-padded brief number, section,
+  step), plus the file path when it lands in code.
+- **Cumulative-safe.** Correcting text that was already corrected restates the current reading
+  IN FULL.
+- **A correction is not a fix.** The block records what a statement now SAYS; the body records
+  what the code must now DO. A brief that corrects a claim without fixing the behaviour says
+  so explicitly.
+- **One brief, one type** — FIX / BUILD / REMOVAL / VERIFY / GOVERNANCE. A brief that fixes
+  and builds is two briefs.
+- **A fix to something a prior brief shipped carries that brief's number with a revision
+  suffix** (`BRIEF_033_FIX_A`). Only new capability takes a new number, so a defect and its
+  fix stay one lineage. Subdivisions are `§A/§B/§C` inside one file, never separate documents.
+- **Both dependency directions are mandatory**: `**REQUIRES:**` and
+  `## CARRIES FORWARD (open, owned by)`. One alone is a gap — REQUIRES without CARRIES FORWARD
+  lets work fall between two briefs that each assumed the other had it.
+- `SUPERSESSION_INDEX.md` is **generated, never hand-maintained**. A hand-written index drifts
+  the first time someone is in a hurry, and a drifted index answers confidently and wrongly.
+
 ## DESTRUCTIVE = GUARDED
 - Restore point before any destructive prod operation.
 - **The custody chain is never purged.** Only the objects it attests to are purged, on
