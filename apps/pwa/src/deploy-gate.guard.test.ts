@@ -275,6 +275,38 @@ describe('RATIFIED — a declared version is not an installed version', () => {
   });
 });
 
+describe('§C the deploy verifies its own precondition', () => {
+  it('the deploy RUNS verification itself, rather than trusting the operator', () => {
+    // The gate used to live in shell operator precedence. `;` instead of `&&` deployed a failing
+    // test — nothing wrong with the test or the intent, the gate simply was not one.
+    const deploy = read('scripts/deploy.mjs');
+    expect(deploy).toMatch(/run\('pnpm', \['verify'\]\)/);
+    expect(deploy).toMatch(/DEPLOY REFUSED: verification did not pass/);
+  });
+
+  it('verification runs BEFORE anything is published', () => {
+    // strip() FIRST. The unstripped source mentions deploy-worker.mjs in the file header comment,
+    // 7600 characters before it is actually invoked — so an ordering assertion against raw text
+    // compares a sentence to a call. This test failed on exactly that, which is the sixth
+    // instance of the same trap and the reason the rule is now "parsed structure, never prose".
+    const deploy = strip(read('scripts/deploy.mjs'));
+    const verifyAt = deploy.indexOf("run('pnpm', ['verify'])");
+    expect(verifyAt).toBeGreaterThan(-1);
+    for (const publisher of ['deploy-worker.mjs', 'deploy-pages.mjs', 'canary.mjs']) {
+      expect(verifyAt, `verify must precede ${publisher}`).toBeLessThan(deploy.indexOf(publisher));
+    }
+  });
+
+  it('verify actually covers typecheck, lint and tests', () => {
+    // If `verify` were hollowed out the gate would still "run" and still prove nothing.
+    const pkg = JSON.parse(read('package.json'));
+    for (const step of ['typecheck', 'lint', 'test']) {
+      expect(pkg.scripts.verify, `verify must include ${step}`).toContain(step);
+    }
+    expect(pkg.scripts.test).toContain('-r'); // both packages, not one
+  });
+});
+
 describe('§E/§F the gate records itself and knows its own cost', () => {
   it('every outcome is recorded with classification, attempts and elapsed', () => {
     const src = read('scripts/assert-currency.mjs');

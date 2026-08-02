@@ -151,6 +151,40 @@ function assertToolchainOrRefuse() {
 
 assertToolchainOrRefuse();
 
+/**
+ * Brief 35 Fix A §C (corrected) — THE DEPLOY VERIFIES ITS OWN PRECONDITION.
+ *
+ * The gate used to depend on an operator typing `pnpm test && pnpm deploy`. I typed `;` instead
+ * of `&&` and deployed with a failing test. Nothing was wrong with the test, the tooling, or the
+ * intent — the gate was simply expressed in shell operator precedence, which is not a gate. It is
+ * the same defect as a gate a human can finish by hand: a control whose enforcement depends on
+ * the care of the person it is meant to constrain.
+ *
+ * So the deploy RUNS the verification itself, in this process, before anything is published.
+ * There is no flag to skip it and no environment variable that shortens it, for the same reason
+ * `--skip` does not exist on the canary. If it fails, `execFileSync` throws and nothing ships.
+ *
+ * It costs a couple of minutes per deploy. That is the correct price: the alternative is a
+ * pipeline whose safety property is "the operator remembered", and this session is the evidence
+ * that the operator does not always remember.
+ */
+console.log('\n─────────── verification (typecheck · lint · test · build) ───────────');
+try {
+  run('pnpm', ['verify']);
+} catch {
+  console.error(
+    [
+      '',
+      '✗ DEPLOY REFUSED: verification did not pass.',
+      '  Nothing has been published. Fix the failure and re-run `pnpm deploy`.',
+      '  This ran inside the deploy on purpose — a gate that depends on an operator typing',
+      '  `&&` rather than `;` is not a gate.',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
+console.log('─────────────────── verification passed ───────────────────\n');
+
 await assertHeadroomOrRefuse(target.apiOrigin);
 appendFileSync(COST_FILE, '1\n'); // the headroom probe is itself a request — count it
 

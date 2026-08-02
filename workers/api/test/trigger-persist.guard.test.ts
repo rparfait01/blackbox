@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+
+import { stripComments } from '../../../test-utils/guard-source.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -18,7 +20,9 @@ import { describe, expect, it } from 'vitest';
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const index = readFileSync(join(HERE, '..', 'src', 'index.ts'), 'utf8');
+// Comment-stripped: these assertions are about BEHAVIOUR, and a comment explaining a defect
+// necessarily contains that defect's text (test-utils/guard-source.mjs).
+const index = stripComments(readFileSync(join(HERE, '..', 'src', 'index.ts'), 'utf8'));
 /** The POST /v1/events handler ONLY — bounded to the next top-level route declaration,
  *  so the assertions below cannot accidentally range over the rest of the worker. */
 const handlerStart = index.indexOf("app.post('/v1/events'");
@@ -26,7 +30,13 @@ const handler = index.slice(handlerStart, index.indexOf('\napp.', handlerStart +
 
 describe('a failed insert is never reported as success', () => {
   it('the insert catch RE-THROWS when there is no verified existing event', () => {
-    const block = handler.slice(handler.indexOf('} catch (error) {'), handler.indexOf('// Seed the first location'));
+    // The end boundary is a CODE landmark, not a comment. It used to be
+    // `indexOf('// Seed the first location')` — which is the rule this sweep exists to enforce:
+    // a comment is not an interface, and slicing on one means the assertion silently changes
+    // range the moment someone rewords a sentence.
+    const end = handler.indexOf('INSERT OR REPLACE INTO locations_index');
+    expect(end).toBeGreaterThan(-1);
+    const block = handler.slice(handler.indexOf('} catch (error) {'), end);
     expect(block).toMatch(/throw error;/);
     // It may only short-circuit via resolveSingleActive — a fresh D1 READ, not a guess.
     expect(block).toMatch(/const raced = await resolveSingleActive\(/);
@@ -34,7 +44,13 @@ describe('a failed insert is never reported as success', () => {
   });
 
   it('the catch never fabricates a 201 of its own', () => {
-    const block = handler.slice(handler.indexOf('} catch (error) {'), handler.indexOf('// Seed the first location'));
+    // The end boundary is a CODE landmark, not a comment. It used to be
+    // `indexOf('// Seed the first location')` — which is the rule this sweep exists to enforce:
+    // a comment is not an interface, and slicing on one means the assertion silently changes
+    // range the moment someone rewords a sentence.
+    const end = handler.indexOf('INSERT OR REPLACE INTO locations_index');
+    expect(end).toBeGreaterThan(-1);
+    const block = handler.slice(handler.indexOf('} catch (error) {'), end);
     // Any c.json(..., 201) inside the catch would be success invented from a failure.
     expect(block).not.toMatch(/c\.json\([\s\S]*201/);
   });

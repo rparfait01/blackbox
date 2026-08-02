@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
+
+import { stripComments } from '../../../test-utils/guard-source.mjs';
 import { describe, expect, it } from 'vitest';
 
-const read = (f: string): string => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
+// Comment-stripped - behaviour, not prose (test-utils/guard-source.mjs).
+const read = (f: string): string => stripComments(readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8'));
 
 /**
  * Brief 37 — the chain's structural invariants, pinned as source facts.

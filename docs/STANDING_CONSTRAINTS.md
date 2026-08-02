@@ -190,3 +190,43 @@ is looking at. Occurrences found by the Brief 37 Fix A sweep:
 Swept and found CLEAN: `canary /status` (`routable.length === 0` — empty genuinely is the safe
 state), `suppression.ts` and `capture-encryptor.ts` (both guard length before `.every()`, so
 neither is vacuously true), the event HMAC path (`maxSkewMs = 300_000` bounds replay).
+
+---
+
+## GUARDS ASSERT STRUCTURE (ratified 2026-08-03, from Brief 2 Fix A)
+
+**A guard asserts against parsed structure — AST, exported symbols, config values. Never source
+text, never comments. A comment is not an interface.**
+
+Sixth occurrence is why this is tooling rather than advice. Every one was written by someone who
+knew the rule:
+
+| # | Where | Shape |
+|---|---|---|
+| 1–4 | Briefs 37, 39, 49, 35 Fix A | negative assertion failed because the comment EXPLAINING the defect contains the defect's text |
+| 5 | session-persistence guard | asserted a remembered token shape, broke on a change it does not govern |
+| 6 | deploy-gate guard | ordering compared a file-header sentence to a call 7,600 chars later |
+| 7 | trigger-persist guard | sliced a code range using `indexOf('// Seed the first location')` — a comment used as a structural landmark |
+
+Enforced by `test-utils/guard-source.mjs` (`code` / `prose` / `json` / `exportsOf` / `callOrder`)
+and the meta-guard `workers/api/test/guard-hygiene.guard.test.ts`, which FAILS on any new guard
+that reads source without stripping. Existing debt is an explicit list that may only shrink, and
+the meta-guard also fails if a converted file is left on it — otherwise an allowlist becomes the
+permanent exemption it was meant to retire.
+
+**The dangerous direction is not the noisy one.** A negative assertion that fails on a comment
+announces itself. A POSITIVE assertion satisfied by a comment is a guard reporting green while
+guarding nothing — the same shape as a cost line that always reads zero.
+
+`prose()` exists and is legitimate: "the §D limits are written down" is a real, checkable
+property. It must be named at the call site so a reader knows which was meant.
+
+## THE DEPLOY VERIFIES ITS OWN PRECONDITION (ratified 2026-08-03, Brief 35 Fix A §C corrected)
+
+**The deploy refuses to run unless the test suite passed in the same invocation, verified by the
+deploy script itself, not by shell operator precedence. A gate a shell operator can skip with `;`
+instead of `&&` is the same defect as a gate a human can finish by hand.**
+
+`pnpm deploy` now runs `pnpm verify` in-process before anything is published. There is no skip
+flag, for the same reason `--skip` does not exist on the canary. Occurrence: a `;` in a command
+chain deployed a build whose test suite had failed.

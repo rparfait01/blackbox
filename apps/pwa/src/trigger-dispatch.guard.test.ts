@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+
+import { stripComments } from '../../../test-utils/guard-source.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,7 +12,8 @@ import { describe, expect, it } from 'vitest';
  * the `!armable` gate, or the fragile press-and-hold fails here instead of shipping.
  */
 const SRC = dirname(fileURLToPath(import.meta.url));
-const read = (p: string): string => readFileSync(join(SRC, p), 'utf8');
+// Comment-stripped - behaviour, not prose (test-utils/guard-source.mjs).
+const read = (p: string): string => stripComments(readFileSync(join(SRC, p), 'utf8'));
 
 const act = read('./lib/activation/index.ts');
 const vis = read('./routes/blackbox/BlackBoxHome.tsx');
