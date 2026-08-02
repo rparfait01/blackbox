@@ -41,8 +41,13 @@ execFileSync('npx', ['wrangler', 'deploy', '--env', 'staging', '--var', `WORKER_
   shell: true,
 });
 
+// `--env=""` NAMES THE TOP-LEVEL ENVIRONMENT EXPLICITLY (Brief 35 Fix A §A, wrangler 4.x).
+// A bare `wrangler deploy` alongside a defined `[env.staging]` is ambiguous, and wrangler 4 warns
+// that it risks "unintentional changes to the wrong environment". The two environments here are
+// production and the severed staging that the acceptance suite writes to — precisely the pair
+// where an ambiguous default is worth removing rather than relying on.
 console.log(`Deploying PRODUCTION Worker build ${build}…`);
-execFileSync('npx', ['wrangler', 'deploy', '--var', `WORKER_BUILD:${build}`], {
+execFileSync('npx', ['wrangler', 'deploy', '--env=""', '--var', `WORKER_BUILD:${build}`], {
   cwd: API,
   stdio: 'inherit',
   shell: true,

@@ -210,6 +210,37 @@ describe('the two defects a real deploy exposed', () => {
   });
 });
 
+describe('§A the toolchain that performs a deploy is the one this repo pins', () => {
+  it('wrangler is pinned to 4.x in every workspace that deploys', () => {
+    for (const f of ['workers/api/package.json', 'apps/pwa/package.json']) {
+      expect(JSON.parse(read(f)).devDependencies.wrangler, f).toMatch(/^\^4\./);
+    }
+  });
+
+  it('no deploy step runs wrangler from a directory that has not installed it', () => {
+    // deploy-pages.mjs ran `npx wrangler` with cwd:ROOT, and the root has no wrangler in
+    // node_modules — so npx fetched one from the REGISTRY. The client half of every deploy was
+    // published by 4.99.0 off the network while package.json pinned 4.118.0: not reproducible,
+    // not reviewable, and a toolchain download in the middle of a production deploy.
+    const src = read('scripts/deploy-pages.mjs');
+    expect(src).toMatch(/cwd: path\.join\(ROOT, 'apps\/pwa'\)/);
+    // The wrangler INVOCATION passes a relative 'dist'; the DIST constant above it is a
+    // legitimate absolute path used to read the build output, so match the args, not the file.
+    expect(src).toMatch(/'pages', 'deploy', 'dist'/);
+  });
+
+  it('the production worker deploy names its environment explicitly', () => {
+    // With [env.staging] defined, a bare `wrangler deploy` is ambiguous and wrangler 4 warns it
+    // risks changing the wrong environment. The other environment here is the one the
+    // write-heavy acceptance suite targets, so the ambiguity is worth removing outright.
+    expect(read('scripts/deploy-worker.mjs')).toMatch(/'--env=""'/);
+  });
+
+  it('telemetry stays off — it is a stated principle, not a default', () => {
+    expect(read('workers/api/wrangler.toml')).toMatch(/send_metrics = false/);
+  });
+});
+
 describe('§E/§F the gate records itself and knows its own cost', () => {
   it('every outcome is recorded with classification, attempts and elapsed', () => {
     const src = read('scripts/assert-currency.mjs');

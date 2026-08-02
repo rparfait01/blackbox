@@ -69,10 +69,17 @@ console.log(`Deploying PWA build ${expected} → production (branch=${PROD_BRANC
 
 // Pin the target: ALWAYS the production branch. There is no code path here that
 // leaves a production deploy as Preview-only.
+// RUN FROM apps/pwa, WHERE WRANGLER IS PINNED. This used to run with `cwd: ROOT`, and the repo
+// root has no wrangler in its node_modules — so `npx` silently fetched one from the registry.
+// The PWA half of every deploy was therefore performed by an UNPINNED binary: 4.99.0 from the
+// network while package.json pinned 4.118.0. The version that publishes the client was whatever
+// the registry served that morning, which is neither reproducible nor reviewable, and it
+// downloaded a toolchain mid-deploy every time. apps/pwa has wrangler as a devDependency, so
+// running from there uses the version this repo actually declares.
 execFileSync(
   'npx',
-  ['wrangler', 'pages', 'deploy', 'apps/pwa/dist', `--project-name=${PROJECT}`, `--branch=${PROD_BRANCH}`],
-  { cwd: ROOT, stdio: 'inherit', shell: true },
+  ['wrangler', 'pages', 'deploy', 'dist', `--project-name=${PROJECT}`, `--branch=${PROD_BRANCH}`],
+  { cwd: path.join(ROOT, 'apps/pwa'), stdio: 'inherit', shell: true },
 );
 
 // Poll BOTH live endpoints for edge propagation, then assert. Both halves must
