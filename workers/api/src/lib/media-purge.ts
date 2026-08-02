@@ -26,6 +26,31 @@
  *
  * Both guards must pass. They fail closed: an object is deleted only when it is provably
  * old AND provably unreferenced.
+ *
+ * ════ TWO BUCKETS, DIFFERENT RULES (Brief 40 §E) — read before touching anything here ════
+ *
+ *   blackbox-media   capture chunks.      NO lock rule. DELETABLE. This is what the routine
+ *                                         below operates on, and what an owner-consented purge
+ *                                         destroys. A survivor must always be able to have her
+ *                                         own recordings destroyed; that is the principle the
+ *                                         product is built on, and a lock here would invert it.
+ *
+ *   blackbox-vault   sealed manifests.    LOCKED — `vault/` prefix, 1096 days. NOT deletable
+ *                                         before the term expires. The lock binds the OPERATOR
+ *                                         so the record that an incident existed cannot be
+ *                                         quietly removed. The manifest SURVIVES a purge and
+ *                                         its export then reads PURGED_BY_CONSENT (Brief 37 §E):
+ *                                         the record is preserved, the content is gone.
+ *
+ * A BUCKET CANNOT BE EMPTIED WHILE LOCK RULES ARE CONFIGURED. Never write a sweep that hits the
+ * lock. Concretely: this routine and anything like it must stay scoped to MEDIA. Do not
+ * generalise it over a bucket list, do not add VAULT as a second target "for symmetry", and do
+ * not reach for `r2 bucket delete` on the vault — each of those turns a working cleanup into an
+ * operation that fails partway through, having already deleted what was not protected.
+ *
+ * If a vault object genuinely must go, that is a deliberate act with a paper trail: remove the
+ * lock rule, delete, re-provision from `infra/r2/blackbox-vault.lock.json`. It should be
+ * uncomfortable, and it should be visible. It is not a sweep.
  */
 import type { Env } from '../types';
 

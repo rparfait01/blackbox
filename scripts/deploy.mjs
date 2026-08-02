@@ -34,6 +34,7 @@ import { randomBytes } from 'node:crypto';
 import { API_ORIGIN_VAR, deployTarget } from './api-origin.mjs';
 import { HEADROOM, headroomVerdict, readHeadroom } from './headroom.mjs';
 import { assertVaultLock, parseLockRules, provisionCommand, readVaultLock } from './vault-lock.mjs';
+import { checkDeployToolchain } from './toolchain.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -118,6 +119,37 @@ const run = (cmd, args, extraEnv = {}) =>
 console.log(`=== Deploy ${build}: build PWA → deploy Worker → deploy PWA (prod, asserted) → canary ===`);
 console.log(`    API origin (config/deploy-targets.json → production): ${target.apiOrigin}`);
 console.log(`    PWA origin: ${target.pwaOrigin}  (Pages project ${target.pagesProject}, branch ${target.pagesBranch})`);
+
+/**
+ * RATIFIED FROM §A — REPORT THE TOOLCHAIN THAT WILL ACTUALLY RUN, AND REFUSE A MISMATCH.
+ *
+ * The client half of every deploy was published by a wrangler fetched from the registry, because
+ * `npx` was invoked from a directory that did not declare it. Nothing failed and nothing warned;
+ * the declared version and the running version were simply never printed next to each other.
+ * Same class as the phantom `0 request(s)` line — a pipeline that cannot state what it did.
+ */
+function assertToolchainOrRefuse() {
+  const results = checkDeployToolchain(ROOT);
+  for (const r of results) {
+    console.log(`    toolchain: ${r.dir} ${r.tool}@${r.installed ?? '(none)'} (declared ${r.declared ?? '(undeclared)'})`);
+  }
+  const bad = results.filter((r) => !r.ok);
+  if (bad.length) {
+    console.error(
+      [
+        '',
+        '✗ DEPLOY REFUSED: the toolchain that would run is not the toolchain this repo declares.',
+        ...bad.map((r) => `    · ${r.problem}`),
+        '',
+        '  A tool resolved from the network is not a pinned dependency, and a deploy that cannot',
+        '  say which version published it cannot be reproduced or reviewed.',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+}
+
+assertToolchainOrRefuse();
 
 await assertHeadroomOrRefuse(target.apiOrigin);
 appendFileSync(COST_FILE, '1\n'); // the headroom probe is itself a request — count it

@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import path, { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  LOCK_CONFIG_PATH,
+  loadLockConfig,
   RETENTION_DAYS,
   RETENTION_MONTHS,
   VAULT_PREFIX,
@@ -105,7 +107,60 @@ describe('§C the live rule is read back and checked', () => {
   });
 
   it('failure hands back the provisioning command', () => {
-    expect(provisionCommand('blackbox-vault')).toMatch(/wrangler r2 bucket lock add blackbox-vault .* vault\/ --retention-days 1096/);
+    // It names the TRACKED path, not a hand-typed `lock add` — §B's point is reproducibility.
+    expect(provisionCommand()).toBe('node scripts/provision-vault-lock.mjs');
+  });
+});
+
+describe('§B the rule is tracked infrastructure, not a dashboard action', () => {
+  it('the tracked config declares the rule, and §C reads its expectations from it', () => {
+    // One source of truth. If the assertion carried its own copy of prefix and duration, the
+    // file could say one thing and the gate check another, and a deploy would pass while the
+    // live bucket matched neither.
+    const cfg = loadLockConfig();
+    expect(cfg.bucket).toBe('blackbox-vault');
+    expect(cfg.prefix).toBe('vault/');
+    expect(cfg.retentionDays).toBe(1096);
+    expect(cfg.retentionMonths).toBe(36);
+    expect(LOCK_CONFIG_PATH.split(path.sep).join('/')).toMatch(/infra\/r2\/blackbox-vault\.lock\.json$/);
+  });
+
+  it('the condition is Age-bounded — §0 refused indefinite retention', () => {
+    const raw = JSON.parse(read('infra/r2/blackbox-vault.lock.json'));
+    expect(raw.rules[0].condition.type).toBe('Age');
+    expect(raw.rules[0].condition.maxAgeSeconds).toBe(1096 * 86400);
+    expect(raw.rules[0].enabled).toBe(true);
+  });
+
+  it('the provisioner refuses any bucket but the vault, and any bucket-wide prefix', () => {
+    // `lock set` overwrites every rule and takes whatever bucket name it is handed. The same
+    // mistake pointed at blackbox-media would mean a survivor cannot delete her own recordings.
+    const src = read('scripts/provision-vault-lock.mjs');
+    expect(src).toMatch(/cfg\.bucket !== 'blackbox-vault'/);
+    expect(src).toMatch(/\/media\/i\.test\(cfg\.bucket\)/);
+    expect(src).toMatch(/!cfg\.prefix\.endsWith\('\/'\)/);
+    expect(src).toMatch(/readVaultLock/); // applies, then reads back
+  });
+});
+
+describe('§E the purge path and the lock cannot collide', () => {
+  it('the purge header states the two-bucket rule in full', () => {
+    // Collapse the comment's line breaks and leading asterisks first: these sentences wrap, and
+    // a phrase that spans two lines is still the phrase.
+    const src = read('workers/api/src/lib/media-purge.ts').replace(/\n\s*\*\s?/g, ' ');
+    expect(src).toMatch(/TWO BUCKETS, DIFFERENT RULES/);
+    expect(src).toMatch(/blackbox-media\s+capture chunks\.\s+NO lock rule\. DELETABLE/);
+    expect(src).toMatch(/blackbox-vault\s+sealed manifests\.\s+LOCKED/);
+    expect(src).toMatch(/A BUCKET CANNOT BE EMPTIED WHILE LOCK RULES ARE CONFIGURED/);
+    expect(src).toMatch(/Never write a sweep that hits the lock/);
+  });
+
+  it('the purge routine still targets MEDIA only', () => {
+    // If this ever grows a VAULT target, it becomes an operation that fails partway through,
+    // having already deleted what was not protected.
+    const src = read('workers/api/src/lib/media-purge.ts');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/env\.VAULT/);
   });
 });
 

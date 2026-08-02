@@ -49,20 +49,54 @@
  * exists to serve, and is a live safety problem rather than a compliance nicety.
  */
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
-/** 36 months, expressed in the days R2 actually accepts. */
-export const RETENTION_MONTHS = 36;
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * §B — ONE SOURCE OF TRUTH. The expected rule is READ from the tracked infra file rather than
+ * restated here. If the assertion carried its own copy of the prefix and duration, §B and §C
+ * could disagree silently: the file would say one thing, the gate would check another, and the
+ * deploy would pass while the live bucket matched neither. Config and assertion read the same
+ * bytes or the verification means nothing.
+ */
+export const LOCK_CONFIG_PATH = path.join(ROOT, 'infra/r2/blackbox-vault.lock.json');
+
+export function loadLockConfig(file = LOCK_CONFIG_PATH) {
+  const cfg = JSON.parse(readFileSync(file, 'utf8'));
+  const rule = (cfg.rules ?? [])[0];
+  if (!rule) throw new Error(`${file} declares no lock rules`);
+  if (rule.condition?.type !== 'Age' || typeof rule.condition.maxAgeSeconds !== 'number') {
+    throw new Error(`${file} rule '${rule.id}' must use an Age condition — §0 chose a bounded term`);
+  }
+  return {
+    bucket: cfg.bucket,
+    name: rule.id,
+    prefix: rule.prefix,
+    retentionDays: rule.condition.maxAgeSeconds / 86400,
+    retentionMonths: cfg.retentionMonths,
+    rules: cfg.rules,
+  };
+}
+
+const CONFIG = loadLockConfig();
+
+/** 36 months, as declared in tracked config. */
+export const RETENTION_MONTHS = CONFIG.retentionMonths;
 
 /**
  * 1096, not 1095. Three calendar years contain at least one leap day, so 1095 days can fall one
  * day SHORT of a 36-month claim. The rule must never be briefer than the sentence it backs.
  */
-export const RETENTION_DAYS = 1096;
+export const RETENTION_DAYS = CONFIG.retentionDays;
 
 /** Only the sealed-manifest prefix. Working chunks and the purge path must stay reachable. */
-export const VAULT_PREFIX = 'vault/';
+export const VAULT_PREFIX = CONFIG.prefix;
 
-export const VAULT_LOCK_NAME = 'vault-36mo-retention';
+export const VAULT_LOCK_NAME = CONFIG.name;
+export const VAULT_BUCKET = CONFIG.bucket;
 
 /**
  * Parse `wrangler r2 bucket lock list`. Wrangler emits labelled `key: value` blocks, one per
@@ -143,6 +177,8 @@ export function readVaultLock(bucket, cwd) {
 }
 
 /** The provisioning command, printed on failure so recovery is resumption rather than guesswork. */
-export function provisionCommand(bucket) {
-  return `npx wrangler r2 bucket lock add ${bucket} ${VAULT_LOCK_NAME} ${VAULT_PREFIX} --retention-days ${RETENTION_DAYS}`;
+export function provisionCommand() {
+  // Names the tracked-config path, not a hand-typed `lock add` — §B's whole point is that the
+  // rule is reproducible from the repository rather than retyped from memory at a prompt.
+  return 'node scripts/provision-vault-lock.mjs';
 }

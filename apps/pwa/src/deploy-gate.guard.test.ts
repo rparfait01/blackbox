@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { OUTCOME, classify, MAX_ATTEMPTS, PROPAGATION_BUDGET_MS } from '../../../scripts/assert-currency.mjs';
+import { checkDeployToolchain, checkTool, satisfies } from '../../../scripts/toolchain.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf8');
@@ -238,6 +239,39 @@ describe('§A the toolchain that performs a deploy is the one this repo pins', (
 
   it('telemetry stays off — it is a stated principle, not a default', () => {
     expect(read('workers/api/wrangler.toml')).toMatch(/send_metrics = false/);
+  });
+});
+
+describe('RATIFIED — a declared version is not an installed version', () => {
+  it('every tool the deploy invokes is installed where it is invoked from', () => {
+    for (const r of checkDeployToolchain(ROOT)) {
+      expect(r.ok, r.problem ?? '').toBe(true);
+      expect(r.installed).toBeTruthy();
+    }
+  });
+
+  it('an undeclared tool is a REFUSAL, because npx would fetch it from the registry', () => {
+    const r = checkTool(ROOT, '.', 'wrangler');
+    expect(r.ok).toBe(false);
+    expect(r.problem).toMatch(/resolves from the REGISTRY/);
+  });
+
+  it('a version outside the declared range is a refusal', () => {
+    expect(satisfies('4.118.0', '^4.42.0')).toBe(true);
+    expect(satisfies('3.114.17', '^4.42.0')).toBe(false);
+    expect(satisfies('4.41.0', '^4.42.0')).toBe(false);
+  });
+
+  it('an unparseable range THROWS rather than passing', () => {
+    // "I could not evaluate the constraint" and "the constraint is met" are different answers,
+    // and only one of them is safe to act on.
+    expect(() => satisfies('4.1.0', '>=4 <5')).toThrow();
+  });
+
+  it('the gate reports the toolchain and refuses a mismatch', () => {
+    const deploy = read('scripts/deploy.mjs');
+    expect(deploy).toMatch(/toolchain: \$\{r\.dir\} \$\{r\.tool\}@/);
+    expect(deploy).toMatch(/DEPLOY REFUSED: the toolchain that would run/);
   });
 });
 

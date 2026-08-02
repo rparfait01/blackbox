@@ -99,3 +99,25 @@ times.**
 - GOOD / BAD / CORRECT-FOR-REPAIR. Terse. Root-cause named. Evidence per claim.
 - State what deploys BEFORE deploying it — no riders discovered after the fact.
 - Every open item ends with who closes it and how — never an orphan flag.
+
+---
+
+## TOOLCHAIN (ratified 2026-08-02, from Brief 35 Fix A §A)
+
+**No build or deploy step invokes a tool from the network.** Every tool is a pinned dependency,
+invoked from the directory where it is declared. If `npx` resolves it from the registry, the
+pipeline is wrong.
+
+**A declared version is not an installed version.** The pipeline reports the version it actually
+ran, and a mismatch with the manifest fails the deploy.
+
+*Why this is standing rather than a one-off fix:* `deploy-pages.mjs` ran `npx wrangler` from the
+repository root, which declares no wrangler, so npx fetched one from the registry. The client
+half of every production deploy was published by 4.99.0 off the network while `package.json`
+declared 4.118.0. Nothing failed and nothing warned, because the two numbers were never printed
+next to each other — so the honest answer to "which wrangler published production?" was
+"whatever the registry served that morning". This is the same class as a cost line that always
+reads zero: a value that looks authoritative while being structurally unable to reflect reality.
+
+Enforced by `scripts/toolchain.mjs`, called from the Brief 35 deploy gate before anything is
+built. Guarded by `apps/pwa/src/deploy-gate.guard.test.ts`.

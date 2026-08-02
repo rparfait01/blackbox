@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Brief 40 §B — THE VAULT RETENTION RULE, AS TRACKED INFRASTRUCTURE.",
+    "",
+    "This file is the source of truth for the lock on blackbox-vault. It is applied with",
+    "`node scripts/provision-vault-lock.mjs` and asserted on every deploy by Brief 40 §C, which",
+    "reads the LIVE rule back and compares it against this file. Provisioning by hand in a",
+    "dashboard is how finding 7 happened: a retention claim with no artifact in the repository",
+    "establishing that anything backed it.",
+    "",
+    "SCOPE IS LOAD-BEARING, AND IT IS NARROW ON PURPOSE. The prefix is exactly the sealed-manifest",
+    "path (vault/<eventId>/<packageHash>.json). It must never be widened to the whole bucket and",
+    "must never be applied to blackbox-media, which holds capture chunks: a survivor who wants her",
+    "own recordings destroyed must be able to destroy them. The lock binds the OPERATOR, so the",
+    "record that an incident existed cannot be quietly removed; it does not bind the owner.",
+    "",
+    "1096 days, not 1095: three calendar years contain at least one leap day, so 1095 can fall one",
+    "day short of the 36-month period the product claims. 1096 * 86400 = 94694400.",
+    "",
+    "See scripts/vault-lock.mjs for §D — what this rule does and does not prevent."
+  ],
+  "bucket": "blackbox-vault",
+  "retentionMonths": 36,
+  "rules": [
+    {
+      "id": "vault-36mo-retention",
+      "enabled": true,
+      "prefix": "vault/",
+      "condition": {
+        "type": "Age",
+        "maxAgeSeconds": 94694400
+      }
+    }
+  ]
+}
