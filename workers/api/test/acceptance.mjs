@@ -38,6 +38,24 @@
  * Checks self-provision throwaway accounts (smoke+acc-*@example.com) and clean up.
  */
 import { createHmac, createHash } from 'node:crypto';
+
+/**
+ * Brief 35 Fix A §F — THE SUITE'S OWN REQUEST COST, COUNTED.
+ *
+ * Every check here is a request against the same account limit whose exhaustion takes the alert
+ * path down — the limit that was actually reached, and that presented itself as a Cloudflare
+ * outage for most of a session. A verification suite that cannot say what it costs is one an
+ * operator has to guess about before running, and guessing is what produced the outage. So the
+ * count is wrapped at the one place every request goes through, and reported at the end.
+ */
+let REQUESTS_ISSUED = 0;
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (...a) => {
+    REQUESTS_ISSUED += 1;
+    return realFetch(...a);
+  };
+}
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
@@ -2324,5 +2342,10 @@ async function cleanup() {
     if (si.data?.sessionToken) await api('DELETE', '/v1/me/account', { bearer: si.data.sessionToken }).catch(() => {});
   }
 }
+
+process.on('exit', () => {
+  console.log(`
+[cost] acceptance suite issued ${REQUESTS_ISSUED} request(s) against the account limit.`);
+});
 
 run().catch((e) => { console.error('SUITE ERROR', e); process.exit(1); });

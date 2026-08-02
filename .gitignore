@@ -74,3 +74,4 @@ workers/api/test/.acceptance.env
 # Operator-local wrangler secret-list exports (may contain sensitive info)
 workers/*.html
 workers/*_files/
+.gate-run

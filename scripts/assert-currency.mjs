@@ -26,6 +26,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -58,13 +59,64 @@ export const UNAVAILABLE_BUDGET_MS = 300_000;
  *  under quota pressure an unbounded poll is self-defeating. */
 export const MAX_ATTEMPTS = 40;
 
-/** Requests this module issues per endpoint, tracked so the gate can report its own cost. */
+/**
+ * §F — the gate's own request cost, COUNTED ACROSS PROCESSES.
+ *
+ * The first real deploy under this brief reported `currency poll issued 0 request(s)` while the
+ * table directly above it showed two successful polls. The count was not wrong by an off-by-one;
+ * it was structurally unable to be right. `deploy.mjs` reads the counter in its own process, but
+ * the polling happens inside `deploy-pages.mjs`, which it spawns as a CHILD. Two processes, two
+ * module instances, two counters — the parent reported the one that never counted anything.
+ *
+ * That is the same defect this brief exists to close, wearing different clothes: a control that
+ * reports as measuring while measuring nothing. A cost line that always says zero is worse than
+ * no cost line, because zero is a number an operator will believe and act on.
+ *
+ * So the count goes through a file when one is named. Every process that issues a gate request
+ * appends to it; whoever reports sums it. Plain, durable, and correct across `execFileSync`.
+ */
+const COST_FILE = process.env.BBX_GATE_COST_FILE || '';
 let requestsIssued = 0;
-export function gateRequestCount() {
-  return requestsIssued;
+
+/** Called once per request actually put on the wire. */
+function countRequest() {
+  requestsIssued += 1;
+  if (!COST_FILE) return;
+  try {
+    appendFileSync(COST_FILE, '1\n');
+  } catch {
+    // Never let cost accounting break a deploy. An unwritable ledger is reported as a gap by
+    // gateRequestCount() below, not as a failure here.
+  }
 }
+
+/**
+ * For gate scripts that issue their own requests outside this module — the canary, chiefly.
+ * The deploy's cost line is only honest if everything that spends is counted, and the canary
+ * spends about eighteen times what the poll does.
+ */
+export function countExternalRequest() {
+  countRequest();
+}
+
+export function gateRequestCount() {
+  if (!COST_FILE) return requestsIssued;
+  try {
+    // The file is the whole picture: this process's own requests are already in it.
+    return readFileSync(COST_FILE, 'utf8').split('\n').filter(Boolean).length;
+  } catch {
+    return requestsIssued;
+  }
+}
+
 export function resetGateRequestCount() {
   requestsIssued = 0;
+  if (!COST_FILE) return;
+  try {
+    writeFileSync(COST_FILE, '');
+  } catch {
+    /* see countRequest */
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -75,12 +127,24 @@ function backoffMs(attempt) {
   return Math.round(base * (0.75 + Math.random() * 0.5));
 }
 
-/** Is this build id a commit in our own history? Local git, no network. */
+/**
+ * Is this build id a commit in our own history? Local git, no network.
+ *
+ * NO SHELL, AND NO CARET. This previously ran `git cat-file -e <sha>^{commit}` with
+ * `shell: true`. On Windows `^` is cmd.exe's escape character, so the argument arrived at git
+ * as `<sha>{commit}`, git errored, and this returned false for EVERY build id. The visible
+ * consequence was the opposite of what §B is for: an ordinary propagation delay — the most
+ * common transient state of a deploy — classified as WRONG_ARTIFACT, which is terminal and
+ * retries zero times. It stayed hidden because a deploy that is CURRENT on the first attempt
+ * never reaches this branch, and ours usually are.
+ *
+ * `cat-file -t` needs no revision syntax at all, so there is nothing left for a shell to eat.
+ */
 function isOurBuild(buildId) {
   if (!buildId || !/^[0-9a-f]{7,40}$/i.test(buildId)) return false;
   try {
-    execFileSync('git', ['cat-file', '-e', `${buildId}^{commit}`], { cwd: ROOT, stdio: 'ignore', shell: true });
-    return true;
+    const type = execFileSync('git', ['cat-file', '-t', buildId], { cwd: ROOT, shell: false, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return type === 'commit';
   } catch {
     return false;
   }
@@ -120,7 +184,7 @@ export function classify({ ok, status, body, error, field, expected }) {
 }
 
 async function observe(url, field, expected) {
-  requestsIssued += 1;
+  countRequest();
   try {
     const res = await fetch(`${url}?ts=${Date.now()}`, { cache: 'no-store' });
     const text = await res.text();

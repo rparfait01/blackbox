@@ -24,14 +24,15 @@
  * fails stops everything after it.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { randomBytes } from 'node:crypto';
 
 import { API_ORIGIN_VAR, deployTarget } from './api-origin.mjs';
-import { gateRequestCount } from './assert-currency.mjs';
+import { HEADROOM, headroomVerdict, readHeadroom } from './headroom.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -56,6 +57,21 @@ const target = deployTarget('production');
 const GATE_NONCE = randomBytes(24).toString('hex');
 
 /**
+ * §F — the shared request ledger. The polling happens inside child processes, so an in-memory
+ * counter in THIS process can only ever report zero, which is what the first real deploy under
+ * this brief did. Every process that issues a gate request appends here; the total is read back
+ * at the end. Named per run, in the OS temp dir, and unlinked when the deploy finishes.
+ */
+const COST_FILE = path.join(tmpdir(), `bbx-gate-cost-${GATE_NONCE.slice(0, 12)}.log`);
+writeFileSync(COST_FILE, '');
+
+/**
+ * §C — the run marker the canary CONSUMES. Written here, deleted by the canary on first read, so
+ * a nonce cannot be replayed to finish a stumbled gate by hand. Gitignored; it never outlives a run.
+ */
+writeFileSync(path.join(ROOT, '.gate-run'), JSON.stringify({ nonce: GATE_NONCE, build: gitSha(), at: Date.now() }));
+
+/**
  * §F — THE GATE COSTS REQUESTS, AND UNDER QUOTA PRESSURE THAT IS SELF-DEFEATING.
  *
  * Verifying a deploy spends real requests against the same plan limit whose exhaustion takes
@@ -63,8 +79,6 @@ const GATE_NONCE = randomBytes(24).toString('hex');
  * how a correct deploy gets abandoned and finished by hand. So the gate asks FIRST, with one
  * request, and refuses to start if the headroom is not there.
  */
-const HEADROOM_REFUSE_ABOVE = 0.9;
-
 async function assertHeadroomOrRefuse(apiOrigin) {
   const token = (() => {
     try {
@@ -77,35 +91,12 @@ async function assertHeadroomOrRefuse(apiOrigin) {
     console.log('    headroom: SKIPPED (no admin credential to query it)');
     return;
   }
-  try {
-    const res = await fetch(`${apiOrigin}/v1/admin/encryption/readiness`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      console.log(`    headroom: UNKNOWN (readiness returned ${res.status})`);
-      return;
-    }
-    const body = await res.json();
-    const r = body?.requests;
-    if (!r || !r.configured) {
-      console.log('    headroom: NOT MEASURED (no analytics token configured — see Brief 33 Fix A §F)');
-      return;
-    }
-    console.log(`    headroom: ${r.summary}`);
-    if (r.usedFraction != null && r.usedFraction >= HEADROOM_REFUSE_ABOVE) {
-      console.error(
-        [
-          '',
-          `✗ DEPLOY REFUSED: request headroom is ${Math.round(r.usedFraction * 100)}% of the plan limit.`,
-          '  The gate itself spends requests, and the alert path fails when the limit is reached.',
-          '  This is BILLING, not infrastructure. Raise the plan or wait for the daily reset.',
-        ].join('\n'),
-      );
-      process.exit(1);
-    }
-  } catch (error) {
-    console.log(`    headroom: UNKNOWN (${String(error).slice(0, 80)})`);
+  const verdict = headroomVerdict(await readHeadroom(apiOrigin, token));
+  if (verdict.state === HEADROOM.REFUSE) {
+    console.error(verdict.message);
+    process.exit(1);
   }
+  console.log(`    ${verdict.message}`);
 }
 
 const build = gitSha();
@@ -117,7 +108,7 @@ const run = (cmd, args, extraEnv = {}) =>
     // The deploy pipeline's value WINS over any local .env — Vite gives process.env
     // precedence for VITE_-prefixed keys. An operator's stale .env cannot redirect a
     // production build.
-    env: { ...process.env, VITE_BUILD_ID: build, [API_ORIGIN_VAR]: target.apiOrigin, ...extraEnv },
+    env: { ...process.env, VITE_BUILD_ID: build, [API_ORIGIN_VAR]: target.apiOrigin, BBX_GATE_COST_FILE: COST_FILE, ...extraEnv },
   });
 
 console.log(`=== Deploy ${build}: build PWA → deploy Worker → deploy PWA (prod, asserted) → canary ===`);
@@ -125,6 +116,7 @@ console.log(`    API origin (config/deploy-targets.json → production): ${targe
 console.log(`    PWA origin: ${target.pwaOrigin}  (Pages project ${target.pagesProject}, branch ${target.pagesBranch})`);
 
 await assertHeadroomOrRefuse(target.apiOrigin);
+appendFileSync(COST_FILE, '1\n'); // the headroom probe is itself a request — count it
 
 // Build the PWA with the SAME id the Worker is stamped with, so a matched deploy
 // shows identical PWA + Worker builds — and with the validated origin baked in.
@@ -141,6 +133,13 @@ run('node', [path.join(ROOT, 'scripts/canary.mjs'), '--environment=production', 
   BBX_GATE_NONCE: GATE_NONCE,
 });
 
-// §F — name the number. The gate's own cost is not a rounding error when the limit it is
-// measured against is what takes the alert path down.
-console.log(`\n[gate] currency poll issued ${gateRequestCount()} request(s); the canary issues ~18.`);
+// §F — name the number, and name a TRUE one. The first run of this line reported zero while the
+// currency table above it showed two successful polls, because the polling happens in a child
+// process with its own module instance. The tally is now a file every process appends to.
+const spent = readFileSync(COST_FILE, 'utf8').split('\n').filter(Boolean).length;
+try {
+  unlinkSync(COST_FILE);
+} catch {
+  /* the tally is already read; a leftover temp file is not worth failing a deploy over */
+}
+console.log(`\n[gate] this deploy's gates issued ${spent} request(s) against the plan limit.`);

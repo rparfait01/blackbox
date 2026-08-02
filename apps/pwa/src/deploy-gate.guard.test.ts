@@ -79,7 +79,7 @@ describe('§C there is no manual gate-completion path', () => {
 
   it('the canary requires a nonce minted by THIS deploy run', () => {
     expect(canary).toMatch(/const GATE_NONCE = process\.env\.BBX_GATE_NONCE \?\? '';/);
-    expect(canary).toMatch(/const IS_GATED = GATE_NONCE\.length >= 16;/);
+    expect(canary).toMatch(/consumeGateMarker\(\{ nonce: GATE_NONCE/);
     expect(deploy).toMatch(/BBX_GATE_NONCE: GATE_NONCE/);
     expect(deploy).toMatch(/randomBytes\(24\)\.toString\('hex'\)/);
   });
@@ -96,6 +96,36 @@ describe('§C there is no manual gate-completion path', () => {
     // The success line is reachable only after the diagnostic branch has exited.
     const tail = canary.slice(canary.indexOf('if (IS_DIAGNOSTIC) {', canary.indexOf('─────────────── canary')));
     expect(tail.indexOf('process.exit(2)')).toBeLessThan(tail.indexOf('canary round trip complete'));
+  });
+});
+
+describe('§C the nonce is single-use, so the gate cannot be finished by replay', () => {
+  it('a length check alone is not the gate', () => {
+    // The first cut accepted any 16+ character string, so `BBX_GATE_NONCE=$(openssl rand -hex 24)`
+    // satisfied it — and, far more likely, so did re-running the canary with the deploy's own
+    // environment still exported. That replay IS the habit this section exists to remove.
+    const src = read('scripts/gate-nonce.mjs');
+    expect(src).toMatch(/export function consumeGateMarker/);
+    expect(src).toMatch(/unlinkSync\(markerPath\)/);
+    expect(src).toMatch(/MARKER_TTL_MS/);
+  });
+
+  it('deploy.mjs mints the marker the canary consumes', () => {
+    expect(read('scripts/deploy.mjs')).toMatch(/writeFileSync\(path\.join\(ROOT, '\.gate-run'\)/);
+    expect(read('.gitignore')).toMatch(/\.gate-run/);
+  });
+
+  it('a diagnostic run states WHY it did not count', () => {
+    expect(read('scripts/canary.mjs')).toMatch(/GATE\.reason/);
+  });
+
+  it('the marker is spent even by a WRONG guess', () => {
+    // Otherwise a wrong guess could be followed by a right one against the same marker.
+    const src = read('scripts/gate-nonce.mjs');
+    const consumeIdx = src.indexOf('unlinkSync(markerPath)');
+    const matchIdx = src.indexOf('marker.nonce !== nonce');
+    expect(consumeIdx).toBeGreaterThan(0);
+    expect(consumeIdx).toBeLessThan(matchIdx);
   });
 });
 
@@ -147,6 +177,39 @@ describe('the poll result shape and its callers do not drift apart', () => {
   });
 });
 
+describe('the two defects a real deploy exposed', () => {
+  it('the build-id lookup passes no shell metacharacter to a shell', () => {
+    // `git cat-file -e <sha>^{commit}` with shell:true. On Windows `^` is cmd.exe's escape
+    // character, so git received `<sha>{commit}`, errored, and isOurBuild returned false for
+    // EVERY id — turning ordinary propagation into WRONG_ARTIFACT, which never retries. Invisible
+    // until a deploy was slow to propagate, because a first-attempt CURRENT never takes the branch.
+    // strip() first: the comment that EXPLAINS this bug necessarily contains the bug's text.
+    const src = strip(read('scripts/assert-currency.mjs'));
+    expect(src).not.toMatch(/\^\{commit\}/);
+    expect(src).toMatch(/'cat-file', '-t', buildId/);
+    expect(src).toMatch(/shell: false/);
+  });
+
+  it('the request tally survives the process boundary it is counted across', () => {
+    // deploy.mjs read an in-memory counter while the polling happened in a spawned child, so the
+    // very first deploy under this brief reported `issued 0 request(s)` beneath a table showing
+    // two successful polls. A cost line that always reads zero is worse than none.
+    const currency = read('scripts/assert-currency.mjs');
+    expect(currency).toMatch(/BBX_GATE_COST_FILE/);
+    expect(currency).toMatch(/appendFileSync\(COST_FILE/);
+    const deploy = read('scripts/deploy.mjs');
+    expect(deploy).toMatch(/BBX_GATE_COST_FILE: COST_FILE/);
+    // and the report reads the ledger, not a local variable
+    expect(deploy).toMatch(/readFileSync\(COST_FILE, 'utf8'\)/);
+    expect(deploy).not.toMatch(/the canary issues ~18/);
+  });
+
+  it('the canary counts the requests it issues into the same ledger', () => {
+    const canary = strip(read('scripts/canary.mjs'));
+    expect((canary.match(/countExternalRequest\(\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('§E/§F the gate records itself and knows its own cost', () => {
   it('every outcome is recorded with classification, attempts and elapsed', () => {
     const src = read('scripts/assert-currency.mjs');
@@ -162,12 +225,22 @@ describe('§E/§F the gate records itself and knows its own cost', () => {
   it('the deploy refuses to start when headroom is gone', () => {
     // Discovering mid-deploy that there was no budget for the verification is how a correct
     // deploy gets abandoned and finished by hand.
-    const deploy = read('scripts/deploy.mjs');
-    expect(deploy).toMatch(/DEPLOY REFUSED: request headroom is/);
-    expect(deploy).toMatch(/HEADROOM_REFUSE_ABOVE = 0\.9/);
+    expect(read('scripts/headroom.mjs')).toMatch(/DEPLOY REFUSED: request headroom is/);
+    expect(read('scripts/headroom.mjs')).toMatch(/HEADROOM_REFUSE_ABOVE = 0\.9/);
+    expect(read('scripts/deploy.mjs')).toMatch(/verdict\.state === HEADROOM\.REFUSE/);
   });
 
-  it('the gate reports its own request cost', () => {
-    expect(read('scripts/deploy.mjs')).toMatch(/currency poll issued \$\{gateRequestCount\(\)\} request\(s\)/);
+  it('the gate reports its own request cost, from the shared ledger', () => {
+    expect(read('scripts/deploy.mjs')).toMatch(/issued \$\{spent\} request\(s\) against the plan limit/);
+  });
+
+  it('the headroom decision is testable without performing a deploy', () => {
+    // It used to live inside deploy.mjs, which does its work at import time — so the refusal path
+    // could only be exercised by actually deploying. A refusal that can only be tested
+    // destructively does not get tested.
+    const src = read('scripts/headroom.mjs');
+    expect(src).toMatch(/export function headroomVerdict/);
+    expect(src).toMatch(/HEADROOM_REFUSE_ABOVE = 0\.9/);
+    expect(read('scripts/deploy.mjs')).toMatch(/from '\.\/headroom\.mjs'/);
   });
 });

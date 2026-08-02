@@ -36,7 +36,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { deployTarget } from './api-origin.mjs';
-import { OUTCOME, proveCurrent } from './assert-currency.mjs';
+import { consumeGateMarker } from './gate-nonce.mjs';
+import { OUTCOME, countExternalRequest, gateRequestCount, proveCurrent } from './assert-currency.mjs';
 import {
   ENVELOPE_ALG,
   decryptChunk,
@@ -80,7 +81,29 @@ const EXPECTED_BUILD = args.build && args.build !== 'true' ? args.build : null;
  * passed.
  */
 const GATE_NONCE = process.env.BBX_GATE_NONCE ?? '';
-const IS_GATED = GATE_NONCE.length >= 16;
+
+/**
+ * SINGLE USE, AND BOUND TO A RUN. A length check alone was not a gate.
+ *
+ * The first version of this accepted any string of 16+ characters, which meant the nonce could be
+ * minted by hand (`BBX_GATE_NONCE=$(openssl rand -hex 24)`) or — much more likely — REPLAYED. That
+ * second one is the actual failure mode, because it is not an attack, it is a convenience: the
+ * deploy's gate stumbles, and the obvious next move is to re-run the canary with the same
+ * environment still exported and call the deploy finished. That is exactly what I did, twice.
+ *
+ * So `deploy.mjs` writes a marker containing the nonce for the run, and the canary CONSUMES it —
+ * reads it, checks it matches, checks it is fresh, and deletes it before doing anything else. A
+ * second run with the same nonce finds no marker and is a diagnostic. Re-running the gate properly
+ * means re-running `pnpm deploy`, which mints a new one.
+ *
+ * WHAT THIS DOES NOT CLAIM. An operator with a shell can write a marker file. Nothing local can
+ * prevent that, and pretending otherwise would be the same species of lie as a control that
+ * reports as enforcing while not enforcing. What it does is remove every path that can be taken
+ * by habit or convenience, leaving only deliberate falsification — which is a different act, and
+ * one a person notices themselves doing.
+ */
+const GATE = consumeGateMarker({ nonce: GATE_NONCE, markerPath: path.join(ROOT, '.gate-run') });
+const IS_GATED = GATE.gated;
 const IS_DIAGNOSTIC = !IS_GATED;
 
 // §C first failure condition: "the origin is absent or invalid". Validated by the same
@@ -124,6 +147,7 @@ async function api(method, urlPath, { body, bearer, raw, headers = {} } = {}) {
     payload = JSON.stringify(body);
   }
   if (bearer) h.authorization = `Bearer ${bearer}`;
+  countExternalRequest();
   const res = await fetch(ORIGIN + urlPath, { method, headers: h, body: payload });
   const text = await res.text();
   let data;
@@ -139,6 +163,7 @@ async function api(method, urlPath, { body, bearer, raw, headers = {} } = {}) {
 async function signedRequest(method, urlPath, secret, eventId, bodyBytes, extraHeaders = {}) {
   const ts = Date.now();
   const canonical = [method.toUpperCase(), urlPath, String(ts), sha256hex(bodyBytes)].join('\n');
+  countExternalRequest();
   const res = await fetch(ORIGIN + urlPath, {
     method,
     headers: {
@@ -168,7 +193,8 @@ async function readiness() {
 if (IS_DIAGNOSTIC) {
   console.log('╔════════════════════════════════════════════════════════════════════════════╗');
   console.log('║  DIAGNOSTIC RUN — THIS CANNOT SATISFY THE DEPLOY GATE (Brief 35 Fix A §C)  ║');
-  console.log('║  Invoked without a deploy nonce, so nothing it reports counts as a pass.   ║');
+  console.log('║  Nothing it reports counts as a pass. Reason:                              ║');
+  console.log(`║  ${GATE.reason.padEnd(74).slice(0, 74)}║`);
   console.log('║  To actually verify a deploy, run: pnpm deploy                             ║');
   console.log('╚════════════════════════════════════════════════════════════════════════════╝');
 }
@@ -401,6 +427,9 @@ console.log('\n─────────────── canary ────
 console.log(`environment : ${ENVIRONMENT}`);
 console.log(`origin      : ${ORIGIN}`);
 console.log(`worker build: ${version.data?.version}`);
+// §F — the canary is the expensive half of the gate. Report what it actually spent rather than
+// the "~18" that used to be asserted in prose, so the deploy's total is a counted number.
+console.log(`requests    : ${gateRequestCount()} issued by the gate so far (canary included)`);
 console.log('──────────────────────────────────────');
 if (failures) {
   console.error(`\n✗ CANARY FAILED — ${failures} check(s). The alert path is NOT proven on this deploy.`);
