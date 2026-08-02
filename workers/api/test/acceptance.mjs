@@ -200,8 +200,8 @@ async function signup(mode = 'direct', name = 'Acc') {
   const email = `smoke+acc-${uniq()}@example.com`;
   const code = await issueSignupCode();
   const s1 = await api('POST', '/v1/auth/signup/start', { body: { name, email, password: PW, regionId: 'jp', code } });
-  if (!s1.data?.signupId) throw new Error('signup/start failed: ' + JSON.stringify(s1.data));
-  const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: mode } });
+  if (!s1.data?.capability) throw new Error('signup/start failed: ' + JSON.stringify(s1.data));
+  const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { capability: s1.data.capability, displayMode: mode } });
   if (!s2.data?.sessionToken) throw new Error('finalize failed: ' + JSON.stringify(s2.data));
   created.emails.push(email);
   return { email, session: s2.data.sessionToken, userId: s2.data.userId, displayMode: s2.data.displayMode };
@@ -850,9 +850,9 @@ async function run() {
     const email = `smoke+acc-${uniq()}@example.com`;
     const code = await issueSignupCode();
     const s1 = await api('POST', '/v1/auth/signup/start', { body: { name: 'Passwordless', email, regionId: 'jp', code } });
-    assert(s1.status === 201 && s1.data?.signupId, `passwordless signup refused: ${s1.status} ${JSON.stringify(s1.data)}`);
+    assert(s1.status === 201 && s1.data?.capability, `passwordless signup refused: ${s1.status} ${JSON.stringify(s1.data)}`);
     created.emails.push(email);
-    const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { signupId: s1.data.signupId, displayMode: 'direct' } });
+    const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { capability: s1.data.capability, displayMode: 'direct' } });
     assert(s2.data?.sessionToken, `finalize failed: ${JSON.stringify(s2.data)}`);
     // ...and the session it mints is a real one.
     const me = await api('GET', '/v1/me', { bearer: s2.data.sessionToken });
@@ -2296,6 +2296,97 @@ async function run() {
     // Deliberately NOT asserting a real provider delivery: the suite's addresses are
     // RFC 2606 reserved precisely so a test run cannot spend the quota a survivor's alert
     // depends on, and whether a vendor physically delivered is monitoring, not a gate.
+  });
+
+  // ---- Brief 30 Fix A — a handle is not a credential -------------------------------------
+  //
+  // Every one of these was PROVEN EXPLOITABLE on staging before the fix: `signupId` was the
+  // account's permanent users.id, and finalize/passkey/recovery all accepted it as authorization
+  // without checking the account was still a draft.
+
+  await check('84. §A a bare users.id no longer authorizes ANY signup step', async () => {
+    const victim = await signup('covert');
+    // The exact request that returned a valid session for an active account.
+    const takeover = await api('POST', '/v1/auth/signup/finalize', {
+      body: { signupId: victim.userId, displayMode: 'direct' },
+    });
+    assert(!takeover.data?.sessionToken, `HANDLE STILL GRANTS A SESSION: ${JSON.stringify(takeover.data)}`);
+    assert(takeover.status === 401 || takeover.status === 409, `expected a refusal, got ${takeover.status}`);
+
+    // …and the victim's display mode was NOT flipped. For a covert user that is the disguise.
+    const me = await api('GET', '/v1/me', { bearer: victim.session });
+    assert(me.data?.user?.displayMode === 'covert', `displayMode was altered to ${me.data?.user?.displayMode}`);
+
+    // Recovery issuance was the other takeover primitive — it invalidates the owner's codes.
+    const rec = await api('POST', '/v1/auth/recovery/issue', { body: { signupId: victim.userId } });
+    assert(!Array.isArray(rec.data?.codes), `a bare handle still minted recovery codes: ${rec.status}`);
+
+    // Passkey enrollment on someone else's account is a credential-granting act.
+    const pk = await api('POST', '/v1/auth/passkey/register/options', { body: { signupId: victim.userId } });
+    assert(pk.status === 401, `a bare handle still got passkey options: ${pk.status}`);
+  });
+
+  await check('85. §A/§B finalize is single-use; a replayed capability is refused', async () => {
+    const code = await issueSignupCode();
+    const email = `smoke+acc-${uniq()}@example.com`;
+    const s1 = await api('POST', '/v1/auth/signup/start', {
+      body: { name: 'Replay', email, password: PW, regionId: 'jp', code },
+    });
+    assert(s1.data?.capability, `no capability issued: ${JSON.stringify(s1.data)}`);
+    created.emails.push(email);
+    const cap = s1.data.capability;
+
+    const first = await api('POST', '/v1/auth/signup/finalize', { body: { capability: cap, displayMode: 'direct' } });
+    assert(first.data?.sessionToken, `legitimate finalize failed: ${JSON.stringify(first.data)}`);
+
+    // Same capability, second time. Minting a session is not idempotent.
+    const replay = await api('POST', '/v1/auth/signup/finalize', { body: { capability: cap, displayMode: 'direct' } });
+    assert(!replay.data?.sessionToken, `REPLAY SUCCEEDED: ${JSON.stringify(replay.data)}`);
+  });
+
+  await check('86. §A a forged or tampered capability is refused on signature', async () => {
+    const code = await issueSignupCode();
+    const email = `smoke+acc-${uniq()}@example.com`;
+    const s1 = await api('POST', '/v1/auth/signup/start', {
+      body: { name: 'Forged', email, password: PW, regionId: 'jp', code },
+    });
+    created.emails.push(email);
+    const cap = s1.data.capability;
+
+    // Flip the last character of the signature.
+    const parts = cap.split('.');
+    const tampered = `${parts[0]}.${parts[1]}.${parts[2].slice(0, -1)}${parts[2].slice(-1) === 'a' ? 'b' : 'a'}`;
+    const forged = await api('POST', '/v1/auth/signup/finalize', { body: { capability: tampered, displayMode: 'direct' } });
+    assert(forged.data?.error === 'capability_bad_signature', `tampered token not refused on signature: ${JSON.stringify(forged.data)}`);
+
+    // A capability for a DIFFERENT signup must not finalize this one either.
+    const invented = 'bbxcap1.eyJzdWIiOiJ4In0.deadbeef';
+    const bogus = await api('POST', '/v1/auth/signup/finalize', { body: { capability: invented, displayMode: 'direct' } });
+    assert(!bogus.data?.sessionToken, `an invented capability minted a session: ${JSON.stringify(bogus.data)}`);
+  });
+
+  await check('87. §C a capability in the URL is not accepted — it must never travel there', async () => {
+    // §C — never in URLs, query strings or referrers. A capability in a query string lands in
+    // access logs and in the Referer of the next request, which is how the thing it replaced got
+    // loose in the first place. So the server must not read one from there even if a client tries.
+    const code = await issueSignupCode();
+    const email = `smoke+acc-${uniq()}@example.com`;
+    const s1 = await api('POST', '/v1/auth/signup/start', {
+      body: { name: 'UrlScan', email, password: PW, regionId: 'jp', code },
+    });
+    created.emails.push(email);
+    const cap = s1.data.capability;
+
+    const viaUrl = await api('POST', `/v1/auth/signup/finalize?capability=${encodeURIComponent(cap)}`, {
+      body: { displayMode: 'direct' },
+    });
+    assert(!viaUrl.data?.sessionToken, `a capability in the QUERY STRING was accepted: ${JSON.stringify(viaUrl.data)}`);
+    assert(viaUrl.data?.error === 'capability_missing', `expected capability_missing, got ${JSON.stringify(viaUrl.data)}`);
+
+    // The body path still works, so the check above is proving the URL is refused — not that
+    // finalize is simply broken.
+    const viaBody = await api('POST', '/v1/auth/signup/finalize', { body: { capability: cap, displayMode: 'direct' } });
+    assert(viaBody.data?.sessionToken, `body-carried capability failed: ${JSON.stringify(viaBody.data)}`);
   });
 
   // ---- cleanup ----

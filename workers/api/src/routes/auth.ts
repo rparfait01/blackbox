@@ -79,6 +79,17 @@ import {
   verifyLoginCredential,
 } from '../lib/users';
 import { verifySession } from '../lib/session';
+import {
+  ALL_SIGNUP_SCOPES,
+  auditableCapability,
+  capabilityKeys,
+  consumeCapability,
+  mintCapability,
+  verifyCapability,
+  type CapabilityClaims,
+  type SignupScope,
+} from '../lib/signup-capability';
+import { hmacSha256Hex } from '@blackbox/shared';
 import type { Env, Vars } from '../types';
 import type {
   AuthenticationResponseJSON,
@@ -234,13 +245,70 @@ authRoutes.post('/signup/start', async (c) => {
       });
     }
   }
-  return c.json({ signupId: result.userId }, 201);
+  // Brief 30 Fix A §A — the capability, not the handle, is what authorizes the rest of signup.
+  // `signupId` is still returned because the client displays and correlates with it, but it now
+  // grants NOTHING: every subsequent step verifies the signed token instead.
+  //
+  // §B — bound to the enrollment code that was just redeemed. That is something this requester
+  // demonstrably held; the handle is something that merely travels.
+  const capability = await mintCapability(c.env, {
+    sub: result.userId,
+    scope: ALL_SIGNUP_SCOPES,
+    bind: await bindingFor(c.env, claim.storedCode),
+  });
+  if (!capability) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
+  return c.json({ signupId: result.userId, capability }, 201);
 });
+
+/**
+ * Brief 30 Fix A §B — the binding. A capability is tied to the enrollment code the requester
+ * actually redeemed, but the code itself never appears in the token: what is committed is an HMAC
+ * of it under the same key set. So a capability lifted from one signup cannot be presented for
+ * another, and the token still leaks nothing about the code if it is ever seen.
+ */
+async function bindingFor(env: Env, storedCode: string): Promise<string> {
+  const [key] = capabilityKeys(env);
+  return key ? (await hmacSha256Hex(key, `bind.${storedCode}`)).slice(0, 32) : '';
+}
+
+/**
+ * §A/§C — verify a capability from the REQUEST BODY only.
+ *
+ * Deliberately never reads a query string. A capability in a URL ends up in access logs, in the
+ * Referer header of the next request, and in any screenshot of the address bar — which is exactly
+ * how the thing it replaced got loose.
+ */
+async function requireCapability(
+  c: { env: Env; json: (b: unknown, s?: number) => Response },
+  body: { capability?: string },
+  scope: SignupScope,
+): Promise<{ ok: true; claims: CapabilityClaims } | { ok: false; response: Response }> {
+  const result = await verifyCapability(c.env, body.capability, scope);
+  if (!result.ok || !result.claims) {
+    // §A — plain and honest, never a silent 200 and never a generic error. The client turns
+    // `capability_expired` into a self-service restart (§D).
+    const status = result.reason === 'server_misconfigured' ? 500 : 401;
+    return { ok: false, response: c.json({ error: result.reason ?? 'unauthorized' }, status) };
+  }
+  return { ok: true, claims: result.claims };
+}
+
+/** Same check, for endpoints that only need the subject (a live session is the other way in). */
+async function capabilitySubject(
+  c: { env: Env },
+  body: { capability?: string },
+  scope: SignupScope,
+): Promise<string | null> {
+  const result = await verifyCapability(c.env, body.capability, scope);
+  return result.ok && result.claims ? result.claims.sub : null;
+}
 
 authRoutes.post('/signup/finalize', async (c) => {
   const body = await c.req
     .json<{
-      signupId?: string;
+      capability?: string;
       displayMode?: string;
       claimUserHash?: string;
     }>()
@@ -250,12 +318,25 @@ authRoutes.post('/signup/finalize', async (c) => {
   }
   // Brief 16 §1: NO lock code. Closure is gesture-only end to end — the finalize
   // contract no longer accepts or requires a pin/lockCode of any kind.
-  if (!body.signupId) {
-    return c.json({ error: 'signupId is required' }, 400);
-  }
-  const user = await getUserById(c.env, body.signupId);
+  // Brief 30 Fix A §A. This endpoint used to accept a bare `signupId` — the account's PERMANENT
+  // users.id — and never checked the account was still a draft. Proven on staging: that value
+  // alone returned a valid session for an ACTIVE account, and flipped a covert user to direct.
+  const cap = await requireCapability(c, body, 'signup:finalize');
+  if (!cap.ok) return cap.response;
+  const user = await getUserById(c.env, cap.claims.sub);
   if (!user) {
     return c.json({ error: 'not found' }, 404);
+  }
+  // THE MISSING CHECK, stated plainly: finalize completes a DRAFT. An account that already has a
+  // displayMode is live, and finalizing it again is not a signup step — it is a takeover.
+  if (isActive(user)) {
+    await audit(c.env, null, 'signup.finalize_refused_already_active', user.id, auditableCapability(cap.claims));
+    return c.json({ error: 'already_finalized' }, 409);
+  }
+  // §B — single use. Finalize mints a session, so it is emphatically not idempotent.
+  if (!(await consumeCapability(c.env, cap.claims))) {
+    await audit(c.env, null, 'signup.capability_replayed', user.id, auditableCapability(cap.claims));
+    return c.json({ error: 'capability_replayed' }, 409);
   }
   // No email-verified gate (Brief 14): the account works without any email step.
   const secret = sessionSecret(c.env);
@@ -307,9 +388,11 @@ authRoutes.post('/signin', async (c) => {
  * user id is a UUID that only this client has just been handed.
  */
 authRoutes.post('/passkey/register/options', async (c) => {
-  const body = await c.req.json<{ signupId?: string }>().catch(() => ({}) as { signupId?: string });
+  const body = await c.req.json<{ capability?: string }>().catch(() => ({}) as { capability?: string });
   const sessionUserId = await bearerUserId(c);
-  const userId = sessionUserId ?? body.signupId ?? null;
+  // A live session OR a scoped signup capability. Never a bare handle: enrolling a passkey on an
+  // account is a credential-granting act, and it was reachable with a users.id alone.
+  const userId = sessionUserId ?? (await capabilitySubject(c, body, 'signup:passkey'));
   if (!userId) {
     return c.json({ error: 'unauthorized' }, 401);
   }
@@ -335,10 +418,10 @@ authRoutes.post('/passkey/register/options', async (c) => {
 /** Verify enrollment and persist the passkey. */
 authRoutes.post('/passkey/register/verify', async (c) => {
   const body = await c.req
-    .json<{ signupId?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>()
+    .json<{ capability?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>()
     .catch(() => ({}) as Record<string, never>);
   const sessionUserId = await bearerUserId(c);
-  const userId = sessionUserId ?? body.signupId ?? null;
+  const userId = sessionUserId ?? (await capabilitySubject(c, body, 'signup:passkey'));
   if (!userId || !body.response) {
     return c.json({ error: 'unauthorized' }, 401);
   }
@@ -450,9 +533,11 @@ authRoutes.post('/magic/consume', async (c) => {
 
 /** Mint (or re-mint) recovery codes for the signed-in / just-signed-up account. */
 authRoutes.post('/recovery/issue', async (c) => {
-  const body = await c.req.json<{ signupId?: string }>().catch(() => ({}) as { signupId?: string });
+  const body = await c.req.json<{ capability?: string }>().catch(() => ({}) as { capability?: string });
   const sessionUserId = await bearerUserId(c);
-  const userId = sessionUserId ?? body.signupId ?? null;
+  // Re-minting invalidates the owner's existing codes, so a bare handle here was both a takeover
+  // primitive and a denial-of-recovery one. Proven on staging before this brief.
+  const userId = sessionUserId ?? (await capabilitySubject(c, body, 'signup:recovery'));
   if (!userId) {
     return c.json({ error: 'unauthorized' }, 401);
   }

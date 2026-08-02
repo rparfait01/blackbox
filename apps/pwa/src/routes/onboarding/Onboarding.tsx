@@ -102,7 +102,9 @@ export function Onboarding(): JSX.Element {
   const [phoneLocal, setPhoneLocal] = useState('');
   const [regionId, setRegionId] = useState(defaultCountry().regionId);
   const [nationality, setNationality] = useState('');
-  const [signupId, setSignupId] = useState('');
+  // Brief 30 Fix A — the signed, scoped, expiring capability. The old `signupId` was the
+  // account's permanent id and authorized nothing safely.
+  const [capability, setCapability] = useState('');
   const [emailExists, setEmailExists] = useState(false);
   // Brief 30 §C — the access code that opens the front door. Pre-filled from ?code= so
   // the Gumroad success redirect lands the buyer on a form they only have to confirm;
@@ -168,7 +170,7 @@ export function Onboarding(): JSX.Element {
     // delivery can fail here — we go straight on to display mode.
     // §1: no password is sent. The account is created with passwordHash NULL and
     // authenticates by passkey (enrolled at step 7).
-    const res = await api<{ signupId?: string; error?: string; message?: string }>('/v1/auth/signup/start', {
+    const res = await api<{ signupId?: string; capability?: string; error?: string; message?: string }>('/v1/auth/signup/start', {
       auth: false,
       body: {
         name: name.trim(),
@@ -180,8 +182,8 @@ export function Onboarding(): JSX.Element {
       },
     });
     setBusy(false);
-    if (res.ok && res.data?.signupId) {
-      setSignupId(res.data.signupId);
+    if (res.ok && res.data?.capability) {
+      setCapability(res.data.capability);
       setStep(4);
     } else if (res.status === 409) {
       setEmailExists(true);
@@ -207,7 +209,7 @@ export function Onboarding(): JSX.Element {
       '/v1/auth/signup/finalize',
       {
         auth: false,
-        body: { signupId, displayMode, claimUserHash: userHash },
+        body: { capability, displayMode, claimUserHash: userHash },
       },
     );
     setBusy(false);

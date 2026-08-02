@@ -77,33 +77,33 @@ export function OrgRegister(): JSX.Element {
   }
 
   // The explicit Submit — the only thing that consumes the code. Runs the passwordless
-  // account ceremony (start → passkey → recovery → finalize) against a signupId, then
+  // account ceremony (start → passkey → recovery → finalize) against a signup CAPABILITY, then
   // POSTs the completion which claims admin #1 and burns the code.
   async function register(): Promise<void> {
     setError(null);
     setBusy(true);
     try {
-      const start = await api<{ signupId: string }>('/v1/auth/signup/start', {
+      const start = await api<{ signupId: string; capability: string }>('/v1/auth/signup/start', {
         auth: false,
         body: { name: name.trim(), email: email.trim(), regionId: 'jp' },
       });
-      if (!start.data?.signupId) {
+      if (!start.data?.capability) {
         throw new Error('We could not start registration. Check your details and try again.');
       }
-      const signupId = start.data.signupId;
+      const capability = start.data.capability;
 
       // Passkey is the intended authentication (§4). Non-blocking on a device that
       // cannot enroll one — the recovery code below still secures the account.
       if (passkeySupported()) {
-        await enrollPasskey(signupId);
+        await enrollPasskey(capability);
       }
 
-      const rec = await api<{ codes: string[] }>('/v1/auth/recovery/issue', { auth: false, body: { signupId } });
+      const rec = await api<{ codes: string[] }>('/v1/auth/recovery/issue', { auth: false, body: { capability } });
       const codes = rec.data?.codes ?? [];
 
       const fin = await api<{ sessionToken: string; displayMode: DisplayMode; userId: string }>(
         '/v1/auth/signup/finalize',
-        { auth: false, body: { signupId, displayMode: 'direct' } },
+        { auth: false, body: { capability, displayMode: 'direct' } },
       );
       if (!fin.data?.sessionToken) {
         throw new Error('We could not finish creating your account. Please try again.');
