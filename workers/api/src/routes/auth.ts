@@ -82,14 +82,13 @@ import { verifySession } from '../lib/session';
 import {
   ALL_SIGNUP_SCOPES,
   auditableCapability,
-  capabilityKeys,
+  mintBinding,
   consumeCapability,
   mintCapability,
   verifyCapability,
   type CapabilityClaims,
   type SignupScope,
 } from '../lib/signup-capability';
-import { hmacSha256Hex } from '@blackbox/shared';
 import type { Env, Vars } from '../types';
 import type {
   AuthenticationResponseJSON,
@@ -265,7 +264,7 @@ authRoutes.post('/signup/start', async (c) => {
   const capability = await mintCapability(c.env, {
     sub: result.userId,
     scope: ALL_SIGNUP_SCOPES,
-    bind: body.bindNonce ? await bindingFor(c.env, body.bindNonce) : null,
+    bind: body.bindNonce ? await mintBinding(c.env, body.bindNonce) : null,
   });
   if (!capability) {
     return c.json({ error: 'server_misconfigured' }, 500);
@@ -279,15 +278,9 @@ authRoutes.post('/signup/start', async (c) => {
  * of it under the same key set. So a capability lifted from one signup cannot be presented for
  * another, and the token still leaks nothing about the code if it is ever seen.
  */
-async function bindingFor(env: Env, nonce: string): Promise<string> {
-  const [key] = capabilityKeys(env);
-  return key ? (await hmacSha256Hex(key, `bind.${nonce}`)).slice(0, 32) : '';
-}
-
-/** The binding value to compare against, or undefined when the client committed none. */
-async function presentedBinding(env: Env, body: { bindNonce?: string }): Promise<string | undefined> {
-  return body.bindNonce ? bindingFor(env, body.bindNonce) : undefined;
-}
+// Minting commits with the CURRENT key; verification rediscovers that key from the signature and
+// recomputes the commitment with it. Nothing here may assume the current key is the minting key —
+// that assumption broke every capability the moment a second key existed.
 
 /**
  * §A/§C — verify a capability from the REQUEST BODY only.
@@ -301,9 +294,7 @@ async function requireCapability(
   body: { capability?: string; bindNonce?: string },
   scope: SignupScope,
 ): Promise<{ ok: true; claims: CapabilityClaims } | { ok: false; response: Response }> {
-  const result = await verifyCapability(c.env, body.capability, scope, {
-    bind: await presentedBinding(c.env, body),
-  });
+  const result = await verifyCapability(c.env, body.capability, scope, { bindNonce: body.bindNonce });
   if (!result.ok || !result.claims) {
     // §A — plain and honest, never a silent 200 and never a generic error. The client turns
     // `capability_expired` into a self-service restart (§D).
@@ -319,9 +310,7 @@ async function capabilitySubject(
   body: { capability?: string; bindNonce?: string },
   scope: SignupScope,
 ): Promise<string | null> {
-  const result = await verifyCapability(c.env, body.capability, scope, {
-    bind: await presentedBinding(c.env, body),
-  });
+  const result = await verifyCapability(c.env, body.capability, scope, { bindNonce: body.bindNonce });
   return result.ok && result.claims ? result.claims.sub : null;
 }
 

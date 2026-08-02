@@ -65,4 +65,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0050_backfill_completeness',
   '0051_vault_scan_cursor',
   '0052_seal_on_close',
+  '0053_consumed_capabilities',
 ];

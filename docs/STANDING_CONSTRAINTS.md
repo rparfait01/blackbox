@@ -121,3 +121,27 @@ reads zero: a value that looks authoritative while being structurally unable to 
 
 Enforced by `scripts/toolchain.mjs`, called from the Brief 35 deploy gate before anything is
 built. Guarded by `apps/pwa/src/deploy-gate.guard.test.ts`.
+
+---
+
+## COMPARISONS (ratified 2026-08-02, from Brief 30 Fix A)
+
+**A new comparison requires proving the comparing side can produce the value. Both sides are
+exercised before ship — a case that passes and a case that fails. A guard that always refuses and
+a guard that always permits are the same defect in opposite directions, and neither is visible to
+a typecheck. Third occurrence: `!undefined` in canary.mjs, `!proven.ok`, and `claims.bind` against
+an always-undefined `opts.bind`.**
+
+Each of the three typechecked, linted, and read correctly in review:
+
+| | Direction | Consequence |
+|---|---|---|
+| `!proven.ok` after the return shape changed | always refuses | the deploy gate would have failed **every** deploy, including correct ones |
+| `isOurBuild` with `^{commit}` eaten by cmd.exe | always refuses | ordinary propagation classified `WRONG_ARTIFACT` — terminal, no retry |
+| `claims.bind` vs an `opts.bind` no route supplied | always refuses | signup broken end to end; nobody could create an account |
+
+**Fail-open on the life-safety paths.** On the signup path, refuse-everyone is an outage. On the
+alert path it is a survivor who cannot call for help. Any new comparison on the **trigger,
+capture, cascade, or closure** path fails OPEN by default and is proven both ways before ship.
+Availability of the alert path outranks every other property it has — that is already why the
+capture envelope fails open to plaintext rather than dropping a recording.

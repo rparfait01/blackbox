@@ -90,12 +90,18 @@ describe('§A a full pass is recorded, and falling behind is alertable', () => {
 });
 
 describe('§D the retention claim is bounded in code, not implied', () => {
-  it('the panel states plainly that no storage-layer rule exists yet', () => {
-    // Brief 38 §B set the precedent: bound the claim in code rather than letting wording
-    // imply more than the design delivers. No lock is provisioned (Brief 40 §0 is unsigned),
-    // so the panel says so rather than letting "vault" imply retention.
+  it('the panel states what is provisioned, and BOUNDS the claim', () => {
+    // Brief 38 §B set the precedent: bound the claim in code rather than letting wording imply
+    // more than the design delivers. The rule now EXISTS (blackbox-vault, vault/, 1096 days), so
+    // the honest statement changed with it — and this test changed too, rather than being left
+    // asserting "NOT PROVISIONED" about a rule that is provisioned. A guard that keeps passing
+    // after the world moved is not guarding anything.
     const index = read('index.ts');
-    expect(index).toMatch(/retentionRule: 'NOT PROVISIONED/);
+    expect(index).toMatch(/blackbox-vault vault\/ — 1096 days \(36 months\), operator-binding/);
+    // §D — the bound travels with the claim, in the same sentence.
+    expect(index).toMatch(/Not write-once: removable by the account holder/);
+    expect(index).toMatch(/Verified at deploy/);
+    expect(index).not.toMatch(/retentionRule: 'NOT PROVISIONED/);
   });
 
   it('no document in the repo claims write-once while §0 is unresolved', () => {

@@ -137,7 +137,7 @@ export async function verifyCapability(
   env: Env,
   token: string | undefined | null,
   required: SignupScope,
-  opts: { bind?: string | null; now?: number } = {},
+  opts: { bindNonce?: string | null; now?: number } = {},
 ): Promise<CapabilityResult> {
   if (!token) return { ok: false, reason: 'capability_missing' };
   const keys = capabilityKeys(env);
@@ -148,15 +148,17 @@ export async function verifyCapability(
   const [, payload, sig] = parts as [string, string, string];
 
   // §E3 — any key in the active set. Current first, previous still honoured until expiry.
-  let signatureOk = false;
+  // The MATCHING key is kept: it is by definition the key that minted this capability, and the
+  // binding below must be checked with that same key rather than with whatever is current now.
+  let signingKey: string | null = null;
   for (const key of keys) {
     const expected = await hmacSha256Hex(key, `${VERSION}.${payload}`);
     if (timingSafeEqual(expected, sig)) {
-      signatureOk = true;
+      signingKey = key;
       break;
     }
   }
-  if (!signatureOk) return { ok: false, reason: 'capability_bad_signature' };
+  if (!signingKey) return { ok: false, reason: 'capability_bad_signature' };
 
   let claims: CapabilityClaims;
   try {
@@ -171,9 +173,41 @@ export async function verifyCapability(
   const now = opts.now ?? Date.now(); // §E1 — server time only
   if (now >= claims.exp) return { ok: false, reason: 'capability_expired' };
   if (!claims.scope.includes(required)) return { ok: false, reason: 'capability_out_of_scope' };
-  if (claims.bind && opts.bind !== claims.bind) return { ok: false, reason: 'capability_binding_mismatch' };
+
+  /**
+   * §B — the binding, checked with THE KEY THAT SIGNED THIS TOKEN.
+   *
+   * The first version recomputed the commitment with `capabilityKeys(env)[0]` — whatever key is
+   * current in this isolate at this instant. That is wrong twice over. Across a rotation the
+   * minting key is no longer current, so every in-flight capability fails; and even without a
+   * rotation, secret propagation across isolates is not atomic, so two requests in the same
+   * signup can be served by isolates that disagree about which key is current. Both were
+   * observed: a real rotation on staging refused BOTH an in-flight capability and a freshly
+   * minted one.
+   *
+   * Using the key that verified the signature removes the question entirely — that key minted
+   * this token, so it is the one that produced this commitment.
+   */
+  if (claims.bind) {
+    if (!opts.bindNonce) return { ok: false, reason: 'capability_binding_mismatch' };
+    const expectedBind = await bindingCommitment(signingKey, opts.bindNonce);
+    if (!timingSafeEqual(expectedBind, claims.bind)) {
+      return { ok: false, reason: 'capability_binding_mismatch' };
+    }
+  }
 
   return { ok: true, claims };
+}
+
+/** The commitment stored in a capability's `bind` claim. Keyed, so it reveals nothing. */
+export async function bindingCommitment(key: string, nonce: string): Promise<string> {
+  return (await hmacSha256Hex(key, `bind.${nonce}`)).slice(0, 32);
+}
+
+/** Mint-time helper: commit with the CURRENT key, which verification will then rediscover. */
+export async function mintBinding(env: Env, nonce: string): Promise<string | null> {
+  const [key] = capabilityKeys(env);
+  return key ? bindingCommitment(key, nonce) : null;
 }
 
 /** Constant-time compare so a signature cannot be discovered a byte at a time. */

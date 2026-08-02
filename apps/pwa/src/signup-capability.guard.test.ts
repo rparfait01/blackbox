@@ -52,17 +52,27 @@ describe('§B binding and single use', () => {
     // The first cut bound to the STORED enrollment code — a value the client cannot reproduce —
     // so verification compared the commitment against undefined and refused every capability,
     // including legitimate ones. A gate that refuses everyone is the §D lockout, not a gate.
-    expect(auth).toMatch(/bind: body\.bindNonce \? await bindingFor\(c\.env, body\.bindNonce\) : null/);
-    expect(auth).toMatch(/hmacSha256Hex\(key, `bind\.\$\{nonce\}`\)/);
-    // and it is actually PRESENTED at verification, which is the half that was missing
-    expect(auth).toMatch(/bind: await presentedBinding\(c\.env, body\)/);
+    expect(auth).toMatch(/bind: body\.bindNonce \? await mintBinding\(c\.env, body\.bindNonce\) : null/);
+    // and the RAW nonce is presented at verification, which is the half that was missing
+    expect(auth).toMatch(/verifyCapability\(c\.env, body\.capability, scope, \{ bindNonce: body\.bindNonce \}\)/);
+  });
+
+  it('the binding is checked with the key that SIGNED the token, not the current key', () => {
+    // Recomputing the commitment with `capabilityKeys(env)[0]` was wrong twice: across a rotation
+    // the minting key is no longer current, and even without one, secret propagation across
+    // isolates is not atomic, so two requests in the same signup can disagree about which key is
+    // current. A real rotation on staging refused BOTH an in-flight capability and a fresh one.
+    const cap = read('workers/api/src/lib/signup-capability.ts');
+    expect(cap).toMatch(/let signingKey: string \| null = null;/);
+    expect(cap).toMatch(/const expectedBind = await bindingCommitment\(signingKey, opts\.bindNonce\)/);
+    expect(cap).not.toMatch(/opts\.bind !== claims\.bind/);
   });
 
   it('an absent nonce does not lock anyone out', () => {
     // bind null ⇒ binding not enforced. The capability is still signed, scoped, expiring and
     // single-use; the binding is defence in depth, never the thing standing between a person
     // and an account.
-    expect(read('workers/api/src/lib/signup-capability.ts')).toMatch(/if \(claims\.bind && opts\.bind !== claims\.bind\)/);
+    expect(read('workers/api/src/lib/signup-capability.ts')).toMatch(/if \(claims\.bind\) \{/);
   });
 
   it('replay of a consumed capability is rejected AND audited', () => {
