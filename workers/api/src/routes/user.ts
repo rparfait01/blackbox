@@ -6,6 +6,7 @@
 
 import { Hono } from 'hono';
 import { requireSession } from '../auth';
+import { purgeCaptureOnConsent } from '../lib/consented-purge';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { pairingStatus, startLinePairing } from '../lib/line-pairing';
 import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
@@ -762,3 +763,36 @@ userRoutes.post('/guardian-enabled', async (c) => {
   return c.json({ ok: true, enabled: body.enabled === true }, 200);
 });
 
+
+
+/**
+ * Brief 37 §E / Brief 40 §E — THE OWNER DESTROYS HER OWN RECORDINGS.
+ *
+ * DRY RUN BY DEFAULT; `{confirm:true}` deletes. Session-authenticated, and the event must belong
+ * to the calling account — the event id in the path is a lookup key, not an authorization.
+ *
+ * Deletes capture chunks from MEDIA only. The sealed manifest in the vault is locked for 1096
+ * days and is never touched; the chain records survive too, so what remains is a provable record
+ * that an incident occurred and that its content was destroyed ON CONSENT rather than lost or
+ * tampered with. `verifyChain` then reports PURGED_BY_CONSENT.
+ *
+ * Refused while the event is active: mid-alert, "delete my recordings" is the aggressor's button,
+ * and consent under duress is not consent.
+ */
+userRoutes.post('/events/:id/purge-capture', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json<{ confirm?: boolean; restorePoint?: string }>().catch(() => ({}) as { confirm?: boolean; restorePoint?: string });
+  const user = await getUserById(c.env, userId);
+  const result = await purgeCaptureOnConsent(c.env, {
+    eventId: c.req.param('id'),
+    userId,
+    userHash: (user as { userHash?: string } | null)?.userHash ?? null,
+    confirm: body.confirm === true,
+    restorePoint: body.restorePoint ?? null,
+  });
+  if (!result.ok) {
+    const status = result.reason === 'not_found' ? 404 : result.reason === 'not_owner' ? 403 : 409;
+    return c.json({ error: result.reason, ...result }, status);
+  }
+  return c.json(result, 200);
+});
