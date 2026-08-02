@@ -15,13 +15,17 @@
  * proves them everywhere; they are asserted in isolation because the alternative is
  * running `pnpm deploy` with a deliberately broken config to watch it fail.
  */
-import { proveCurrent, checkDeployCurrency } from './assert-currency.mjs';
+import { OUTCOME, proveCurrent, checkDeployCurrency } from './assert-currency.mjs';
 import { validateApiOrigin, deployTarget } from './api-origin.mjs';
 
 const PROD_URL = 'https://blackbox-pwa.pages.dev';
 const WORKER_URL = 'https://blackbox-api.stillpoint-dev.workers.dev';
 const UNREACHABLE = 'https://blackbox-api.invalid.example.test/version';
-const FAST = { tries: 2, delayMs: 500 };
+// TIGHT ON PURPOSE. These option names changed with Brief 35 Fix A; the old `{tries,
+// delayMs}` were silently ignored, so a run that should have cost 4 requests spent ~45
+// against a plan limit whose exhaustion takes the alert path down. A verification script
+// that cannot state its own cost has no business polling production.
+const FAST = { maxAttempts: 2, propagationBudgetMs: 1_000, unavailableBudgetMs: 1_000 };
 
 let failures = 0;
 const check = (name, cond) => {
@@ -70,12 +74,12 @@ console.log(`(live worker currently reports build '${realBuild}')\n`);
 
 // Defect 1 — a forced mismatch must be caught, never reported current.
 const mismatch = await proveCurrent(`${WORKER_URL}/version`, 'version', 'deadbeef-not-a-real-build', FAST);
-check('forced worker mismatch is caught (ok:false)', mismatch.ok === false);
+check('forced worker mismatch is caught (not CURRENT)', mismatch.outcome !== OUTCOME.CURRENT);
 
 // Defect 2 — an unreachable endpoint must FAIL CLOSED, not degrade to 'unknown'.
 const down = await proveCurrent(UNREACHABLE, 'version', realBuild, FAST);
-check('unreachable worker fails closed (ok:false)', down.ok === false);
-check('unreachable is a failure, never the old "unknown" skip', !/unknown/i.test(down.seen));
+check('unreachable worker fails closed (not CURRENT)', down.outcome !== OUTCOME.CURRENT);
+check('unreachable is classified, never the old "unknown" skip', down.outcome === OUTCOME.UNAVAILABLE || down.outcome === OUTCOME.INFRASTRUCTURE_UNAVAILABLE);
 
 // Happy path — both halves prove current against the live endpoints.
 const happy = await checkDeployCurrency({ expected: realBuild, prodUrl: PROD_URL, workerUrl: WORKER_URL, ...FAST });

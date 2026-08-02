@@ -27,8 +27,8 @@
  * IT PRINTS NO SECRETS. The admin token is read and used; it is never echoed, and the
  * status check reports only whether each required secret is PRESENT.
  *
- * Usage:  node scripts/canary.mjs [--environment=production] [--build=<sha>]
- *         BBX_ADMIN_TOKEN=… (or workers/admin_token.txt)
+ * Usage:  `pnpm deploy` — and ONLY that. Brief 35 Fix A §C removed the standalone entry
+ *         point; invoking this directly runs a DIAGNOSTIC that cannot satisfy the gate.
  */
 import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { deployTarget } from './api-origin.mjs';
-import { proveCurrent } from './assert-currency.mjs';
+import { OUTCOME, proveCurrent } from './assert-currency.mjs';
 import {
   ENVELOPE_ALG,
   decryptChunk,
@@ -62,6 +62,26 @@ const args = Object.fromEntries(
 );
 const ENVIRONMENT = args.environment || 'production';
 const EXPECTED_BUILD = args.build && args.build !== 'true' ? args.build : null;
+
+/**
+ * Brief 35 Fix A §C — THE CANARY HAS NO STANDALONE ENTRY POINT.
+ *
+ * It used to be runnable as `node scripts/canary.mjs --environment=production --build=<sha>`,
+ * and I used exactly that twice to finish a gate the currency poll had abandoned. Both deploys
+ * were in fact correct, so it felt harmless. It is not: a gate an operator can complete by
+ * hand is not a gate, and doing it twice is how it becomes the habit that replaces the
+ * control. Same shape as `expectedPublicKey` being optional, and as
+ * ENVELOPE_ENCRYPTION_ENABLED reading armed while encrypting nothing — a control that reports
+ * as enforcing while not enforcing.
+ *
+ * So the canary now runs only when deploy.mjs hands it the nonce it minted for THIS run.
+ * Anything else is a DIAGNOSTIC: it executes, it is useful, and it writes a marker saying it
+ * cannot satisfy the gate — so a diagnostically-"passed" deploy is visibly identifiable as not
+ * passed.
+ */
+const GATE_NONCE = process.env.BBX_GATE_NONCE ?? '';
+const IS_GATED = GATE_NONCE.length >= 16;
+const IS_DIAGNOSTIC = !IS_GATED;
 
 // §C first failure condition: "the origin is absent or invalid". Validated by the same
 // rule the build gate uses, from the same tracked config, before a single request.
@@ -145,7 +165,15 @@ async function readiness() {
   return r.data?.chunks ?? { encrypted: 0, plaintextDeclared: 0, plaintextUndeclared: 0 };
 }
 
-console.log(`=== Brief 35 §C canary — ${ENVIRONMENT} ===`);
+if (IS_DIAGNOSTIC) {
+  console.log('╔════════════════════════════════════════════════════════════════════════════╗');
+  console.log('║  DIAGNOSTIC RUN — THIS CANNOT SATISFY THE DEPLOY GATE (Brief 35 Fix A §C)  ║');
+  console.log('║  Invoked without a deploy nonce, so nothing it reports counts as a pass.   ║');
+  console.log('║  To actually verify a deploy, run: pnpm deploy                             ║');
+  console.log('╚════════════════════════════════════════════════════════════════════════════╝');
+}
+
+console.log(`=== Brief 35 §C canary — ${ENVIRONMENT}${IS_DIAGNOSTIC ? ' (DIAGNOSTIC, NOT A GATE PASS)' : ''} ===`);
 console.log(`    origin: ${ORIGIN}`);
 if (!ADMIN) {
   fatal('no admin credential (BBX_ADMIN_TOKEN or workers/admin_token.txt). The gate cannot run.');
@@ -166,9 +194,12 @@ if (version.status !== 200) {
 }
 ok(`/version answers → '${version.data?.version}'`);
 if (EXPECTED_BUILD) {
+  // Brief 35 Fix A §B — the poll now returns a CLASSIFICATION, not a boolean. Reading a
+  // `.ok` that no longer exists made this `!undefined` → always fatal, which would have
+  // failed the canary on every deploy including correct ones. Classify explicitly instead.
   const proven = await proveCurrent(`${ORIGIN}/version`, 'version', EXPECTED_BUILD);
-  if (!proven.ok) {
-    fatal(`worker never proved '${EXPECTED_BUILD}' (last seen: ${proven.seen}) — client/server split.`);
+  if (proven.outcome !== OUTCOME.CURRENT) {
+    fatal(`worker is ${proven.outcome}: ${proven.detail} — client/server split.`);
   }
   ok(`build matches the commit being deployed (${EXPECTED_BUILD})`);
 }
@@ -374,6 +405,14 @@ console.log('──────────────────────�
 if (failures) {
   console.error(`\n✗ CANARY FAILED — ${failures} check(s). The alert path is NOT proven on this deploy.`);
   process.exit(1);
+}
+if (IS_DIAGNOSTIC) {
+  // §C — a DISTINGUISHABLE marker, and a non-zero exit so no script can mistake this for a
+  // pass. The round trip really did work; what it did not do is satisfy the gate. Those are
+  // different claims, and collapsing them is precisely what let a human finish the gate twice.
+  console.log('\n◇ DIAGNOSTIC COMPLETE — the round trip worked, and THIS DID NOT SATISFY THE GATE.');
+  console.log('  Deploy verification happens only inside `pnpm deploy`.');
+  process.exit(2);
 }
 console.log('\n✓ canary round trip complete: the deployed client CAN reach this Worker, an event was');
 console.log('  created and captured, nothing was dispatched to anyone, and the fixture is gone.');

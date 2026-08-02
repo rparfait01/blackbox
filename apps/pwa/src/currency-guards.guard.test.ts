@@ -82,9 +82,15 @@ describe('§1 deploy currency', () => {
     expect(assertCurrency).not.toMatch(/=\s*'unknown'/); // no 'unknown' fallback/skip
   });
 
-  it('an unreachable/erroring endpoint fails closed (ok:false), never swallowed to success', () => {
-    expect(assertCurrency).toMatch(/catch[\s\S]*?seen =/); // errors are recorded, not ignored
-    expect(assertCurrency).toMatch(/return \{ ok: false/); // and yield a hard failure
+  it('an unreachable/erroring endpoint fails closed, never swallowed to success', () => {
+    // The INVARIANT is unchanged and still the point of this test: a transport error must
+    // never become a pass. Brief 35 Fix A changed only the mechanism — a thrown fetch is now
+    // CLASSIFIED rather than collapsed to `{ok:false}`, because "unreachable" and "stale"
+    // needed different handling. The assertion follows the mechanism; the guarantee does not move.
+    expect(assertCurrency).toMatch(/catch \(err\) \{[\s\S]*?classify\(\{ error: err\.message/);
+    expect(assertCurrency).toMatch(/UNAVAILABLE/);
+    // Only an exact CURRENT classification may pass. Nothing else is treated as success.
+    expect(assertCurrency).toMatch(/outcome === OUTCOME\.CURRENT/);
   });
 
   it('verifies BOTH halves against the LIVE endpoints, cache-busted', () => {
