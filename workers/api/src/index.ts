@@ -7,6 +7,8 @@ import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { verifyChain } from './lib/chain-verdict';
 import { vaultCoverage } from './lib/vault-scan';
+import { checkPollCeiling } from './lib/poll-ceiling';
+import { requestHeadroom } from './lib/request-headroom';
 import { enqueueSeal, sealCoverage } from './lib/seal';
 import { getCompleteness, markTerminalReceived, terminalClaimProblem } from './lib/completeness';
 import { crossesTamperingThreshold, TAMPERING_WINDOW_MS } from './lib/tampering';
@@ -748,6 +750,9 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
   const vault = await vaultCoverage(c.env);
   // §F7 — sealing coverage: pending, failures, and the oldest closed-but-unsealed event.
   const seal = await sealCoverage(c.env);
+  // §F — request headroom. The Worker IS the alert path, so a billing threshold is an
+  // outage threshold; it belongs on the panel that reports what is true.
+  const headroom = await requestHeadroom(c.env);
   const plaintext = Number(row?.declaredPlaintextChunks ?? 0) + Number(row?.undeclaredPlaintextChunks ?? 0);
   return c.json(
     {
@@ -781,6 +786,7 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
         // the one place that reports what is true rather than what was intended.
         retentionRule: 'NOT PROVISIONED — see Brief 40 §0; no storage-layer lock exists yet.',
       },
+      requests: headroom,
       sealing: {
         summary:
           `SEALING: ${seal.sealedTotal} sealed · ${seal.pending} pending` +
@@ -1248,6 +1254,19 @@ async function requireMagicToken(c: AppContext): Promise<boolean> {
   return verdict === 'ok';
 }
 
+/**
+ * Brief 33 Fix A §E3 — the dashboard HTML is never cached.
+ *
+ * The polling loop is INLINED into this page, so a browser holding a stale copy keeps running
+ * the old unbounded loop after the fix ships — and no server-side change can reach it, because
+ * that loop ignores response bodies. The page carried no Cache-Control at all.
+ *
+ * A service worker is NOT involved: the PWA registers its SW on the Pages origin and service
+ * workers are origin-scoped, so it cannot intercept this Worker origin. No cache key to bump —
+ * the gap was the missing header.
+ */
+const NO_STORE_HTML = { 'Cache-Control': 'no-store' } as const;
+
 // The full dashboard HTML page (loud, contact-facing). Token verdict drives a
 // friendly expired/invalid page instead of a bare 401 body.
 app.get('/c/:id', async (c) => {
@@ -1277,6 +1296,8 @@ app.get('/c/:id', async (c) => {
     await logRecipientAction(c.env, recipient.id, eventId, 'view');
     return c.html(
       renderDashboardPage({ eventId, token, base: workerOrigin, state, recipient, role: 'dispatch' }),
+      200,
+      NO_STORE_HTML,
     );
   }
 
@@ -1301,11 +1322,13 @@ app.get('/c/:id', async (c) => {
     await audit(c.env, eventId, 'coordinator_view', null, null);
     return c.html(
       renderDashboardPage({ eventId, token, base: workerOrigin, state, role: 'coordinator' }),
+      200,
+      NO_STORE_HTML,
     );
   }
   // Location-only view. Offer to take coordination only when unclaimed.
   await audit(c.env, eventId, claimed ? 'notified_view' : 'claimable_view', null, null);
-  return c.html(renderNotifiedPage({ eventId, base: workerOrigin, state, claimable: !claimed }));
+  return c.html(renderNotifiedPage({ eventId, base: workerOrigin, state, claimable: !claimed }), 200, NO_STORE_HTML);
 });
 
 // Deliberate coordinator claim (Brief 7 / grooming). Atomic: the first POST that
@@ -1560,11 +1583,42 @@ app.get('/v1/c/:id/state', async (c) => {
   if (!(await requireMagicToken(c))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
-  const state = await getContactState(c.env, c.req.param('id'));
+  const eventId = c.req.param('id');
+  const state = await getContactState(c.env, eventId);
   if (!state) {
     return c.json({ error: 'not found' }, 404);
   }
-  return c.json(state, 200);
+
+  // Brief 33 Fix A §E1 — runaway-loop ceiling. Note carefully what this does NOT do: the
+  // request has already invoked this Worker and already counted against the daily limit by
+  // the time we get here, so this cannot protect the quota. What it does is stop a stuck tab
+  // from doing real work, and hand any conforming client a terminal instruction to stop.
+  // The limit is generous — a live coordinator polling at 3s uses half of it — because
+  // throttling someone watching a live alert would be a worse failure than the one being
+  // fixed. The first poll for a token always passes.
+  const ceiling = checkPollCeiling(c.req.query('t') ?? '', eventId, state.active);
+  if (!ceiling.allowed) {
+    return c.json(
+      {
+        terminal: true,
+        reason: 'poll_ceiling',
+        active: state.active,
+        closedAt: state.closedAt,
+        closedDtg: state.closedDtg,
+        message: 'This view is polling too fast and has been stopped. Reload for current state.',
+      },
+      429,
+    );
+  }
+
+  // §E2 — a closed event answers with an explicit terminal flag, so a client stops for a
+  // reason the SERVER named rather than inferring it. `active: false` already said this; the
+  // flag says it in a way that survives future terminal reasons that are not closure.
+  //
+  // HONEST LIMIT: this cannot stop a page whose JavaScript predates the fix. That loop
+  // ignores the response body entirely and re-arms on a timer no payload can reach. Only a
+  // reload picks up the bounded client; until then the ceiling above is all that applies.
+  return c.json(state.active ? state : { ...state, terminal: true, reason: 'event_closed' }, 200);
 });
 
 // §4: live dashboard subscription over WebSocket. The dashboard connects here and

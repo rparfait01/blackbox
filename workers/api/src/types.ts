@@ -49,6 +49,14 @@ export interface Env {
   /** Deployment security contact for tamper alerts (Fix Brief 2 #C4). For the
    *  family pilot this is the operator/founder. */
   SECURITY_CONTACT_EMAIL?: string;
+  /** Brief 33 Fix A §F — plan's daily Workers request limit. Unset = free-tier 100k. Bump
+   *  when the plan changes; the readiness panel measures headroom against it. */
+  PLAN_DAILY_REQUESTS?: string;
+  /** Cloudflare account id + an Analytics:Read token, for the GraphQL request count. Absent
+   *  means the panel reports NOT MEASURED rather than inventing a figure — the alert path
+   *  crossing its request limit unobserved is exactly what took production down. */
+  CF_ACCOUNT_ID?: string;
+  CF_ANALYTICS_TOKEN?: string;
 
   // --- Secrets (set via `wrangler secret put`; never in wrangler.toml or source) ---
   /** LINE Messaging API long-lived Channel Access Token (Bearer auth for push). */

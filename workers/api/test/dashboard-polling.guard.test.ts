@@ -33,7 +33,7 @@ const code = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 describe('§A polling stops when the event closes', () => {
   it('the coordinator poll has a terminal state and says so', () => {
     expect(page).toMatch(/function stopPolling\(st\)/);
-    expect(page).toMatch(/if\(st\.active===false\)\{ stopPolling\(st\); return; \}/);
+    expect(page).toMatch(/if\(st\.terminal===true\|\|st\.active===false\)\{ stopPolling\(st\); return; \}/);
     expect(page).toMatch(/Reload for current state\./);
   });
 
@@ -83,7 +83,7 @@ describe('§C the socket reconnect is bounded — the P0', () => {
 
   it('there is an attempt ceiling, and giving up is visible', () => {
     expect(page).toMatch(/if\(wsAttempts>=WS_MAX_ATTEMPTS\)\{ wsGiveUp\(\); return; \}/);
-    expect(page).toMatch(/Connection lost — reload\./);
+    expect(page).toMatch(/Connection lost — reload to reconnect\./);
     expect(page).toMatch(/id="wsNotice"/);
   });
 
@@ -111,5 +111,80 @@ describe('§D the notified view gets the same treatment, not a lesser one', () =
     // The view shows one pair of coordinates; a frozen page with no notice is how a stale
     // position gets read as a live one.
     expect(page).toMatch(/notifiedEnded[\s\S]{0,400}Reload for current state\./);
+  });
+});
+
+describe('§C jitter — desynchronise the retry wave', () => {
+  it('backoff is jittered ±25%', () => {
+    // Without jitter every tab that lost the socket at the same instant — which is what a
+    // quota breach or a deploy causes — retries in lockstep, so a recovering Worker is hit by
+    // a synchronised wave instead of a spread.
+    expect(page).toMatch(/delay=Math\.round\(delay\*\(0\.75\+Math\.random\(\)\*0\.5\)\)/);
+  });
+});
+
+describe('§E1/§E2 server side, and what it honestly cannot do', () => {
+  const ceiling = readFileSync(new URL('../src/lib/poll-ceiling.ts', import.meta.url), 'utf8');
+  const index = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+  it('the ceiling does not claim to protect the quota', () => {
+    // By the time the limiter runs, the request has already invoked the Worker and already
+    // counted. Only the client loop stopping reduces requests. Saying otherwise would be the
+    // overclaim Brief 38 §B had to correct.
+    expect(ceiling).toMatch(/does NOT protect the Workers request cap/);
+  });
+
+  it('a live event gets generous headroom, and the first poll always passes', () => {
+    expect(ceiling).toMatch(/LIVE_LIMIT_PER_MIN = 40/);
+    expect(ceiling).toMatch(/buckets\.set\(key, \{ windowStart: now, count: 1 \}\);\s*\n\s*return \{ allowed: true/);
+  });
+
+  it('a closed event answers with an explicit terminal flag', () => {
+    expect(index).toMatch(/terminal: true, reason: 'event_closed'/);
+    expect(index).toMatch(/reason: 'poll_ceiling'/);
+    // …and the client acts on the flag, not only on active:false.
+    expect(page).toMatch(/if\(st\.terminal===true\|\|st\.active===false\)/);
+  });
+
+  it('the limit of the terminal payload is stated, not implied', () => {
+    // A page whose JS predates this fix ignores response bodies entirely; only a reload picks
+    // up the bounded loop.
+    expect(index).toMatch(/cannot stop a page whose JavaScript predates the fix/);
+  });
+});
+
+describe('§E3 the dashboard HTML is not cacheable', () => {
+  const index = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+  it('dashboard and notified HTML are served no-store', () => {
+    // The polling loop is inlined into this page, so a stale copy keeps the old loop alive
+    // and no server change can reach it.
+    expect(index).toMatch(/const NO_STORE_HTML = \{ 'Cache-Control': 'no-store' \} as const;/);
+    expect((index.match(/NO_STORE_HTML,?\s*\)?/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('records that a service worker is not involved', () => {
+    // The PWA's SW is registered on the Pages origin; service workers are origin-scoped and
+    // cannot intercept the Worker origin. No cache key to bump.
+    expect(index).toMatch(/service worker is NOT involved/);
+  });
+});
+
+describe('§F request headroom is measured, never estimated', () => {
+  const headroom = readFileSync(new URL('../src/lib/request-headroom.ts', import.meta.url), 'utf8');
+
+  it('reports NOT MEASURED rather than inventing a number', () => {
+    expect(headroom).toMatch(/REQUESTS: NOT MEASURED/);
+    expect(headroom).toMatch(/never estimates/);
+  });
+
+  it('alerts at 80%, at error level', () => {
+    expect(headroom).toMatch(/HEADROOM_ALERT_AT = 0\.8/);
+    expect(headroom).toMatch(/alert: 'request_headroom_low'/);
+    expect(headroom).toMatch(/level: 'error'/);
+  });
+
+  it('names the consequence rather than treating it as a capacity metric', () => {
+    expect(headroom).toMatch(/a trigger creates a local capture and notifies nobody/);
   });
 });

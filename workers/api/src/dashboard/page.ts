@@ -441,8 +441,8 @@ const NOTIFIED_JS = `
     var n=document.getElementById('notifiedEnded');
     if(n){
       var dtg=(st&&st.closedDtg)?st.closedDtg:null;
-      n.textContent=dtg?('This event closed at '+dtg+'. Reload for current state.')
-                       :'This event has closed. Reload for current state.';
+      n.textContent=(dtg?('This event closed at '+dtg+'. '):'This event has closed. ')
+                    +'This view is no longer live. Reload for current state.';
       n.hidden=false;
     }
   }
@@ -451,7 +451,7 @@ const NOTIFIED_JS = `
     fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){return r.ok?r.json():null;}).then(function(st){
       if(!st){ schedule(); return; }
       if(st.location){ var c=document.getElementById('coords'); if(c){ c.textContent=st.location.lat.toFixed(4)+'°, '+st.location.lon.toFixed(4)+'°'; } }
-      if(st.active===false){ stop(st); return; }
+      if(st.terminal===true||st.active===false){ stop(st); return; }
       schedule();
     }).catch(function(){ schedule(); });
   }
@@ -845,8 +845,8 @@ const CLIENT_JS = `
     var b=el('endedBanner');
     if(b){
       var dtg=(st&&st.closedDtg)?st.closedDtg:null;
-      b.textContent=dtg?('This event closed at '+dtg+'. Reload for current state.')
-                       :'This event has closed. Reload for current state.';
+      b.textContent=(dtg?('This event closed at '+dtg+'. '):'This event has closed. ')
+                    +'This view is no longer live. Reload for current state.';
       b.hidden=false;
     }
   }
@@ -863,7 +863,10 @@ const CLIENT_JS = `
       applyClosure(st.closure);
       if(st.audio){ if(window.__pumpAudio) window.__pumpAudio(st.audio.latestSequence); }
       applyStatus(st);
-      if(st.active===false){ stopPolling(st); return; }
+      // §E2 — the server can declare the view terminal explicitly, not only by active:false.
+      // A client that understands this stops for any terminal reason the server names,
+      // including one added later, without needing its own copy of the rules.
+      if(st.terminal===true||st.active===false){ stopPolling(st); return; }
       schedulePoll();
     }).catch(function(){ schedulePoll(); });
   }
@@ -901,7 +904,7 @@ const CLIENT_JS = `
     wsGaveUp=true;
     closeSocket();
     var n=el('wsNotice');
-    if(n){ n.textContent='Connection lost — reload.'; n.hidden=false; }
+    if(n){ n.textContent='Connection lost — reload to reconnect.'; n.hidden=false; }
   }
 
   function connectWS(){
@@ -920,6 +923,10 @@ const CLIENT_JS = `
         if(pollStopped||wsGaveUp) return;
         var delay=WS_BACKOFF_MS[Math.min(wsAttempts, WS_BACKOFF_MS.length-1)];
         if(delay>WS_CAP_MS) delay=WS_CAP_MS;
+        // JITTER (§C). Without it every tab that lost the socket at the same moment — which
+        // is what a quota breach or a deploy causes — retries in lockstep, so the recovering
+        // Worker is hit by a synchronised wave instead of a spread. +/-25%.
+        delay=Math.round(delay*(0.75+Math.random()*0.5));
         wsAttempts++;
         if(wsAttempts>=WS_MAX_ATTEMPTS){ wsGiveUp(); return; }
         wsTimer=setTimeout(connectWS, delay);
