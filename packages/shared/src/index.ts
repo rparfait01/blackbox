@@ -7,3 +7,5 @@ export * from './trust-roots';
 export * from './report-verify';
 export * from './time';
 export * from './lifecycle';
+
+export { deviceCanonical } from './device-canonical';

@@ -230,3 +230,30 @@ instead of `&&` is the same defect as a gate a human can finish by hand.**
 `pnpm deploy` now runs `pnpm verify` in-process before anything is published. There is no skip
 flag, for the same reason `--skip` does not exist on the canary. Occurrence: a `;` in a command
 chain deployed a build whose test suite had failed.
+
+## A VERDICT NEEDS A CODE PATH (ratified 2026-08-03, from Brief 37 Fix A)
+
+**"A verdict the system can report must have a code path that produces it. A state reachable only
+by hand is not a feature — it is a document describing something that does not exist."**
+
+(PURGED_BY_CONSENT, pre-37 Fix A: the outcome Brief 40 §0's reconciliation rested on was reachable
+exactly once, manually.)
+
+`verifyChain` READ an audit row with action `chunks.purged_owner_consent`; nothing anywhere WROTE
+one. The five production events carried that verdict only because the row was inserted by hand at
+13c539f. The whole operator-binding/owner-custody reconciliation — the thing that made a 36-month
+retention lock compatible with a survivor's right to destroy her own recordings — rested on a
+state the product could not enter. Closed by `POST /v1/me/events/:id/purge-capture`.
+
+## MAKE THE UNSAFE STATE UNREPRESENTABLE (ratified 2026-08-03, from Brief 2 Fix A)
+
+**"Make the unsafe state unrepresentable, not merely wrong. DEVICE_CREDENTIAL_ENFORCED cannot
+express armed-but-accepting-userHash. Four prior occurrences shipped a flag reading armed while
+behaving disarmed: 0038, 0049, expectedPublicKey, ENVELOPE_ENCRYPTION_ENABLED."**
+
+The pattern in each: a single global boolean claimed a property the code did not enforce, and
+nothing could detect the divergence because the flag was the only thing anyone consulted. The
+correction is structural rather than vigilant — arming is a per-account timestamp
+(`users.deviceCredentialArmedAt`) and the flag only decides whether that timestamp may be SET, so
+there is no value the pair can take that means "armed everywhere but still accepting the old
+credential". The state does not exist to be shipped by mistake.

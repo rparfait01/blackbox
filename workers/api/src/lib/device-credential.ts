@@ -41,6 +41,7 @@
  * this project has hit three times, so the flag deliberately cannot express that state — arming is
  * a per-account timestamp, and the flag only decides whether that timestamp may be set.
  */
+import { deviceCanonical } from '@blackbox/shared';
 import type { Env } from '../types';
 
 /** §C — how far a device clock may be wrong and still be believed. */
@@ -69,16 +70,12 @@ export interface DeviceProof {
   timestamp?: number | null;
 }
 
-/** The bytes a device signs. §B — method, path, event id, body digest, timestamp. */
-export function deviceCanonical(input: {
-  method: string;
-  path: string;
-  eventId: string;
-  bodyDigestHex: string;
-  timestamp: number;
-}): string {
-  return [input.method.toUpperCase(), input.path, input.eventId, input.bodyDigestHex, String(input.timestamp)].join('\n');
-}
+// §B — THE CANONICAL FORM LIVES IN @blackbox/shared AND BOTH SIDES IMPORT IT.
+// Two implementations of the same string can drift — a reordered field, a different separator, a
+// lower-cased method — and the symptom would be every signature failing verification, which on an
+// armed account means refused writes on the capture path. One function makes that unrepresentable
+// rather than merely tested for. Re-exported so existing callers are unaffected.
+export { deviceCanonical };
 
 const b64ToBytes = (b64: string): Uint8Array => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 const hexToBytes = (hex: string): Uint8Array => {

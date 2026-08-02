@@ -19,6 +19,7 @@ import '@fontsource/ibm-plex-mono/700.css';
 
 import { router } from '@/app/router';
 import { resumeActiveSession } from '@/lib/activation';
+import { ensureDeviceCredential } from '@/lib/device-credential';
 import { resumeUploads } from '@/lib/upload';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import '@/index.css';
@@ -31,6 +32,23 @@ void resumeActiveSession();
 
 // Resume draining any uploads queued by a previous (possibly offline) session.
 void resumeUploads();
+
+/**
+ * Brief 2 Fix A §A/§E1 — PROVISION THE DEVICE CREDENTIAL ON LAUNCH.
+ *
+ * `void`, deliberately, like the two above it: nothing waits on this and nothing branches on it.
+ * A device that fails to provision — offline, no session yet, private browsing, WebCrypto absent —
+ * simply keeps capturing unsigned, which is what every existing account does today (§E1). The
+ * account gets a credential the next time the app opens with a session available.
+ *
+ * §E2: if storage was cleared the key is gone and this quietly makes a new one. That is the
+ * correct outcome rather than an error — the old key genuinely is gone and nothing should still
+ * trust it — and the account ends up with an extra independently-revocable credential.
+ *
+ * It is here and NOT on the trigger path. §0: a credential check must never stand between a
+ * survivor and an alert, and that includes the provisioning that would make one possible.
+ */
+void ensureDeviceCredential();
 
 // Dev-only console harness for the classification foundation. Dynamically
 // imported behind the DEV guard so production builds never bundle it and

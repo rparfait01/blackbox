@@ -1,10 +1,11 @@
-import { signRequest } from '@blackbox/shared';
+import { signRequest, sha256Hex } from '@blackbox/shared';
 import type { Classification } from '@blackbox/classifier';
 
 import { log } from '@/lib/log';
 import { API_BASE_URL, envelopeEncryptionEnabled, uploadsEnabled } from '@/lib/env';
 import { getSessionToken } from '@/lib/auth';
 import { getUserHash } from '@/lib/device';
+import { deviceSignatureHeaders } from '@/lib/device-credential';
 import {
   ENVELOPE_ALG,
   generateDek,
@@ -673,9 +674,24 @@ async function sendItem(item: UploadQueueItem, ctx: SessionContext): Promise<boo
 
   const timestamp = Date.now();
   const signed = await signRequest({ secret, eventId, method: 'POST', path, timestamp, body });
+
+  // Brief 2 Fix A §B — the device proof, attached and NEVER a precondition.
+  //
+  // `deviceSignatureHeaders` returns `{}` for an unprovisioned device, a browser without
+  // WebCrypto, a revoked key, or any failure at all — and there is deliberately no branch here
+  // for that case. The upload goes out identically either way. A credential that could stop a
+  // chunk reaching the server would be worse than no credential, because the thing it would
+  // stop is a survivor's evidence.
+  const deviceHeaders = await deviceSignatureHeaders({
+    method: 'POST',
+    path,
+    eventId,
+    bodyDigestHex: await sha256Hex(body),
+  });
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
-    headers: { ...headers, ...signed },
+    headers: { ...headers, ...signed, ...deviceHeaders },
     body: body as BodyInit,
   });
   return response.status >= 200 && response.status < 300;
