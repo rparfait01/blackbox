@@ -31,7 +31,22 @@
 import { getChain, getChainGaps, getChainHead, hashString } from './integrity';
 import type { Env } from '../types';
 
-export type ChainOutcome = 'VERIFIED' | 'INCOMPLETE' | 'PURGED_BY_CONSENT' | 'BROKEN';
+/**
+ * Brief 37 Fix A — SIX OUTCOMES, because two of them were being answered with VERIFIED.
+ *
+ * `EVENT_NOT_FOUND` and `NO_RECORDS` are not degrees of verification. They are the absence of a
+ * subject and the absence of evidence, and folding either into VERIFIED means the verifier
+ * reports success for having checked nothing. `GET /v1/admin/events/<any-uuid-at-all>/chain`
+ * returned `VERIFIED — no records to verify`, so an operator asking "is this event's custody
+ * intact?" about an id that never existed was told yes.
+ */
+export type ChainOutcome =
+  | 'VERIFIED'
+  | 'INCOMPLETE'
+  | 'PURGED_BY_CONSENT'
+  | 'BROKEN'
+  | 'EVENT_NOT_FOUND'
+  | 'NO_RECORDS';
 
 export interface ChainVerdict {
   outcome: ChainOutcome;
@@ -50,11 +65,25 @@ export interface ChainVerdict {
  * is BOTH broken and purged is BROKEN, because the purge cannot excuse a bad hash.
  */
 export async function verifyChain(env: Env, eventId: string): Promise<ChainVerdict> {
-  const [records, head, gaps] = await Promise.all([
+  const [records, head, gaps, exists] = await Promise.all([
     getChain(env, eventId),
     getChainHead(env, eventId),
     getChainGaps(env, eventId),
+    eventExists(env, eventId),
   ]);
+
+  // ---- EVENT_NOT_FOUND: there is no subject to have a verdict about --------------------
+  // Checked FIRST and independently of the chain tables. A nonexistent event has no records,
+  // no head and no gaps, which is indistinguishable from a real event that captured nothing —
+  // and the old code answered VERIFIED to both.
+  if (!exists) {
+    return {
+      outcome: 'EVENT_NOT_FOUND',
+      detail: 'no event with this id exists; there is nothing to verify',
+      records: 0,
+      headSeq: null,
+    };
+  }
 
   // ---- BROKEN: structural failures, checked before anything can excuse them -------------
   if (head && records.length === 0) {
@@ -137,10 +166,30 @@ export async function verifyChain(env: Env, eventId: string): Promise<ChainVerdi
     };
   }
 
+  // ---- NO_RECORDS: the event is real, and nothing was ever appended ---------------------
+  // Also not VERIFIED. "Nothing happened" is a true and useful answer; "the custody chain is
+  // intact" is a different claim, and this is not evidence for it.
+  if (records.length === 0) {
+    return {
+      outcome: 'NO_RECORDS',
+      detail: 'the event exists but no chain records were ever appended; nothing has been verified',
+      records: 0,
+      headSeq: head?.seq ?? null,
+    };
+  }
+
   return {
     outcome: 'VERIFIED',
-    detail: records.length === 0 ? 'no records to verify' : `${records.length} record(s) verified and contiguous`,
+    detail: `${records.length} record(s) verified and contiguous`,
     records: records.length,
     headSeq: head?.seq ?? null,
   };
+}
+
+/** Does the event exist at all? Separate from the chain tables on purpose — see EVENT_NOT_FOUND. */
+async function eventExists(env: Env, eventId: string): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT 1 AS present FROM events WHERE id = ? LIMIT 1')
+    .bind(eventId)
+    .first<{ present: number }>();
+  return row?.present === 1;
 }

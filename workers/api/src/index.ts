@@ -777,8 +777,15 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
       },
       wrappedKeys: Number(row?.wrappedKeys ?? 0),
       vault: {
+        // Brief 37 Fix A — an EMPTY vault does not report as a verified one. "0/0 objects
+        // verified" reads as healthy, and for two months it was the literal truth of a vault
+        // that had never sealed anything: five closed events, zero objects, a panel saying
+        // nothing was wrong. An empty set is not evidence of integrity, it is the absence of
+        // evidence, and the panel has to say which one it is looking at.
         summary:
-          `VAULT: ${vault.verified}/${vault.eligible} objects verified` +
+          (vault.eligible === 0
+            ? 'VAULT: EMPTY — no sealed objects exist to verify'
+            : `VAULT: ${vault.verified}/${vault.eligible} objects verified`) +
           ` · pass ${vault.passNumber}${vault.passInFlight ? ' (in flight)' : ''}` +
           `${vault.lastPassBacklog > 0 ? ` · BACKLOG ${vault.lastPassBacklog}` : ''}`,
         ...vault,

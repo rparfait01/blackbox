@@ -145,3 +145,48 @@ alert path it is a survivor who cannot call for help. Any new comparison on the 
 capture, cascade, or closure** path fails OPEN by default and is proven both ways before ship.
 Availability of the alert path outranks every other property it has — that is already why the
 capture envelope fails open to plaintext rather than dropping a recording.
+
+---
+
+## DERIVED VALUES AND ISOLATE STATE (ratified 2026-08-02)
+
+**Readiness panel values are derived from what the system observes. Never written as literals.**
+Fourth occurrence of the class: the panel hardcoded `retentionRule: 'NOT PROVISIONED — no
+storage-layer lock exists yet'` and went on saying it after the lock was provisioned. Earlier
+three: `isFinal:false` hardcoded so every capture read truncated; a default that told five closed
+events "capture in progress"; `ENVELOPE_ENCRYPTION_ENABLED` reading armed while encrypting
+nothing. Where the runtime genuinely cannot observe a value — the Workers runtime cannot read an
+R2 lock rule from a binding — the panel states what is CONFIGURED and names where it is VERIFIED,
+and never implies it checked.
+
+**An isolate's current configuration is not a global fact. Where a value must match across a
+request pair, carry the value that produced it — never re-derive from whatever is current now.
+Secret propagation across isolates is not atomic.** Observed: a signup capability minted seconds
+earlier was refused, because the binding commitment was recomputed with `capabilityKeys(env)[0]`
+and the two requests landed on isolates that disagreed about the current key. The fix is general —
+verification keeps the key that matched the signature and recomputes with that.
+
+**A guard asserts against observed state, not a remembered string. A guard that keeps passing
+after the world moved is not guarding anything.** Occurrences: `signingFixture()`, and the Brief
+40 assertion that the panel says "NOT PROVISIONED" about a rule that is provisioned.
+
+**Run `pnpm test`, not `npx vitest` inside one package.** The repo has two test packages and the
+worker's is where server guards live. Two stale guards survived a full session of green runs
+because only `apps/pwa` was being exercised.
+
+## VACUOUS PASSES (ratified 2026-08-02, from Brief 37 Fix A)
+
+**A check that passes because there was nothing to check is not a passing check.** An empty set is
+the absence of evidence, not evidence of correctness, and a verifier must say which of the two it
+is looking at. Occurrences found by the Brief 37 Fix A sweep:
+
+| Site | Was | Now |
+|---|---|---|
+| `verifyChain` on an unknown event id | `VERIFIED — no records to verify` | `EVENT_NOT_FOUND` |
+| `verifyChain` on a real event with no records | `VERIFIED — no records to verify` | `NO_RECORDS` |
+| migration health (`console.ts`) | `ok: pending.length === 0` — could only see manifest ahead of DB | also fails on applied-but-unlisted |
+| readiness vault summary | `VAULT: 0/0 objects verified` — read healthy for two months while nothing had EVER been sealed | `VAULT: EMPTY — no sealed objects exist to verify` |
+
+Swept and found CLEAN: `canary /status` (`routable.length === 0` — empty genuinely is the safe
+state), `suppression.ts` and `capture-encryptor.ts` (both guard length before `.every()`, so
+neither is vacuously true), the event HMAC path (`maxSkewMs = 300_000` bounds replay).

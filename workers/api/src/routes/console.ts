@@ -929,13 +929,25 @@ consoleRoutes.get('/maintenance/health', requireLevel('operator'), async (c) => 
       const applied = (results ?? []).map((r) => r.name.replace(/\.sql$/, ''));
       const appliedSet = new Set(applied);
       const pending = MIGRATIONS_AT_BUILD.filter((m) => !appliedSet.has(m));
+      // Brief 37 Fix A — CHECK BOTH DIRECTIONS. `pending` alone only ever detects a manifest
+      // AHEAD of the database. It cannot see a migration that is applied but absent from the
+      // manifest, which is the drift that actually happened: 0053 shipped, the manifest was not
+      // updated, and this check went on reporting ok because filtering a list that omits the
+      // migration yields nothing to complain about. A check that passes because there was
+      // nothing to check is the shape this brief exists to remove.
+      const manifestSet = new Set(MIGRATIONS_AT_BUILD);
+      const unknownApplied = applied.filter((m) => !manifestSet.has(m));
       return {
-        ok: pending.length === 0,
+        ok: pending.length === 0 && unknownApplied.length === 0,
         appliedCount: applied.length,
         latestApplied: applied[applied.length - 1] ?? null,
         expectedCount: MIGRATIONS_AT_BUILD.length,
         pending,
-        detail: null as string | null,
+        unknownApplied,
+        detail: unknownApplied.length
+          ? `${unknownApplied.length} migration(s) applied to this database are absent from the build manifest ` +
+            `(${unknownApplied.join(', ')}) — the running build is older than the schema, or the manifest drifted.`
+          : (null as string | null),
       };
     } catch (err) {
       return {
