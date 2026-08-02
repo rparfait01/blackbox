@@ -83,6 +83,7 @@ export function OrgRegister(): JSX.Element {
     setError(null);
     setBusy(true);
     try {
+      const bindNonce = crypto.randomUUID();
       const start = await api<{ signupId: string; capability: string }>('/v1/auth/signup/start', {
         auth: false,
         body: { name: name.trim(), email: email.trim(), regionId: 'jp' },
@@ -95,15 +96,15 @@ export function OrgRegister(): JSX.Element {
       // Passkey is the intended authentication (§4). Non-blocking on a device that
       // cannot enroll one — the recovery code below still secures the account.
       if (passkeySupported()) {
-        await enrollPasskey(capability);
+        await enrollPasskey(capability, bindNonce);
       }
 
-      const rec = await api<{ codes: string[] }>('/v1/auth/recovery/issue', { auth: false, body: { capability } });
+      const rec = await api<{ codes: string[] }>('/v1/auth/recovery/issue', { auth: false, body: { capability, bindNonce } });
       const codes = rec.data?.codes ?? [];
 
       const fin = await api<{ sessionToken: string; displayMode: DisplayMode; userId: string }>(
         '/v1/auth/signup/finalize',
-        { auth: false, body: { capability, displayMode: 'direct' } },
+        { auth: false, body: { capability, bindNonce, displayMode: 'direct' } },
       );
       if (!fin.data?.sessionToken) {
         throw new Error('We could not finish creating your account. Please try again.');

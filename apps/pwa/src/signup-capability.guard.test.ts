@@ -48,10 +48,21 @@ describe('§B binding and single use', () => {
   const cap = read('workers/api/src/lib/signup-capability.ts');
   const auth = strip(read('workers/api/src/routes/auth.ts'));
 
-  it('the capability is bound to the redeemed enrollment code, by commitment not by value', () => {
-    expect(auth).toMatch(/bind: await bindingFor\(c\.env, claim\.storedCode\)/);
-    // A commitment, so the token never carries the code itself.
-    expect(auth).toMatch(/hmacSha256Hex\(key, `bind\.\$\{storedCode\}`\)/);
+  it('the capability is bound to a client nonce, by commitment not by value', () => {
+    // The first cut bound to the STORED enrollment code — a value the client cannot reproduce —
+    // so verification compared the commitment against undefined and refused every capability,
+    // including legitimate ones. A gate that refuses everyone is the §D lockout, not a gate.
+    expect(auth).toMatch(/bind: body\.bindNonce \? await bindingFor\(c\.env, body\.bindNonce\) : null/);
+    expect(auth).toMatch(/hmacSha256Hex\(key, `bind\.\$\{nonce\}`\)/);
+    // and it is actually PRESENTED at verification, which is the half that was missing
+    expect(auth).toMatch(/bind: await presentedBinding\(c\.env, body\)/);
+  });
+
+  it('an absent nonce does not lock anyone out', () => {
+    // bind null ⇒ binding not enforced. The capability is still signed, scoped, expiring and
+    // single-use; the binding is defence in depth, never the thing standing between a person
+    // and an account.
+    expect(read('workers/api/src/lib/signup-capability.ts')).toMatch(/if \(claims\.bind && opts\.bind !== claims\.bind\)/);
   });
 
   it('replay of a consumed capability is rejected AND audited', () => {

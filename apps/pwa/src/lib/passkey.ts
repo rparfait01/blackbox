@@ -61,11 +61,11 @@ function deviceLabel(): string {
  * Enroll a passkey. A signup CAPABILITY authenticates the call during onboarding (before a
  * session exists); once signed in, the Bearer token does instead.
  */
-export async function enrollPasskey(capability?: string): Promise<PasskeyOutcome<true>> {
+export async function enrollPasskey(capability?: string, bindNonce?: string): Promise<PasskeyOutcome<true>> {
   if (!passkeySupported()) return { ok: false, reason: 'unsupported' };
   const optionsRes = await api<PublicKeyCredentialCreationOptionsJSON>('/v1/auth/passkey/register/options', {
     auth: !capability,
-    body: capability ? { capability } : {},
+    body: capability ? { capability, bindNonce } : {},
   });
   if (!optionsRes.ok || !optionsRes.data) return { ok: false, reason: 'failed' };
 
@@ -78,7 +78,7 @@ export async function enrollPasskey(capability?: string): Promise<PasskeyOutcome
 
   const verifyRes = await api<{ ok?: boolean }>('/v1/auth/passkey/register/verify', {
     auth: !capability,
-    body: { capability, response: attestation, deviceLabel: deviceLabel() },
+    body: { capability, bindNonce, response: attestation, deviceLabel: deviceLabel() },
   });
   if (!verifyRes.ok) return { ok: false, reason: 'failed' };
   return { ok: true, data: true };

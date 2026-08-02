@@ -199,9 +199,10 @@ async function makeUnactivated(u) {
 async function signup(mode = 'direct', name = 'Acc') {
   const email = `smoke+acc-${uniq()}@example.com`;
   const code = await issueSignupCode();
-  const s1 = await api('POST', '/v1/auth/signup/start', { body: { name, email, password: PW, regionId: 'jp', code } });
+  const bindNonce = crypto.randomUUID();
+  const s1 = await api('POST', '/v1/auth/signup/start', { body: { name, email, password: PW, regionId: 'jp', code, bindNonce } });
   if (!s1.data?.capability) throw new Error('signup/start failed: ' + JSON.stringify(s1.data));
-  const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { capability: s1.data.capability, displayMode: mode } });
+  const s2 = await api('POST', '/v1/auth/signup/finalize', { body: { capability: s1.data.capability, bindNonce, displayMode: mode } });
   if (!s2.data?.sessionToken) throw new Error('finalize failed: ' + JSON.stringify(s2.data));
   created.emails.push(email);
   return { email, session: s2.data.sessionToken, userId: s2.data.userId, displayMode: s2.data.displayMode };

@@ -105,6 +105,9 @@ export function Onboarding(): JSX.Element {
   // Brief 30 Fix A — the signed, scoped, expiring capability. The old `signupId` was the
   // account's permanent id and authorized nothing safely.
   const [capability, setCapability] = useState('');
+  // §B — a nonce this client generates and keeps for the whole ceremony. The capability commits
+  // to it, so a capability lifted from a log cannot be replayed from somewhere else.
+  const [bindNonce] = useState(() => crypto.randomUUID());
   const [emailExists, setEmailExists] = useState(false);
   // Brief 30 §C — the access code that opens the front door. Pre-filled from ?code= so
   // the Gumroad success redirect lands the buyer on a form they only have to confirm;
@@ -179,6 +182,7 @@ export function Onboarding(): JSX.Element {
         regionId,
         nationality,
         code: accessCode.trim(),
+        bindNonce,
       },
     });
     setBusy(false);
@@ -209,7 +213,7 @@ export function Onboarding(): JSX.Element {
       '/v1/auth/signup/finalize',
       {
         auth: false,
-        body: { capability, displayMode, claimUserHash: userHash },
+        body: { capability, bindNonce, displayMode, claimUserHash: userHash },
       },
     );
     setBusy(false);

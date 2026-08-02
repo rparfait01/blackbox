@@ -144,6 +144,8 @@ authRoutes.post('/signup/start', async (c) => {
       regionId?: string;
       nationality?: string;
       code?: string;
+      /** Brief 30 Fix A §B — a client-generated nonce committed into the capability. */
+      bindNonce?: string;
     }>()
     .catch(() => ({}) as Record<string, string>);
   if (!body.name || !body.email) {
@@ -251,10 +253,19 @@ authRoutes.post('/signup/start', async (c) => {
   //
   // §B — bound to the enrollment code that was just redeemed. That is something this requester
   // demonstrably held; the handle is something that merely travels.
+  // §B — bound to a nonce the CLIENT generated and keeps. The first attempt bound to the stored
+  // enrollment code, which the client cannot reproduce, so verification compared the commitment
+  // against `undefined` and refused EVERY capability including legitimate ones. That is a §D
+  // lockout — a broken gate blocks account creation, and the person blocked may be in danger.
+  // A nonce is the brief's other sanctioned binding and the requester genuinely holds it.
+  //
+  // Absent nonce ⇒ bind null ⇒ binding not enforced, so a client that predates this still signs
+  // up. The capability is still signed, scoped, expiring and single-use; the binding is the
+  // additional step that stops a capability lifted from a log being replayed from elsewhere.
   const capability = await mintCapability(c.env, {
     sub: result.userId,
     scope: ALL_SIGNUP_SCOPES,
-    bind: await bindingFor(c.env, claim.storedCode),
+    bind: body.bindNonce ? await bindingFor(c.env, body.bindNonce) : null,
   });
   if (!capability) {
     return c.json({ error: 'server_misconfigured' }, 500);
@@ -268,9 +279,14 @@ authRoutes.post('/signup/start', async (c) => {
  * of it under the same key set. So a capability lifted from one signup cannot be presented for
  * another, and the token still leaks nothing about the code if it is ever seen.
  */
-async function bindingFor(env: Env, storedCode: string): Promise<string> {
+async function bindingFor(env: Env, nonce: string): Promise<string> {
   const [key] = capabilityKeys(env);
-  return key ? (await hmacSha256Hex(key, `bind.${storedCode}`)).slice(0, 32) : '';
+  return key ? (await hmacSha256Hex(key, `bind.${nonce}`)).slice(0, 32) : '';
+}
+
+/** The binding value to compare against, or undefined when the client committed none. */
+async function presentedBinding(env: Env, body: { bindNonce?: string }): Promise<string | undefined> {
+  return body.bindNonce ? bindingFor(env, body.bindNonce) : undefined;
 }
 
 /**
@@ -282,10 +298,12 @@ async function bindingFor(env: Env, storedCode: string): Promise<string> {
  */
 async function requireCapability(
   c: { env: Env; json: (b: unknown, s?: number) => Response },
-  body: { capability?: string },
+  body: { capability?: string; bindNonce?: string },
   scope: SignupScope,
 ): Promise<{ ok: true; claims: CapabilityClaims } | { ok: false; response: Response }> {
-  const result = await verifyCapability(c.env, body.capability, scope);
+  const result = await verifyCapability(c.env, body.capability, scope, {
+    bind: await presentedBinding(c.env, body),
+  });
   if (!result.ok || !result.claims) {
     // §A — plain and honest, never a silent 200 and never a generic error. The client turns
     // `capability_expired` into a self-service restart (§D).
@@ -298,10 +316,12 @@ async function requireCapability(
 /** Same check, for endpoints that only need the subject (a live session is the other way in). */
 async function capabilitySubject(
   c: { env: Env },
-  body: { capability?: string },
+  body: { capability?: string; bindNonce?: string },
   scope: SignupScope,
 ): Promise<string | null> {
-  const result = await verifyCapability(c.env, body.capability, scope);
+  const result = await verifyCapability(c.env, body.capability, scope, {
+    bind: await presentedBinding(c.env, body),
+  });
   return result.ok && result.claims ? result.claims.sub : null;
 }
 
@@ -309,6 +329,7 @@ authRoutes.post('/signup/finalize', async (c) => {
   const body = await c.req
     .json<{
       capability?: string;
+      bindNonce?: string;
       displayMode?: string;
       claimUserHash?: string;
     }>()
@@ -388,7 +409,9 @@ authRoutes.post('/signin', async (c) => {
  * user id is a UUID that only this client has just been handed.
  */
 authRoutes.post('/passkey/register/options', async (c) => {
-  const body = await c.req.json<{ capability?: string }>().catch(() => ({}) as { capability?: string });
+  const body = await c.req
+    .json<{ capability?: string; bindNonce?: string }>()
+    .catch(() => ({}) as { capability?: string; bindNonce?: string });
   const sessionUserId = await bearerUserId(c);
   // A live session OR a scoped signup capability. Never a bare handle: enrolling a passkey on an
   // account is a credential-granting act, and it was reachable with a users.id alone.
@@ -418,7 +441,7 @@ authRoutes.post('/passkey/register/options', async (c) => {
 /** Verify enrollment and persist the passkey. */
 authRoutes.post('/passkey/register/verify', async (c) => {
   const body = await c.req
-    .json<{ capability?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>()
+    .json<{ capability?: string; bindNonce?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>()
     .catch(() => ({}) as Record<string, never>);
   const sessionUserId = await bearerUserId(c);
   const userId = sessionUserId ?? (await capabilitySubject(c, body, 'signup:passkey'));
@@ -533,7 +556,9 @@ authRoutes.post('/magic/consume', async (c) => {
 
 /** Mint (or re-mint) recovery codes for the signed-in / just-signed-up account. */
 authRoutes.post('/recovery/issue', async (c) => {
-  const body = await c.req.json<{ capability?: string }>().catch(() => ({}) as { capability?: string });
+  const body = await c.req
+    .json<{ capability?: string; bindNonce?: string }>()
+    .catch(() => ({}) as { capability?: string; bindNonce?: string });
   const sessionUserId = await bearerUserId(c);
   // Re-minting invalidates the owner's existing codes, so a bare handle here was both a takeover
   // primitive and a denial-of-recovery one. Proven on staging before this brief.
