@@ -66,4 +66,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0051_vault_scan_cursor',
   '0052_seal_on_close',
   '0053_consumed_capabilities',
+  '0054_device_credentials',
 ];

@@ -22,7 +22,7 @@
  * Usage:  node scripts/trigger-latency.mjs [--samples=40] [--label=before] [--origin=<url>]
  *         Writes .latency/<label>.json for comparison; `--compare=before,after` prints the delta.
  */
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';

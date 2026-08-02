@@ -76,6 +76,10 @@ export interface Env {
    *  SIGNUP_CAPABILITY_SECRET_PREVIOUS, which stays valid until in-flight capabilities expire. */
   SIGNUP_CAPABILITY_SECRET?: string;
   SIGNUP_CAPABILITY_SECRET_PREVIOUS?: string;
+  /** Brief 2 Fix A §E3 — gates ARMING only. While off, credentials are checked and recorded and
+   *  nothing is ever refused. It cannot express "armed but still accepting userHash": arming is a
+   *  per-account timestamp and this flag only decides whether that timestamp may be set. */
+  DEVICE_CREDENTIAL_ENFORCED?: string;
   /** SendGrid v3 API key (email channel + transactional OTP/invite mail). */
   SENDGRID_API_KEY?: string;
   /** Verified sender address for SendGrid. */

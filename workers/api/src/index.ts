@@ -7,6 +7,7 @@ import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { verifyChain } from './lib/chain-verdict';
 import { vaultCoverage } from './lib/vault-scan';
+import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
 import { enqueueSeal, sealCoverage } from './lib/seal';
@@ -748,6 +749,7 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
   // Brief 40 §A/§12 — vault coverage, reported the same way encryption is: counted from the
   // tables, next to the claim, so partial coverage cannot hide behind a job that merely ran.
   const vault = await vaultCoverage(c.env);
+  const devices = await credentialCoverage(c.env);
   // §F7 — sealing coverage: pending, failures, and the oldest closed-but-unsealed event.
   const seal = await sealCoverage(c.env);
   // §F — request headroom. The Worker IS the alert path, so a billing threshold is an
@@ -776,6 +778,9 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
         plaintextUndeclared: Number(row?.undeclaredPlaintextChunks ?? 0),
       },
       wrappedKeys: Number(row?.wrappedKeys ?? 0),
+      // Brief 2 Fix A acceptance 10 — per-account credential coverage, stated as counts so the
+      // accounts still accepting userHash are visible rather than rounded away.
+      devices,
       vault: {
         // Brief 37 Fix A — an EMPTY vault does not report as a verified one. "0/0 objects
         // verified" reads as healthy, and for two months it was the literal truth of a vault
@@ -2086,6 +2091,14 @@ app.post('/v1/events/:id/reason-triggered', async (c) => {
   return c.json({ ok: true }, 200);
 });
 
+/** The account that owns an event, for §B verification. One indexed read, and never a gate. */
+async function eventOwnerUserId(env: Env, eventId: string): Promise<string | null> {
+  const row = await env.DB.prepare('SELECT userId FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ userId: string | null }>();
+  return row?.userId ?? null;
+}
+
 app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   const eventId = c.req.param('id');
   const sequence = Number(c.req.param('sequence'));
@@ -2098,6 +2111,36 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   // opaque either way — plaintext today, ciphertext when the client is armed — so this
   // is unchanged by the envelope (the chain hashes whatever bytes arrive).
   const sha256 = await hashBytes(bytes);
+
+  /**
+   * Brief 2 Fix A §B — THE DEVICE PROOF, checked here and NEVER able to stop a capture.
+   *
+   * This is an event-scoped write, so it is where `userHash` stops being sufficient. The verdict
+   * is recorded on the chunk row and surfaced on the readiness panel; it does not branch the
+   * upload. Only an ARMED account with a PRESENTED-and-WRONG signature is refused, and arming is
+   * per account on evidence (§E1/§E3) — so today, dark, nothing is refused at all.
+   *
+   * The standing constraint is explicit: on the capture path a new comparison fails open by
+   * default. A survivor mid-incident cannot fix a clock, re-register a device, or read an error.
+   * A refused chunk is lost evidence, and lost evidence is the harm this system exists to prevent.
+   */
+  const deviceVerdict = await verifyDeviceProof(c.env, {
+    userId: (await eventOwnerUserId(c.env, eventId)) ?? null,
+    eventId,
+    method: 'POST',
+    path: new URL(c.req.url).pathname,
+    bodyDigestHex: sha256,
+    proof: {
+      credentialId: c.req.header('X-Device-Id') ?? null,
+      signature: c.req.header('X-Device-Signature') ?? null,
+      timestamp: Number(c.req.header('X-Device-Timestamp') ?? NaN),
+    },
+  });
+  if (deviceVerdict.decision === 'REFUSED') {
+    // Reachable only for an account deliberately armed after its credential was proven working.
+    return c.json({ error: 'device_signature_invalid', detail: deviceVerdict.detail }, 401);
+  }
+
   const tz = await eventTzOffset(c.env, eventId);
   // Brief 26 — optional envelope metadata. PRESENCE-gated: a plaintext upload sends
   // neither header and behaves exactly as before. The server never REQUIRES these (even

@@ -7,6 +7,7 @@
 import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { purgeCaptureOnConsent } from '../lib/consented-purge';
+import { listDevices, registerDevice, revokeDevice } from '../lib/device-credential';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { pairingStatus, startLinePairing } from '../lib/line-pairing';
 import { deleteAccount, getUserById, hasActiveEvent, setGuardianEnabled, updateUserFields } from '../lib/users';
@@ -795,4 +796,42 @@ userRoutes.post('/events/:id/purge-capture', async (c) => {
     return c.json({ error: result.reason, ...result }, status);
   }
   return c.json(result, 200);
+});
+
+
+/**
+ * Brief 2 Fix A §A — DEVICE PROVISIONING, ON THE IDENTITY BOUNDARY.
+ *
+ * Deliberately here and not in the event Durable Object (§E4): the DO validates event-scoped
+ * signed requests and does not mint, store, rotate or revoke identity. Registration is bound to
+ * an authenticated session — a passkey login, a magic link, a recovery code, or a Brief 30 Fix A
+ * signup capability — so a device can only be added by someone who already holds the account.
+ *
+ * Multiple devices per account, each independently revocable (§A). §E2: cleared storage means a
+ * new keypair and a new registration through the same session, silently, never a dead end.
+ */
+userRoutes.post('/devices', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json<{ publicKey?: string; label?: string }>().catch(() => ({}) as { publicKey?: string; label?: string });
+  const r = await registerDevice(c.env, { userId, publicKey: body.publicKey ?? '', label: body.label ?? null });
+  if (!r.ok) return c.json({ error: r.reason ?? 'invalid_public_key' }, 400);
+  await audit(c.env, null, 'device.registered', userId, { credentialId: r.id });
+  return c.json({ ok: true, credentialId: r.id }, 201);
+});
+
+userRoutes.get('/devices', async (c) => c.json({ devices: await listDevices(c.env, c.get('userId')) }, 200));
+
+/**
+ * §D — revocation is immediate and audited. It does NOT invalidate historical chain records this
+ * device signed while it was valid (Brief 39 §C precedent): revoking a lost phone must not
+ * retroactively destroy the evidence it legitimately produced, which is the opposite of what a
+ * survivor needs from it.
+ */
+userRoutes.post('/devices/:id/revoke', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const done = await revokeDevice(c.env, { userId, credentialId: c.req.param('id'), reason: body.reason ?? null });
+  if (!done) return c.json({ error: 'not_found_or_already_revoked' }, 404);
+  await audit(c.env, null, 'device.revoked', userId, { credentialId: c.req.param('id') });
+  return c.json({ ok: true }, 200);
 });
