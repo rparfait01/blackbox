@@ -33,6 +33,7 @@ import { randomBytes } from 'node:crypto';
 
 import { API_ORIGIN_VAR, deployTarget } from './api-origin.mjs';
 import { HEADROOM, headroomVerdict, readHeadroom } from './headroom.mjs';
+import { assertVaultLock, parseLockRules, provisionCommand, readVaultLock } from './vault-lock.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -49,6 +50,9 @@ function gitSha() {
 // that cannot be checked. `deployTarget` throws (non-zero exit) on a missing, empty,
 // non-HTTPS or non-routable value.
 const target = deployTarget('production');
+
+/** The production custody vault. Staging seals into blackbox-vault-test and is locked separately. */
+const VAULT_BUCKET = 'blackbox-vault';
 
 /**
  * §C — the nonce that makes the canary part of THIS gate run and nothing else. Minted here,
@@ -117,6 +121,58 @@ console.log(`    PWA origin: ${target.pwaOrigin}  (Pages project ${target.pagesP
 
 await assertHeadroomOrRefuse(target.apiOrigin);
 appendFileSync(COST_FILE, '1\n'); // the headroom probe is itself a request — count it
+
+/**
+ * Brief 40 §C — READ THE RETENTION RULE BACK FROM THE LIVE BUCKET.
+ *
+ * Finding 7 was that nothing in this repository established a lock existed on production:
+ * retention lived in a D1 column and in customer-facing documents, and neither can prevent a
+ * deletion. Provisioning a rule once by hand would be the same finding in a new costume, which
+ * is why §B and §C ship together — the rule is asserted against the live configuration on every
+ * deploy, or the product does not get to claim it.
+ *
+ * Fails CLOSED, in the same posture as the currency gate: absent, mis-scoped, disabled,
+ * shortened, or indefinite each stop the deploy and name what is wrong. This runs BEFORE
+ * anything is built or published, because the claim is about the bucket, not about this build.
+ *
+ * The read is a control-plane call and does not spend the Workers request budget.
+ */
+function assertVaultRetentionOrRefuse() {
+  let text;
+  try {
+    text = readVaultLock(VAULT_BUCKET, path.join(ROOT, 'workers/api'));
+  } catch (error) {
+    console.error(
+      [
+        '',
+        `✗ DEPLOY REFUSED: could not read the retention rule on '${VAULT_BUCKET}'.`,
+        `  ${String(error).split('\n')[0]}`,
+        '  Retention that cannot be read back is not retention (Brief 40 §C).',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+  const verdict = assertVaultLock(parseLockRules(text));
+  if (!verdict.ok) {
+    console.error(
+      [
+        '',
+        `✗ DEPLOY REFUSED: the vault retention rule on '${VAULT_BUCKET}' does not match the claim.`,
+        ...verdict.problems.map((p) => `    · ${p}`),
+        '',
+        '  Sealed evidence is described to users and to counsel as retained for 36 months.',
+        '  Provision or correct the rule, then re-run `pnpm deploy`:',
+        `    ${provisionCommand(VAULT_BUCKET)}`,
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+  console.log(
+    `    vault retention: '${verdict.rule.name}' over '${verdict.rule.prefix}' — ${verdict.rule.condition} ✓`,
+  );
+}
+
+assertVaultRetentionOrRefuse();
 
 // Build the PWA with the SAME id the Worker is stamped with, so a matched deploy
 // shows identical PWA + Worker builds — and with the validated origin baked in.

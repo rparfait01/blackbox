@@ -99,7 +99,8 @@ export interface Env {
    *  verifier and served at /.well-known/blackbox-report-public-key.json so a court's
    *  own expert can verify a report without us. Non-secret; safe in vars. */
   REPORT_PUBLIC_KEY?: string;
-  /** R2 bucket for the sealed, write-once 36-month custody vault (Fix Brief 2
+  /** R2 bucket for the sealed 36-month custody vault, retained by an R2 lock rule that
+   *  binds the operator rather than making objects immutable (Brief 40 §D). (Fix Brief 2
    *  #C3). Separate from MEDIA (the live capture bucket). */
   VAULT?: import('@cloudflare/workers-types').R2Bucket;
   /** Brief 28 §3 — HMAC key verifying the web-purchase activation webhook. The

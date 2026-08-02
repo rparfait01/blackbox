@@ -4,7 +4,9 @@
  * On export we assemble a signed package (event record + integrity chain + a
  * file list with each chunk's SHA-256), record a custody-transfer event (who
  * RCP-id, DTG, full package hash), and SEAL the canonical signed manifest into a
- * write-once vault object with 36-month retention. The recipient receives a
+ * sealed vault object retained for 36 months by a storage-layer lock rule that binds the
+ * OPERATOR (Brief 40 §D — it is not write-once, and the account holder can remove the
+ * rule; see scripts/vault-lock.mjs for the full limits). The recipient receives a
  * verifiable working copy that references the same package hash; the original
  * never "leaves" — a sealed, verifiable reference remains in the operator vault.
  *
@@ -127,7 +129,7 @@ export async function sealEvent(
   eventId: string,
   workerOrigin: string,
 ): Promise<SealResult | null> {
-  // Brief 35 §C — a canary event is NEVER sealed. The vault is write-once with a 36-month
+  // Brief 35 §C — a canary event is NEVER sealed. The vault is retained under a 36-month
   // retention and no delete-before-expiry, so a fixture sealed into it could not be taken
   // back out by the purge; it would sit in the chain of custody, signed, for three years,
   // among artifacts whose whole value is that everything in there is real. `isTest = 0` in
@@ -229,8 +231,10 @@ export async function sealEvent(
   const packageHash = await hashString(envelope);
   const manifestHash = await hashString(canonical);
 
-  // Seal into the write-once vault (content-addressed key → idempotent). We
-  // never overwrite an existing sealed object and never delete before expiry.
+  // Seal into the vault (content-addressed key → idempotent). We never overwrite an existing
+  // sealed object and never delete before expiry. The APPLICATION-level guarantee is this code
+  // path; the STORAGE-level one is the R2 lock rule asserted at deploy (Brief 40 §C). Brief 40's
+  // correction is explicit that this comment is not retention — the rule is.
   let vaultKey: string | null = null;
   if (env.VAULT) {
     vaultKey = `vault/${eventId}/${packageHash}.json`;
