@@ -784,7 +784,19 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
         ...vault,
         // §D — what the retention CLAIM currently rests on. Stated here because the panel is
         // the one place that reports what is true rather than what was intended.
-        retentionRule: 'NOT PROVISIONED — see Brief 40 §0; no storage-layer lock exists yet.',
+        // Brief 40 §B/§C/§D. The Workers runtime cannot read R2 lock rules from a binding, so
+        // this states what is PROVISIONED and names where it is VERIFIED, rather than implying
+        // the Worker checked it. The deploy gate reads the live rule back on every deploy and
+        // refuses to publish if it is absent, mis-scoped, disabled, shortened or indefinite.
+        //
+        // The wording is §D-bound on purpose: this rule binds the OPERATOR. It is not
+        // "write-once", it does not make objects immutable against the account holder, and it
+        // does not survive removal of the rule, the bucket, the account, or the billing
+        // relationship. Capture media in blackbox-media is deliberately NOT covered, which is
+        // what keeps an owner-consented purge possible.
+        retentionRule:
+          'blackbox-vault vault/ — 1096 days (36 months), operator-binding. Verified at deploy ' +
+          'from infra/r2/blackbox-vault.lock.json. Not write-once: removable by the account holder.',
       },
       requests: headroom,
       sealing: {
