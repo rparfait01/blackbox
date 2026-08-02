@@ -118,8 +118,24 @@ describe('rule 1 + 3 — the session token carries no deadline', () => {
   });
 
   it('mintSession sets no expiry field', () => {
-    expect(code).toMatch(/\$\{userId\}\.\$\{issuedAt\}\.\$\{sig\}/);
-    expect(code).not.toMatch(/exp\b|expiresAt/);
+    // ASSERTS THE INVARIANT, NOT THE FORMAT. This used to match the literal token shape
+    // `${userId}.${issuedAt}.${sig}`, so it failed the moment the token stopped publishing the
+    // account identifier (Brief 2 Fix A) even though the no-expiry rule was untouched. A guard
+    // that breaks on a change it does not govern is asserting a remembered string, not a rule.
+    expect(code).not.toMatch(/\bexpiresAt\b|\bmaxAge\b|\bttl\b/i);
+    // The mint still carries only identity and issue time — nothing that could become a deadline.
+    expect(code).toMatch(/issuedAt: number = Date\.now\(\)/);
+  });
+
+  it('the identifier is not readable off the token', () => {
+    // Brief 2 Fix A scope addition: the account identifier used to be the first component of
+    // every session token, in plaintext, and a userId was briefly enough to take over an account.
+    expect(code).toMatch(/AES-GCM/);
+    expect(code).toMatch(/const V2 = 'bbxs1'/);
+    // …and the legacy format is still ACCEPTED, because expiring live sessions is a safety
+    // failure. `code` is comment-stripped, so the rationale is asserted against the raw source.
+    expect(session).toMatch(/LEGACY FORMAT, accepted indefinitely/);
+    expect(code).toMatch(/parts\[0\] === V2/); // both branches exist
   });
 
   it('the no-expiry rule is documented as permanent, not as a "v0" placeholder', () => {
