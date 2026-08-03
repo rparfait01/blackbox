@@ -2626,7 +2626,10 @@ async function run() {
     for (const f of failed) console.log(`  - ${f.name}: ${f.err}`);
     process.exit(1);
   }
-  console.log('SUITE GREEN ✓');
+  // "SUITE GREEN" is reserved for a FULL run. A partial run that printed it would say exactly
+  // what a complete pass says, which is the misreading the partial banner exists to prevent —
+  // and the one a reader is most likely to skim to.
+  console.log(ONLY ? `PARTIAL RUN PASSED — ${results.length} check(s). NOT a green suite.` : 'SUITE GREEN ✓');
 }
 
 // admin/D1 read helpers via the admin active-events endpoint + delivery is read
