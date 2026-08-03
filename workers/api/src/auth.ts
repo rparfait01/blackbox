@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import { verifyRequest } from '@blackbox/shared';
 import { verifySession } from './lib/session';
+import { noteSessionFormat, sessionFormat, tokenHash } from './lib/session-rotation';
 import { roleSatisfies } from './lib/org';
 import type { Env, Vars } from './types';
 
@@ -24,14 +25,32 @@ export const requireSession: MiddlewareHandler<{ Bindings: Env; Variables: Vars 
   // that instant is rejected, so old sessions are invalidated on reset.
   // Brief 23: the SAME lookup resolves the account's orgId (server truth, never from
   // the token — the session token shape is load-bearing and must not be extended).
-  const u = await c.env.DB.prepare('SELECT sessionsValidFrom, orgId FROM users WHERE id = ?')
-    .bind(session.userId)
-    .first<{ sessionsValidFrom: number | null; orgId: string | null }>();
+  //
+  // Brief 42 §C — the per-token revocation check rides in the SAME statement. It is a correlated
+  // subquery rather than a second round trip, because this middleware gates every authenticated
+  // route and adding a second read here would tax the whole product to catch a rare condition.
+  const u = await c.env.DB.prepare(
+    `SELECT sessionsValidFrom, orgId, lastSessionFormat,
+            (SELECT 1 FROM revoked_sessions WHERE tokenHash = ?) AS revoked
+     FROM users WHERE id = ?`,
+  )
+    .bind(await tokenHash(token), session.userId)
+    .first<{ sessionsValidFrom: number | null; orgId: string | null; lastSessionFormat: string | null; revoked: number | null }>();
   if (u?.sessionsValidFrom != null && session.issuedAt < u.sessionsValidFrom) {
     return c.json({ error: 'session_expired' }, 401);
   }
+  if (u?.revoked === 1) {
+    // §C — the presented token was rotated away. Only THIS token; other devices are untouched.
+    return c.json({ error: 'session_rotated' }, 401);
+  }
   c.set('userId', session.userId);
   c.set('orgId', u?.orgId ?? null);
+  // §C — record the format actually presented, and only when it changed. For a given account this
+  // writes once, on the rotation that upgrades it, so the ordinary request pays nothing.
+  const format = sessionFormat(token);
+  if (format && format !== u?.lastSessionFormat) {
+    c.executionCtx.waitUntil(noteSessionFormat(c.env, session.userId, format, u?.lastSessionFormat ?? null));
+  }
   await next();
   return undefined;
 };

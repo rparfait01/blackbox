@@ -309,3 +309,16 @@ not the spelling."**
 
 *(Origin: the hot-path guard bounded by a comment `code()` had already stripped — the same mistake
 made twice inside a guard written to enforce the rule against it.)*
+
+## AN AUDIT REPORTS ITS SCOPE (ratified 2026-08-03, from Brief 42 §A)
+
+**"An audit reports the scope it inspected. A tool that examines a subset and returns an
+unqualified pass is asserting about what it never read. Fourth instance of the vacuous-pass class:
+VERIFIED on an empty chain, 0/0 objects verified, migration health seeing only one direction, and
+a CSP audit that read no stylesheets."**
+
+The CSP instance is the sharpest, because the tool was written specifically to answer "will this
+policy break the facade?" and returned a confident green while never opening the file where
+`@font-face` lives. Six `data:` font URIs would have been blocked on enforcement, changing the
+Hidden facade's typography — a covert-mode failure — and the audit had no idea because it read
+only `.js`.

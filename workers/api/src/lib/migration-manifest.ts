@@ -71,4 +71,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0056_environment_identity',
   '0057_operator_alerts',
   '0058_limit_events',
+  '0059_session_rotation',
 ];

@@ -31,9 +31,16 @@ describe('§2 requireSession resolves orgId server-side from the account', () =>
   const auth = read('src/auth.ts');
 
   it('orgId is looked up from the users row, never read from the token', () => {
-    // The session token stays the unextended userId.issuedAt HMAC; org comes from DB.
-    expect(auth).toMatch(/SELECT sessionsValidFrom, orgId FROM users WHERE id = \?/);
+    // ASSERTS THE INVARIANT, NOT THE SQL STRING. This used to match
+    // `SELECT sessionsValidFrom, orgId FROM users WHERE id = ?` verbatim and broke when Brief 42
+    // §C added a revocation subquery to the same statement — a change that does not touch where
+    // orgId comes from. What matters: orgId is SELECTed from users and set from that row, and is
+    // never parsed out of the token.
+    expect(auth).toMatch(/orgId[\s\S]{0,120}FROM users WHERE id = \?/);
     expect(auth).toMatch(/c\.set\('orgId', u\?\.orgId \?\? null\)/);
+    // The token is verified for identity only — nothing about tenancy is read out of it.
+    const afterVerify = auth.slice(auth.indexOf('await verifySession'), auth.indexOf("c.set('userId'"));
+    expect(afterVerify).not.toMatch(/session\.orgId|token[\s\S]{0,40}orgId/);
   });
 });
 

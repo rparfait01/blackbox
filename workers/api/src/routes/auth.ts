@@ -32,6 +32,7 @@ import { Hono } from 'hono';
 import { sessionSecret } from '../auth';
 import { hashSecret } from '../lib/crypto';
 import { mintSession } from '../lib/session';
+import { rotateSession } from '../lib/session-rotation';
 import { audit } from '../lib/audit';
 import {
   authenticationOptions,
@@ -314,6 +315,29 @@ async function capabilitySubject(
   return result.ok && result.claims ? result.claims.sub : null;
 }
 
+
+/**
+ * Brief 42 §C — mint a fresh `bbxs1.` token AND revoke whatever the caller presented.
+ *
+ * Every login path already minted a new token, which covers anonymous -> authenticated. What it
+ * did not do is invalidate the identifier the client arrived with: a token captured before
+ * authentication stayed valid after it. This closes that, and only for the presented token — a
+ * second device is not signed out by someone else signing in.
+ *
+ * Falls back to a plain mint if rotation cannot run. A caller must never be left with no token
+ * because a revocation write failed (§E5).
+ */
+async function rotatedSession(
+  c: { env: Env; req: { header: (k: string) => string | undefined } },
+  userId: string,
+): Promise<string | null> {
+  const presented = (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim() || null;
+  const rotated = await rotateSession(c.env, { userId, presentedToken: presented, reason: 'privilege_transition' });
+  if (rotated) return rotated.token;
+  const secret = sessionSecret(c.env);
+  return secret ? mintSession(secret, userId) : null;
+}
+
 authRoutes.post('/signup/finalize', async (c) => {
   const body = await c.req
     .json<{
@@ -357,7 +381,10 @@ authRoutes.post('/signup/finalize', async (c) => {
   if (body.claimUserHash) {
     await claimByUserHash(c.env, user.id, body.claimUserHash);
   }
-  const sessionToken = await mintSession(secret, user.id);
+  const sessionToken = await rotatedSession(c, user.id);
+  if (!sessionToken) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
   return c.json({ userId: user.id, sessionToken, displayMode: body.displayMode }, 200);
 });
 
@@ -385,7 +412,10 @@ authRoutes.post('/signin', async (c) => {
   if (!secret) {
     return c.json({ error: 'server_misconfigured' }, 500);
   }
-  const sessionToken = await mintSession(secret, user.id);
+  const sessionToken = await rotatedSession(c, user.id);
+  if (!sessionToken) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
 });
 
@@ -446,7 +476,16 @@ authRoutes.post('/passkey/register/verify', async (c) => {
     return c.json({ error: 'registration_failed' }, 400);
   }
   await audit(c.env, null, 'auth.passkey_registered', userId, {});
-  return c.json({ ok: true }, 200);
+  // §C — REGISTERING A CREDENTIAL IS A PRIVILEGE TRANSITION. The account gains a way to
+  // authenticate that it did not have a moment ago, so the identifier that authorised the
+  // registration is replaced. §E6: the device credential is bound to the ORIGIN, not the session,
+  // so it outlives this by design and is not orphaned — proven in acceptance.
+  const rotated = await rotateSession(c.env, {
+    userId,
+    presentedToken: (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim() || null,
+    reason: 'passkey_registration',
+  });
+  return c.json({ ok: true, sessionToken: rotated?.token ?? null }, 200);
 });
 
 /**
@@ -479,7 +518,10 @@ authRoutes.post('/passkey/login/verify', async (c) => {
     return c.json({ error: 'invalid_credentials' }, 401);
   }
   await audit(c.env, null, 'auth.passkey_login', userId, {});
-  const sessionToken = await mintSession(secret, user.id);
+  const sessionToken = await rotatedSession(c, user.id);
+  if (!sessionToken) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
 });
 
@@ -537,7 +579,10 @@ authRoutes.post('/magic/consume', async (c) => {
     return c.json({ error: 'invalid_or_expired_token' }, 400);
   }
   await audit(c.env, null, 'auth.magic_link_login', userId, {});
-  const sessionToken = await mintSession(secret, user.id);
+  const sessionToken = await rotatedSession(c, user.id);
+  if (!sessionToken) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
 });
 
@@ -591,6 +636,9 @@ authRoutes.post('/recovery/consume', async (c) => {
     return c.json({ error: 'server_misconfigured' }, 500);
   }
   await audit(c.env, null, 'auth.recovery_code_login', user.id, {});
-  const sessionToken = await mintSession(secret, user.id);
+  const sessionToken = await rotatedSession(c, user.id);
+  if (!sessionToken) {
+    return c.json({ error: 'server_misconfigured' }, 500);
+  }
   return c.json({ userId: user.id, sessionToken, displayMode: user.displayMode }, 200);
 });

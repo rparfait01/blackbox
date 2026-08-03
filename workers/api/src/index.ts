@@ -10,6 +10,7 @@ import { vaultCoverage } from './lib/vault-scan';
 import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
 import { backoffFor, canaryExemption, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
 import { clearEnvironmentCache, dispatchPosture, resolveEnvironment } from './lib/environment';
+import { sessionFormatShare } from './lib/session-rotation';
 import { ALERT_TYPES, operatorAlert, type AlertType } from './lib/operator-alert';
 import { countAttempt, outboundHeadroom, recordLimitEvent, SUSTAINED_LIMIT_THRESHOLD } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
@@ -951,6 +952,7 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
   const devices = await credentialCoverage(c.env);
   const outbound = await outboundHeadroom(c.env, UNAUTH_OUTBOUND.windowMs, UNAUTH_OUTBOUND.max);
   const dispatch = await dispatchPosture(c.env);
+  const sessions = await sessionFormatShare(c.env);
   // §F7 — sealing coverage: pending, failures, and the oldest closed-but-unsealed event.
   const seal = await sealCoverage(c.env);
   // §F — request headroom. The Worker IS the alert path, so a billing threshold is an
@@ -987,6 +989,9 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
       // Brief 35 Fix B §C — per-environment dispatch state and provider-credential presence. A
       // non-production row showing both is an alertable condition.
       dispatch,
+      // Brief 42 §C — legacy-format share, so retiring the old token shape is a decision made
+      // with data. Observed on use, never a census: sessions are stateless and cannot be listed.
+      sessions,
       vault: {
         // Brief 37 Fix A — an EMPTY vault does not report as a verified one. "0/0 objects
         // verified" reads as healthy, and for two months it was the literal truth of a vault
