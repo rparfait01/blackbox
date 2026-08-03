@@ -55,6 +55,9 @@ const ORG_STRUCTURAL = new Set([
   'org_licenses',
   'org_key_grants',
   'admin_registration_codes',
+  // Brief 53 §C — a rotation of an org's key has no meaning without the org, and neither does a
+  // per-seat grant of it. Same rule as org_members: the row exists only to bind to an org.
+  'org_key_rotations',
 ]);
 
 interface Column {

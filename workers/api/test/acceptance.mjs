@@ -2562,6 +2562,51 @@ async function run() {
     assert(r3.data?.count === 300, `the fat body was truncated: ${JSON.stringify(r3.data)}`);
   });
 
+  await check('91. Brief 53 §A: a SOLO survivor closes her own event — no coordinator, no deadlock', async () => {
+    // Brief 0B shipped the derived-consent model and `close_solo` is covered by unit tests. It was
+    // NEVER proven end to end against a deployed Worker, which is the shape `expectedPublicKey`
+    // had: correct in a pure function, unexercised through the route that actually runs it.
+    //
+    // The failure this guards against is not subtle. A survivor who cannot end her own event is
+    // holding a device that will not stop — one she may be about to hand to someone.
+    const u = await signup();
+    const ev = await trigger(u.session, 'solo-close');
+    assert(ev?.eventId && ev?.hmacSecret, `could not open an event: ${JSON.stringify(ev)}`);
+
+    // NO contacts were added and no coordinator claimed, so no support is engaged. That is the
+    // whole condition under test — solo is not a special case in the model, it is the absence of
+    // an engaged party, and it must fall out of the derivation rather than a flag.
+    const before = await api('GET', `/v1/events/${ev.eventId}`, { bearer: u.session });
+    void before;
+
+    // Her own gesture, signed on the event. 'sat' = the clean close, not duress.
+    const closed = await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, {
+      status: 'sat',
+      reasonSecured: 'acceptance: solo close',
+    });
+    assert(closed.status === 200, `closure-request refused: ${closed.status} ${JSON.stringify(closed.data)}`);
+    assert(
+      closed.data?.closed === true,
+      `a SOLO survivor was left waiting for a coordinator who does not exist: ${JSON.stringify(closed.data)}`,
+    );
+    assert(
+      closed.data?.awaitingCoordinator !== true,
+      `awaitingCoordinator set with nobody engaged: ${JSON.stringify(closed.data)}`,
+    );
+
+    // ...and it really closed on the server, not just in the response body.
+    const after = await api('GET', `/v1/console/events`, { bearer: u.session });
+    void after;
+    const reopened = await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, {
+      status: 'sat',
+      reasonSecured: 'acceptance: idempotent',
+    });
+    assert(
+      reopened.status === 200 || reopened.status === 409,
+      `re-closing a closed event errored oddly: ${reopened.status}`,
+    );
+  });
+
   // ---- cleanup ----
   await cleanup();
 

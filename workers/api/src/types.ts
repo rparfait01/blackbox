@@ -72,6 +72,8 @@ export interface Env {
   MAGIC_LINK_SECRET?: string;
   /** HMAC key signing session + guardian-invite tokens. Falls back to MAGIC_LINK_SECRET. */
   SESSION_SECRET?: string;
+  /** Brief 53 §C — org custody. DARK until the §C4 crypto and legal reviews clear. */
+  ORG_CUSTODY_ENABLED?: string;
   /** Brief 30 Fix A §A/§E3 — signs short-lived scoped signup capabilities. Rotates with
    *  SIGNUP_CAPABILITY_SECRET_PREVIOUS, which stays valid until in-flight capabilities expire. */
   SIGNUP_CAPABILITY_SECRET?: string;
