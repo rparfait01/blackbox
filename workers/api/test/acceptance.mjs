@@ -333,7 +333,41 @@ async function enrollWith(code, mode = 'direct') {
 // ---- assertion framework ----
 const results = [];
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
+/**
+ * ═══ RUNNING A SUBSET, AND WHY SKIPS ARE PRINTED ═════════════════════════════════════════════
+ *
+ * Standing constraint: the FULL suite runs once, immediately before a production deploy. During a
+ * brief, only the checks touching what changed run — a check that passed and whose code has not
+ * changed buys no information on a re-run, and spends the same plan limit the alert path depends
+ * on. At ~1,431 requests a needless full run is not a tidiness problem.
+ *
+ * `--only=<pattern>` filters by check number or name substring:
+ *
+ *   node test/acceptance.mjs --only=88,89,90
+ *   node test/acceptance.mjs --only=closure
+ *
+ * SKIPPED CHECKS ARE COUNTED AND PRINTED. A filtered run reporting "3/3 passed" would read exactly
+ * like a full green suite while 94 checks never executed — "0 failed" and "0 run" are different
+ * facts, and the summary states which it is. Check 0 (target currency) always runs: a subset
+ * against a stale worker is as meaningless as a full suite against one.
+ */
+const ONLY = (() => {
+  const arg = process.argv.find((a) => a.startsWith('--only='));
+  if (!arg) return null;
+  return arg.slice('--only='.length).split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+})();
+
+function selected(name) {
+  if (!ONLY) return true;
+  const number = (/^(\d+)\./.exec(name) ?? [])[1];
+  if (number === '0') return true; // currency always runs
+  return ONLY.some((t) => (/^\d+$/.test(t) ? number === t : name.toLowerCase().includes(t)));
+}
+
+const skipped = [];
+
 async function check(name, fn) {
+  if (!selected(name)) { skipped.push(name); return; }
   try { await fn(); results.push({ name, ok: true }); console.log(`  PASS  ${name}`); }
   catch (e) { results.push({ name, ok: false, err: String(e.message || e) }); console.log(`  FAIL  ${name}\n        ${e.message || e}`); }
 }
@@ -2533,6 +2567,15 @@ async function run() {
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed.`);
+  if (ONLY) {
+    // Never let a filtered run be mistaken for a full one. "0 failed" and "0 run" differ.
+    console.log(
+      `\nPARTIAL RUN — filter: ${ONLY.join(',')}\n` +
+        `  ran     ${results.length}\n` +
+        `  SKIPPED ${skipped.length} (not run, NOT passed)\n` +
+        '  A partial run is not a green suite. The full suite runs once, before a production deploy.',
+    );
+  }
   if (failed.length) {
     console.log('FAILURES:');
     for (const f of failed) console.log(`  - ${f.name}: ${f.err}`);

@@ -390,3 +390,32 @@ were skipped forever. It printed "0 attributed" and exited 0, which reads as "no
 doing" rather than "I did not look". Silent under-attribution on the operations surface an
 institutional contract depends on, and it was invisible precisely because the two facts shared
 one number.)*
+
+## EVERY ACTION AGAINST PRODUCTION STATES ITS COST (ratified 2026-08-04)
+
+**"Every action against production states its request cost before it runs. A session has a stated
+ceiling and stops at it. A backfill is not free, and neither is an investigation."**
+
+Operating rules, effective immediately and every session:
+
+1. **State the request cost BEFORE running anything that touches production.** If it cannot be
+   estimated, it does not run.
+2. **Hard ceiling: 5,000 metered requests per session.** Stop at the ceiling and report. Do not
+   continue past it.
+3. **The full acceptance suite (~1,431 requests) runs ONCE, immediately before a production
+   deploy.** Not per brief. Not per section. Not to re-check something that passed an hour ago.
+   **During a brief, run only the checks that touch what changed, and state which and why.**
+   A check that passed and whose code has not changed does not run again — re-running it buys
+   no information and spends the same plan limit the alert path depends on.
+4. **Staging for everything except the final deploy.** Production gets one migration if needed,
+   one deploy, one canary. Nothing else.
+5. **No row-iterating job on production without explicit go-ahead**, with the row count and
+   request cost stated first.
+6. **Investigation and inventory are read-only against the repo and schema** — never against live
+   production endpoints.
+
+*(Origin: a single session spent roughly 10,400 metered requests. Seven full acceptance runs where
+the rule allows one — two of them wasted on a stale-target failure I caused by deploying with the
+wrong stamp. A 10,437-row production backfill run with neither a row count nor a cost stated
+beforehand. The plan limit whose exhaustion takes the alert path down is the same limit these runs
+draw on, which makes an untracked test budget a life-safety concern rather than a billing one.)*
