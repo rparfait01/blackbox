@@ -8,7 +8,7 @@ import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicK
 import { verifyChain } from './lib/chain-verdict';
 import { vaultCoverage } from './lib/vault-scan';
 import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
-import { backoffFor, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
+import { backoffFor, canaryExemption, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
 import { countAttempt, outboundHeadroom } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
@@ -160,6 +160,15 @@ app.use('*', async (c, next) => {
 
   const decision = backoffFor(rule, attempts);
   if (!decision.allowed) {
+    // §F/§E5 — before refusing anything, check whether this is the canary. A limit that blocks the
+    // canary blocks every deploy, including the one that would remove the limit. The read happens
+    // HERE and not earlier so §E4 holds: the ordinary request never pays for it, and the cost
+    // lands on the request that was about to be rejected.
+    const canary = await canaryExemption(c.env, identifier.startsWith('email:') ? identifier.slice(6) : null);
+    if (canary) {
+      console.log(JSON.stringify({ limiter: 'exempt', reason: canary, rule: rule.key, path: pathname }));
+      return next();
+    }
     // §D — audited with identifier, origin and rule. Sustained limiting on ONE identifier is a
     // targeted attack on a specific survivor, not background noise, so it alerts at error level.
     const level = attempts > rule.burst * 4 ? 'error' : 'warn';

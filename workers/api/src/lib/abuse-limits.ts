@@ -168,6 +168,36 @@ export function environmentExemption(env: Env): ExemptionReason {
   return /staging/i.test(env.WORKER_ORIGIN ?? '') ? 'staging_environment' : null;
 }
 
+/**
+ * §F — the canary exemption, READ FROM THE USERS ROW at this moment (Brief 36 §G).
+ *
+ * §E5 is explicit that a limit blocking the canary blocks every deploy, including the deploy that
+ * would remove the limit. The canary is safe to exempt for a reason nothing else can claim: it can
+ * only reach reserved-range contacts, so it is structurally incapable of spending real quota or
+ * reaching a real person.
+ *
+ * CALLED ONLY WHEN A REQUEST IS ABOUT TO BE REJECTED. §E4 says reject before any D1 read, and this
+ * is a D1 read — so it does not happen on the ordinary path. Under the burst nothing consults it;
+ * past the burst one read decides whether this is the canary before anything is refused. The cost
+ * lands on the abuser's request, not the survivor's.
+ *
+ * An exemption granted to a NON-canary identity is an alertable operator condition, the same way a
+ * suppression flag on a real account is.
+ */
+export async function canaryExemption(env: Env, email: string | null): Promise<ExemptionReason> {
+  if (!email) return null;
+  try {
+    const row = await env.DB.prepare('SELECT isCanary FROM users WHERE email = ? LIMIT 1')
+      .bind(email.trim().toLowerCase())
+      .first<{ isCanary: number }>();
+    return Number(row?.isCanary ?? 0) === 1 ? 'canary_account' : null;
+  } catch {
+    // §E3 — an unreadable users table must not turn into a refusal for the canary, which would
+    // block every deploy. Unknown resolves to "not exempt", and the caller fails open separately.
+    return null;
+  }
+}
+
 export interface LimitDecision {
   allowed: boolean;
   /** Milliseconds the caller should be delayed before the next attempt succeeds. */
