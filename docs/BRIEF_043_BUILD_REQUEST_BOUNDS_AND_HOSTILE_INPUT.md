@@ -1,42 +1,51 @@
 # BRIEF 43 — REQUEST BOUNDS AND HOSTILE INPUT
 
-> **CARRIED IN — do these as part of this brief. No item below is a loose note; each has an owner
-> and closes here or is named as belonging elsewhere.**
+> **CARRIED IN — each item has an owner and closes here or is named as belonging elsewhere.**
 >
-> **1. Brief 41 acceptance 2 — the timing oracle. Fix it here, record the correction on Brief 41
+> **1. Brief 41 acceptance 2 — the timing oracle. Fix it here; record the correction on Brief 41
 > §B.** Existent addresses cost +23ms consistently across the distribution (p50 71 vs 48, p90 88
 > vs 65) because an existent address mints a token, inserts a row, and walks into the send path
 > while an absent one returns early. Identical bodies and status codes do not close it. For this
 > product an enrolment map is a map of who is reachable by inbox. **Equalise the work — not a
 > sleep, not a random delay. A random delay makes the oracle noisier without removing it.**
-> Re-measure the distribution and report it.
+> Re-measure and report the distribution.
 >
 > **2. Brief 33 Fix A acceptance 9 — `CF_ANALYTICS_TOKEN`.** Still unset; headroom reads
 > `NOT MEASURED`. It is the only visibility into the free-tier daily cliff, and the account has
-> already gone over once. Report exactly what is needed to set it and whether it is a credential
-> action Royce must take.
+> already gone over once. Report exactly what is needed and whether it is a credential action
+> Royce must take.
 >
-> **3. Repository housekeeping — `master` is 157 commits behind HEAD.** Fast-forward it, or rename
-> the working branch to trunk and update the deploy flag. It reads as trunk to anyone who arrives
-> later, including Royce in six months.
+> **3. `master` is 157 commits behind HEAD.** Fast-forward it, or rename the working branch to
+> trunk and update the deploy flag. It reads as trunk to whoever arrives later.
 >
-> **4. Not this brief, and now owned:** every deferred device-dependent acceptance item and both
-> arming gates are **Brief 51 (VERIFY — device session and arming)**. Thirteen rows across Briefs
-> 35, 36, 38, and 2 Fix A. Do not treat any of them as this brief's business, and do not arm
-> anything.
+> **4. Ratified, add to `STANDING_CONSTRAINTS.md` verbatim:**
+> "A control applies to an origin, not to a product. Where a system spans more than one origin,
+> every control is enumerated per origin and the coverage is asserted. A header file that protects
+> the static origin while the API origin serves the sensitive URL is a control applied to the
+> place someone was looking rather than the place it mattered."
+> *(Origin: `_headers` is a Cloudflare Pages file; the coordinator dashboard is served by the
+> Worker, which had no security headers at all — so the one origin whose URL carries an
+> event-bound magic token was the one with no referrer policy.)*
 >
-> **5. Queue after this brief:** Brief 23 Fix A (tenancy — decision outstanding on §F1, how an
-> unaffiliated Gumroad consumer is represented), then Brief 50 (capture integrity and live relay).
-> Brief 51 runs in parallel; it needs Royce's phone, not CC's context.
-
-**Type:** BUILD — no prior brief shipped bounds or schema validation
-**Priority:** P2
-**REQUIRES:** Brief 39 green (§C sweeps the verifier it hardened); Brief 36 Fix A green (§A degrades
-per its contract where a bound would drop evidence); Briefs 41 and 42 green.
-**Ship order:** NINTH. **Closes the audit remediation set.**
-**Floor:** Briefs 35–42. Zero regression across the full suite.
-**Audit ref:** Pass 1 Finding 13 · Pass 2 Finding 13 (Confirmed — P2), plus the `fingerprintSpki`
-class surfaced during Brief 39.
+> **5. Ratified without change:** `no-referrer` on the Worker because the token is in the path and
+> no middle setting is worth having; the wildcard mount applied after `next()` so a later route
+> inherits it; **no CSP on the Worker** — the dashboard renders inline script, nonces would be
+> required, and it sits on the alert path, so three headers that cannot break a render is the
+> correct scope; `bbcoord` carrying the claim key rather than the magic token.
+>
+> **6. Honest limit, carried to its owner:** cookie attributes were verified by guard and source,
+> not by observing a live `Set-Cookie`, because claiming a coordinator event needs a dispatched
+> token and Brief 35 Fix B's suppression means staging cannot deliver one. **Brief 33 Fix B works
+> that exact flow and observes it live** — added to its acceptance. Do not re-open it here.
+>
+> **7. Brief 42 is closed except acceptance 3, 4, 5, 6**, which ride on Brief 51 §A item 14.
+> CSP enforcement stays held. This is now the baseline Brief 33 Fix B §E2 must not weaken.
+>
+> **8. Do not arm anything.** Brief 36 item 12 and Brief 2 Fix A §E3 are owned by Brief 51.
+>
+> **9. Queue after this brief:** Brief 23 Fix A (tenancy attribution — `orgId` stays nullable, no
+> mandatory affiliation), then Brief 33 Fix B (coordinator token in the URL), then Brief 50
+> (capture integrity and live relay). Brief 51 runs in parallel on Royce's phone.
 
 ---
 

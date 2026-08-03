@@ -536,28 +536,55 @@ authRoutes.post('/passkey/login/verify', async (c) => {
 authRoutes.post('/magic/start', async (c) => {
   const body = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
   const raw = (body.email ?? '').trim();
+
+  /**
+   * Brief 43 (carried from Brief 41 §B) — THE TIMING ORACLE, CLOSED BY EQUALISING THE WORK.
+   *
+   * This endpoint always answered `{"ok":true}` with a 200, which was the whole enumeration
+   * defence and was not sufficient. Measured on staging: an address with an account cost p50 71ms
+   * against 48ms for one without, consistently across the distribution — because an existent
+   * address minted a token, inserted a row and walked into the send path, while an absent one
+   * returned after the lookup. Identical bodies, distinguishable clocks. For this product an
+   * enrolment map is a map of who is reachable by inbox, which is the exact threat email reset was
+   * banned over.
+   *
+   * NOT A SLEEP AND NOT A RANDOM DELAY. Padding to a fixed time leaks the pad's calibration and
+   * breaks under load; a random delay makes the oracle noisier without removing it — an attacker
+   * averages it away with more samples. The work is instead MOVED OFF the response path: every
+   * branch that differs now runs inside waitUntil, so what the caller can time is body parsing and
+   * a trim, which is identical whether or not the account exists.
+   *
+   * Nothing about delivery changes. The link was already sent from waitUntil; now the row that
+   * backs it is written there too, a few milliseconds after the response the caller was always
+   * going to get.
+   */
   if (raw) {
-    const result = await createMagicLink(c.env, normalizeEmail(raw));
-    if ('token' in result && c.env.PWA_ORIGIN) {
-      const link = `${c.env.PWA_ORIGIN}/magic?token=${result.token}`;
-      const { sendEmail } = await import('../channels/sendgrid-email');
-      c.executionCtx.waitUntil(
-        sendEmail(
-          c.env,
-          {
-            to: raw,
-            subject: 'Your BLACK BOX sign-in link',
-            html: `<p>Tap to sign in. This link works once and expires in 15 minutes:</p><p><a href="${link}">${link}</a></p><p>If you didn’t ask to sign in, ignore this email — nothing has changed.</p>`,
-            text: `Sign in to BLACK BOX (works once, expires in 15 minutes): ${link}\n\nIf you didn’t ask to sign in, ignore this email.`,
-          },
-          'account_magic_link',
-        ),
-      );
-    } else if ('refused' in result && result.refused === 'has_passkey') {
-      // Not an error — the gate working. Audited so a burst of these against one
-      // account is visible as what it is: someone with inbox access trying to get in.
-      await audit(c.env, null, 'auth.magic_link_refused_has_passkey', null, {});
-    }
+    c.executionCtx.waitUntil(
+      (async () => {
+        const result = await createMagicLink(c.env, normalizeEmail(raw));
+        if ('token' in result && c.env.PWA_ORIGIN) {
+          const link = `${c.env.PWA_ORIGIN}/magic?token=${result.token}`;
+          const { sendEmail } = await import('../channels/sendgrid-email');
+          await sendEmail(
+            c.env,
+            {
+              to: raw,
+              subject: 'Your BLACK BOX sign-in link',
+              html: `<p>Tap to sign in. This link works once and expires in 15 minutes:</p><p><a href="${link}">${link}</a></p><p>If you didn’t ask to sign in, ignore this email — nothing has changed.</p>`,
+              text: `Sign in to BLACK BOX (works once, expires in 15 minutes): ${link}
+
+If you didn’t ask to sign in, ignore this email.`,
+            },
+            'account_magic_link',
+          );
+        } else if ('refused' in result && result.refused === 'has_passkey') {
+          // Not an error — the gate working. Audited so a burst of these against one account is
+          // visible as what it is: someone with inbox access trying to get in. Inside waitUntil
+          // because an audit write on only ONE branch is itself a timing difference.
+          await audit(c.env, null, 'auth.magic_link_refused_has_passkey', null, {});
+        }
+      })(),
+    );
   }
   return c.json({ ok: true }, 200);
 });

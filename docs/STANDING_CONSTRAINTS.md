@@ -335,3 +335,14 @@ guard pinned to `SELECT sessionsValidFrom, orgId FROM users WHERE id = ?` broke 
 subquery joined the same statement — a change that does not touch where `orgId` comes from. The
 property is "orgId is read from the users row and never parsed out of the token", and that is what
 it asserts now.
+
+## A CONTROL APPLIES TO AN ORIGIN (ratified 2026-08-03, from Brief 42 §D)
+
+**"A control applies to an origin, not to a product. Where a system spans more than one origin,
+every control is enumerated per origin and the coverage is asserted. A header file that protects
+the static origin while the API origin serves the sensitive URL is a control applied to the place
+someone was looking rather than the place it mattered."**
+
+*(Origin: `_headers` is a Cloudflare Pages file; the coordinator dashboard is served by the
+Worker, which had no security headers at all — so the one origin whose URL carries an event-bound
+magic token was the one with no referrer policy.)*
