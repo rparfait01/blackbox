@@ -23,21 +23,25 @@
 set -e
 echo "[gate] checking brief corrections blocks (Brief 34 §1)…"
 node scripts/supersession-index.mjs --check
-# The acceptance suite costs ~1,442 metered requests against the same plan limit whose
-# exhaustion takes the alert path down. A full green run leaves a receipt naming the commit it
-# covers; if that commit is the one being pushed, the answer is already known and re-running buys
-# nothing. This is what makes "the full suite runs ONCE before a production deploy" true in
-# practice rather than only in a document — deploy-then-push used to spend it twice on identical
-# code. `pnpm verify` (typecheck, lint, unit tests, build) ALWAYS runs; only the metered suite is
-# skipped, and only for an exact commit match.
+# The acceptance suite costs ~1,481 metered requests against the same plan limit whose exhaustion
+# takes the alert path down. A full green run leaves a receipt naming the WORKER BUNDLE it
+# covers; if the bundle is unchanged, the answer is already known and re-running buys nothing.
+#
+# Keyed on the bundle, NOT the commit. The gate's question is "has the code under test changed?"
+# — and a docs-only commit changes the SHA while changing nothing the suite can observe. Under a
+# commit-keyed receipt that cost a full run to re-confirm a byte-identical Worker.
+#
+# `pnpm verify` ALWAYS runs — typecheck, lint, unit tests, build — and it is what produces the
+# build this hash is taken over. Only the metered suite is ever skipped.
+echo "[gate] running: pnpm verify (no metered requests)…"
+pnpm verify
+
 RECEIPT="workers/api/test/.acceptance-receipt.json"
-HEAD_SHA="$(git rev-parse HEAD)"
-if [ -f "$RECEIPT" ] && grep -q "\"$HEAD_SHA\"" "$RECEIPT"; then
-  echo "[gate] acceptance receipt found for ${HEAD_SHA} — full suite already green for THIS commit."
-  echo "[gate] running: pnpm verify (no metered requests)…"
-  pnpm verify
+BUNDLE="$(node scripts/worker-bundle-hash.mjs)"
+if [ -f "$RECEIPT" ] && grep -q "\"$BUNDLE\"" "$RECEIPT"; then
+  echo "[gate] acceptance receipt matches the built Worker — suite already green for THIS bundle."
 else
-  echo "[gate] no receipt for ${HEAD_SHA}; running: pnpm gate (verify + acceptance) before push…"
-  pnpm gate
+  echo "[gate] the built Worker differs from the last green run; running the acceptance suite…"
+  pnpm acceptance
 fi
 echo "[gate] green — push allowed."

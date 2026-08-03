@@ -2738,11 +2738,23 @@ async function run() {
   if (!ONLY && failed.length === 0) {
     try {
       const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', shell: true }).trim();
+      // Keyed on the BUNDLE, not the commit. The gate's question is not "have I seen this
+      // commit?" but "has the code under test changed since I proved it green?" — and a
+      // docs-only commit changes the SHA while changing nothing this suite can observe. That
+      // cost 1,481 requests once; it is why the receipt names the artifact.
+      const bundleHash = execFileSync(
+        process.execPath,
+        [new URL('../../../scripts/worker-bundle-hash.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')],
+        { encoding: 'utf8' },
+      ).trim();
       writeFileSync(
         new URL('./.acceptance-receipt.json', import.meta.url),
-        JSON.stringify({ sha, at: Date.now(), checks: results.length, origin: ORIGIN }, null, 2),
+        JSON.stringify({ bundleHash, sha, at: Date.now(), checks: results.length, origin: ORIGIN }, null, 2),
       );
-      console.log(`[receipt] full green run recorded for ${sha.slice(0, 7)} — the pre-push gate will not re-run it.`);
+      console.log(
+        `[receipt] full green run recorded for bundle ${bundleHash.slice(0, 12)} (${sha.slice(0, 7)}) — ` +
+          'the pre-push gate will skip the metered suite while the built Worker is unchanged.',
+      );
     } catch {
       /* a missing receipt costs a re-run, never a wrong answer */
     }

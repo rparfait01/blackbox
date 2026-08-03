@@ -110,7 +110,14 @@ export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
     rows.push(['Dispatch summary', 'CAD-ready summary — open', p.summaryUrl]);
   }
   return {
-    subject: `🚨 BLACK BOX ALERT *** ${p.userDisplayName} *** BLACK BOX ALERT 🚨`,
+    // Brief 33 Fix B §D — the subject and the body must not disagree on the product name.
+    //
+    // W8A fixed this format as "non-negotiable" because the SUBJECT renders before the body on a
+    // lock screen or a watch, so the subject IS the alert. That reasoning still holds and is why
+    // this is still loud and still leads with the name. What changed is the name itself: a
+    // subject reading BLACK BOX above a body reading SENTINEL ALERT makes a contact wonder which
+    // system is contacting them, at the one moment they must not hesitate.
+    subject: `🚨 EMERGENCY — ${p.userDisplayName} activated SENTINEL ALERT`,
     html: shell({
       headerColor: RED,
       headerText: '🚨 EMERGENCY',

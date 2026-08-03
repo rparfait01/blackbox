@@ -69,6 +69,24 @@ changing: no video chunks arrive, so no video is claimed. A responder who reads 
 opens a dashboard with no picture does not conclude the camera failed — they conclude the system
 lies, at the moment they most need to trust it.)*
 
+**BRIEF W8A (email builders; no brief document in the corpus, set in commit bfd3121) — corrected
+to read:**
+"The email SUBJECT renders before the body on a lock screen or a watch, so the subject IS the
+alert: loud, and leading with the name. It must also name the SAME PRODUCT the body names."
+Path: `workers/api/src/channels/email-messages.ts`
+
+*(W8A marked the subject format non-negotiable and the reasoning behind that — subject-before-body
+on a locked screen — is sound and preserved. What it could not anticipate is the body naming a
+different product. A subject reading BLACK BOX above a body reading SENTINEL ALERT makes a
+contact ask which system is contacting them, at the one moment they must not hesitate. Activation
+subject is now `🚨 EMERGENCY — {name} activated SENTINEL ALERT`.)*
+
+*(NOT changed, and flagged rather than decided: the ESCALATION and DEVICE-DARK subjects still read
+"BLACK BOX", as does the email footer. Their bodies name no product, so there is no
+subject/body disagreement to fix — but a contact who receives an activation naming SENTINEL ALERT
+and a follow-up naming BLACK BOX sees two systems. That is a naming decision across the whole
+product surface, not a copy fix inside this brief.)*
+
 **BRIEF 043 §A — corrected to read:**
 "Every Hono route reading a request body does so through the bounded reader. The sweep is
 verified by enumeration against the router, not by inspection — a route that was not thought of
