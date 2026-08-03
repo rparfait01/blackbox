@@ -95,3 +95,14 @@ export function isReservedDestination(channel: string, identifier: string): bool
  *  'delivered' — nothing was delivered, and honest status is the whole point. */
 export const SUPPRESSED_STATUS = 'suppressed';
 export const SUPPRESSED_REASON = 'reserved_address_not_deliverable';
+
+
+/**
+ * Brief 35 Fix B §A — distinct from SUPPRESSED_REASON on purpose.
+ *
+ * `suppressed_test` means "this identity can reach no real person". `suppressed_environment`
+ * means "this deployment can reach no provider at all". They are separate controls answering
+ * separate questions, and a delivery row has to say which one fired — §E1/§E2 turn on being able
+ * to tell a production canary from a staging send at a glance.
+ */
+export const SUPPRESSED_ENVIRONMENT_REASON = 'suppressed_environment';

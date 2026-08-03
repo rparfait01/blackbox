@@ -8,6 +8,8 @@
  * never the access token, the channelUserId, or any message contents.
  */
 
+import { mayDispatchExternally } from '../lib/environment';
+import type { Env } from '../types';
 import { sha256Hex } from '@blackbox/shared';
 import {
   activationAlert,
@@ -55,6 +57,8 @@ export class LineChannel implements NotificationChannel {
   constructor(
     private readonly accessToken: string,
     private readonly channelUserId: string,
+    /** Brief 35 Fix B §A — needed to ask the bound database which environment this is. */
+    private readonly env: Env,
   ) {}
 
   pushActivationAlert(eventId: string, payload: ActivationAlertPayload): Promise<boolean> {
@@ -118,6 +122,22 @@ export class LineChannel implements NotificationChannel {
     key: string,
     messageType: string,
   ): Promise<boolean> {
+    // Brief 35 Fix B §A — the third and last provider boundary.
+    const gate = await mayDispatchExternally(this.env);
+    if (!gate.allowed) {
+      console.log(
+        JSON.stringify({
+          provider: 'line',
+          status: 'suppressed_environment',
+          environment: gate.identity.name,
+          messageType,
+          wouldHaveSent: { to: this.channelUserId, messages },
+        }),
+      );
+      this.lastError = 'suppressed_environment';
+      return false;
+    }
+
     const start = Date.now();
     try {
       const response = await fetch(PUSH_ENDPOINT, {

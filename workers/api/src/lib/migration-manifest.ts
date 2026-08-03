@@ -68,4 +68,6 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0053_consumed_capabilities',
   '0054_device_credentials',
   '0055_outbound_attempts',
+  '0056_environment_identity',
+  '0057_operator_alerts',
 ];

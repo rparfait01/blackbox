@@ -90,10 +90,16 @@ describe('the in-request stagger stops before its context is reclaimed', () => {
     expect(scheduled).toMatch(/JOB_TIMEOUT_MS/);
     const chain = scheduled.slice(scheduled.indexOf('ctx.waitUntil('));
     // EVERY job, not most of them. The count moves when a job is added — which is the point:
-    // Brief 40 §F added `seal` and `seal_alert`, and an unbounded seal would starve the jobs
-    // behind it exactly as the original overrun starved the integrity scan and canary sweep.
+    // Brief 40 §F added `seal` and `seal_alert`, and Brief 35 Fix B §D added `alert_summaries`
+    // (the drain that makes "alerts are rate-limited but never dropped" true). An unbounded job
+    // would starve the ones behind it exactly as the original overrun starved the integrity scan
+    // and the canary sweep, so a new job has to be added here deliberately rather than drift in.
     const bounded = (chain.match(/await boundedJob\(/g) ?? []).length;
-    expect(bounded).toBe(10);
+    expect(bounded).toBe(11);
+    // Stronger than the count alone: the number of jobs and the number of BOUNDED jobs agree, so
+    // an eleventh job added without a ceiling fails here even if someone updates the number.
+    const jobNames = (chain.match(/boundedJob\('/g) ?? []).length;
+    expect(jobNames).toBe(bounded);
     // …and nothing in the cron chain is awaited raw alongside them.
     expect(chain).not.toMatch(/await (escalateDarkDevices|advanceCascades|runIntegrityScan)\(/);
   });

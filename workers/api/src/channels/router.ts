@@ -111,7 +111,7 @@ function createChannel(
   switch (channel) {
     case 'line':
       return env.LINE_CHANNEL_ACCESS_TOKEN
-        ? new LineChannel(env.LINE_CHANNEL_ACCESS_TOKEN, identifier)
+        ? new LineChannel(env.LINE_CHANNEL_ACCESS_TOKEN, identifier, env)
         : null;
     case 'email':
       return env.SENDGRID_API_KEY && env.SENDGRID_FROM_EMAIL

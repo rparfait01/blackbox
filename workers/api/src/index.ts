@@ -9,6 +9,7 @@ import { verifyChain } from './lib/chain-verdict';
 import { vaultCoverage } from './lib/vault-scan';
 import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
 import { backoffFor, canaryExemption, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
+import { clearEnvironmentCache, dispatchPosture, resolveEnvironment } from './lib/environment';
 import { countAttempt, outboundHeadroom } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
@@ -813,6 +814,40 @@ app.post('/v1/admin/trust/record', async (c) => {
   );
 });
 
+/**
+ * Brief 35 Fix B §A — STAMP THIS DATABASE.
+ *
+ * The environment marker lives in the database the binding points at, so a Worker wired to
+ * blackbox-test reads 'staging' regardless of its vars, hostname or deploy command. It is set
+ * here rather than by a migration because a shared migration runs identically against both
+ * databases and could only write the same answer into each — a configured value in a migration's
+ * clothing.
+ *
+ * Stamping is idempotent and re-stamping is allowed, audited, and immediately visible: the
+ * per-isolate cache is cleared so a correction does not wait for a deploy.
+ */
+app.post('/v1/admin/environment/stamp', async (c) => {
+  const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
+  const name = (body.name ?? '').trim().toLowerCase();
+  if (!name || !/^[a-z][a-z0-9_-]{1,30}$/.test(name)) {
+    return c.json({ error: 'name must be a short lowercase identifier, e.g. production or staging' }, 400);
+  }
+  const now = Date.now();
+  await c.env.DB.prepare(
+    `INSERT INTO environment_identity (id, name, stampedAt, stampedBy) VALUES (1, ?, ?, 'admin')
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, stampedAt = excluded.stampedAt`,
+  )
+    .bind(name, now)
+    .run();
+  clearEnvironmentCache();
+  const identity = await resolveEnvironment(c.env);
+  await audit(c.env, null, 'environment.stamped', null, { name, verdict: identity.verdict });
+  return c.json({ ok: true, ...identity }, 200);
+});
+
+/** The stamp as this Worker reads it — used by the deploy gate to prove production can dispatch. */
+app.get('/v1/admin/environment', async (c) => c.json(await dispatchPosture(c.env), 200));
+
 app.get('/v1/admin/encryption/readiness', async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT
@@ -838,6 +873,7 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
   const vault = await vaultCoverage(c.env);
   const devices = await credentialCoverage(c.env);
   const outbound = await outboundHeadroom(c.env, UNAUTH_OUTBOUND.windowMs, UNAUTH_OUTBOUND.max);
+  const dispatch = await dispatchPosture(c.env);
   // §F7 — sealing coverage: pending, failures, and the oldest closed-but-unsealed event.
   const seal = await sealCoverage(c.env);
   // §F — request headroom. The Worker IS the alert path, so a billing threshold is an
@@ -871,6 +907,9 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
       devices,
       // Brief 41 §C — outbound quota headroom, beside the request headroom from Brief 33 Fix A §F.
       outbound,
+      // Brief 35 Fix B §C — per-environment dispatch state and provider-credential presence. A
+      // non-production row showing both is an alertable condition.
+      dispatch,
       vault: {
         // Brief 37 Fix A — an EMPTY vault does not report as a verified one. "0/0 objects
         // verified" reads as healthy, and for two months it was the literal truth of a vault

@@ -31,8 +31,9 @@ import type {
 } from './types';
 import { UNAUTH_OUTBOUND, isAlertMessage } from '../lib/abuse-limits';
 import { countOutbound } from '../lib/limiter-store';
+import { mayDispatchExternally } from '../lib/environment';
 import type { Env } from '../types';
-import { isReservedEmail, SUPPRESSED_REASON } from './reserved';
+import { isReservedEmail, SUPPRESSED_REASON, SUPPRESSED_ENVIRONMENT_REASON } from './reserved';
 
 const SEND_ENDPOINT = 'https://api.sendgrid.com/v3/mail/send';
 
@@ -129,6 +130,32 @@ export async function sendEmail(
       console.log(JSON.stringify({ level: 'warn', outbound: 'failed_open', messageType }));
     }
   }
+  /**
+   * Brief 35 Fix B §A — ENVIRONMENT SUPPRESSION, before any provider is reached.
+   *
+   * Placed after the reserved-address and abuse-cap checks and before the config read, so the
+   * decision is identical whether or not a credential happens to be present. §C removes staging's
+   * credentials as a second barrier; this is the first, and neither relies on the other.
+   *
+   * INDETERMINATE dispatches (§B). The failure that matters is not a leaked staging email, it is
+   * production deciding it is not production and swallowing a real cascade.
+   */
+  const gate = await mayDispatchExternally(env);
+  if (!gate.allowed) {
+    console.log(
+      JSON.stringify({
+        provider: 'sendgrid',
+        status: 'suppressed_environment',
+        environment: gate.identity.name,
+        messageType,
+        // §A — the full payload that WOULD have been sent, so staging acceptance can assert on
+        // content without transmitting it.
+        wouldHaveSent: { to: message.to, subject: message.subject, text: message.text },
+      }),
+    );
+    return { ok: false, status: 0, body: SUPPRESSED_ENVIRONMENT_REASON, suppressed: true };
+  }
+
   const config = sendgridConfig(env);
   if (!config) {
     console.log('[SendGrid] NOT configured — missing SENDGRID_API_KEY or SENDGRID_FROM_EMAIL');

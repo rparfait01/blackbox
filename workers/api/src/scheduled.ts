@@ -19,6 +19,7 @@ import { runIntegrityScan } from './lib/integrity';
 import { closeFeedLostEvents, closeOrphanedEvents, runEscalation } from './lib/closure-timeout';
 import { sweepExpiredCanaryEvents } from './lib/canary';
 import { alertOnUnsealed, drainSealQueue } from './lib/seal';
+import { drainAlertSummaries } from './lib/operator-alert';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -106,6 +107,10 @@ export const scheduled = async (
       // it the failure mode is the one §F exists to fix: sealing quietly not happening while
       // everything reports healthy.
       await boundedJob('seal_alert', () => alertOnUnsealed(env));
+      // Brief 35 Fix B §D — drain closed alert windows. This is what makes "never dropped" true:
+      // a burst that collapsed into a counter surfaces here with its count and its first and last
+      // instance, so silence genuinely means nothing happened.
+      await boundedJob('alert_summaries', () => drainAlertSummaries(env).then(() => undefined));
     })(),
   );
 };

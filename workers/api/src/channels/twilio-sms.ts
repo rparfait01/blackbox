@@ -23,6 +23,7 @@ import type {
   NotificationChannel,
   StandDownConfirmationPayload,
 } from './types';
+import { mayDispatchExternally } from '../lib/environment';
 import type { Env } from '../types';
 
 export interface TwilioConfig {
@@ -74,6 +75,21 @@ export async function sendSms(
     form.set('From', config.fromNumber);
   }
   form.set('Body', body);
+
+  // Brief 35 Fix B §A — the same gate, at the second of three provider boundaries.
+  const gate = await mayDispatchExternally(env);
+  if (!gate.allowed) {
+    console.log(
+      JSON.stringify({
+        provider: 'twilio',
+        status: 'suppressed_environment',
+        environment: gate.identity.name,
+        wouldHaveSent: { to: toNumber, body },
+      }),
+    );
+    return { ok: false, sid: null, status: 0 };
+  }
+
   try {
     const response = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,

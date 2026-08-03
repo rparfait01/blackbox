@@ -240,10 +240,70 @@ function assertVaultRetentionOrRefuse() {
 
 assertVaultRetentionOrRefuse();
 
+/**
+ * Brief 35 Fix B §B — PRODUCTION MUST PROVE IT CAN DISPATCH.
+ *
+ * The failure this guards is not a leaked staging email. It is production resolving to
+ * NON_PRODUCTION — an unstamped database, a mis-stamped one, a binding pointed somewhere
+ * unexpected — and silently suppressing a real cascade. That would look like nothing at all: no
+ * error, no failed delivery, just alerts that never leave. So it is asserted at deploy time, when
+ * a human is watching, rather than discovered when someone needs help.
+ *
+ * INDETERMINATE is not accepted here either. At runtime it dispatches (§B, correctly — refusing
+ * would silence a cascade), but a deploy is exactly the moment to insist on positive proof.
+ */
+async function assertProductionCanDispatchOrRefuse(apiOrigin) {
+  const token = (() => {
+    try {
+      return readFileSync(path.join(ROOT, 'workers/admin_token.txt'), 'utf8').trim();
+    } catch {
+      return '';
+    }
+  })();
+  if (!token) {
+    console.log('    dispatch: SKIPPED (no admin credential to query it)');
+    return;
+  }
+  let posture;
+  try {
+    const res = await fetch(`${apiOrigin}/v1/admin/environment`, { headers: { Authorization: `Bearer ${token}` } });
+    posture = res.ok ? await res.json() : null;
+  } catch (error) {
+    posture = null;
+    console.log(`    dispatch: UNKNOWN (${String(error).slice(0, 60)})`);
+  }
+  if (!posture || posture.verdict !== 'PRODUCTION' || posture.externalDispatch !== true) {
+    console.error(
+      [
+        '',
+        '✗ DEPLOY REFUSED: production does not resolve to PRODUCTION with external dispatch enabled.',
+        `    verdict : ${posture?.verdict ?? 'unreadable'}`,
+        `    stamp   : ${posture?.environment ?? 'none'}`,
+        `    detail  : ${posture?.detail ?? 'the environment endpoint could not be read'}`,
+        '',
+        '  A production build that classifies itself as non-production suppresses every outbound',
+        '  alert silently. Stamp the production database and re-run `pnpm deploy`:',
+        `    node scripts/stamp-environment.mjs --origin=${apiOrigin} --name=production`,
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+  console.log(`    dispatch: ${posture.summary}`);
+}
+
 // Build the PWA with the SAME id the Worker is stamped with, so a matched deploy
 // shows identical PWA + Worker builds — and with the validated origin baked in.
 run('pnpm', ['-F', 'pwa', 'build']);
 run('node', [path.join(ROOT, 'scripts/deploy-worker.mjs')]);
+/**
+ * §B runs HERE, after the Worker is published and before the canary, because the question is
+ * whether THIS build can dispatch — not whether the one it replaced could. Asking earlier would
+ * interrogate the outgoing build, which is the wrong subject and, on the first deploy of this
+ * feature, an endpoint that does not exist yet.
+ */
+await assertProductionCanDispatchOrRefuse(target.apiOrigin);
+appendFileSync(COST_FILE, '1\n'); // the dispatch probe is a request — count it
+
 run('node', [path.join(ROOT, 'scripts/deploy-pages.mjs')]);
 
 // §C — THE CANARY. Build ids matching proves the two halves came from one commit; it
