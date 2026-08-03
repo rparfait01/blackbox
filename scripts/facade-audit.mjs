@@ -87,6 +87,11 @@ function requirements() {
     registersServiceWorker: /serviceWorker/.test(bundle),
     usesDedicatedWorker: /new\s+Worker\s*\(/.test(bundle),
     usesWasm: /WebAssembly|\.wasm/.test(bundle),
+    // connect-src treats wss: as a SEPARATE scheme from https:. A WebSocket added later would be
+    // blocked by a policy that looks complete, and the symptom would be a dashboard that silently
+    // stops updating rather than an error anyone notices.
+    usesWebSocket: /new\s+WebSocket\s*\(|wss:\/\//.test(bundle),
+    usesEventSource: /new\s+EventSource\s*\(/.test(bundle),
     usesEval: /\beval\s*\(|new\s+Function\s*\(/.test(bundle),
     // Absolute origins the bundle mentions. Mentioning is not fetching, so these are REPORTED for
     // a human to classify rather than silently treated as connect-src requirements.
@@ -137,6 +142,14 @@ function audit() {
   if (req.usesDedicatedWorker && !permits('worker-src', "'self'")) {
     problems.push("bundle constructs a Worker but worker-src does not permit 'self'");
   }
+  if (req.usesWebSocket && !(config.csp['connect-src'] ?? []).some((v) => v.startsWith('wss://') || v === "'self'")) {
+    problems.push(
+      'the bundle opens a WebSocket but connect-src lists no wss: origin — connect-src treats wss: as a separate scheme, and the symptom would be a stream that silently stops rather than an error',
+    );
+  }
+  if (req.usesEventSource && !(config.csp['connect-src'] ?? []).length) {
+    problems.push('the bundle opens an EventSource but connect-src is empty');
+  }
   if (req.usesWasm && !permits('script-src', "'wasm-unsafe-eval'")) {
     problems.push("bundle references WebAssembly but script-src lacks 'wasm-unsafe-eval'");
   }
@@ -167,6 +180,8 @@ function audit() {
   console.log(`  service worker   : ${req.registersServiceWorker ? 'yes' : 'no'}`);
   console.log(`  dedicated Worker : ${req.usesDedicatedWorker ? 'yes' : 'no'}`);
   console.log(`  wasm             : ${req.usesWasm ? 'yes' : 'no'}`);
+  console.log(`  WebSocket        : ${req.usesWebSocket ? 'yes' : 'no'}`);
+  console.log(`  EventSource      : ${req.usesEventSource ? 'yes' : 'no'}`);
   console.log(`  eval/Function    : ${req.usesEval ? 'present in bundle text' : 'no'}`);
   console.log(`\n  absolute origins mentioned in the bundle:`);
   for (const o of req.absoluteOrigins) {
