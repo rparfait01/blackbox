@@ -239,8 +239,14 @@ function snapshot(label) {
     indexHtml: html,
     // Content hashes rather than bytes: the asset names already carry a content hash, so this
     // catches a changed asset without storing megabytes.
+    // version.json changes every build by design. `_headers` and `_redirects` are SERVER CONFIG,
+    // not facade content — the whole point of this diff is that changing the policy must not
+    // change what renders, so including the policy file in the comparison would guarantee a
+    // difference and teach a reader to ignore the result.
     assets: Object.fromEntries(
-      req.files.filter((f) => f !== 'version.json').map((f) => [f, sha(readFileSync(path.join(DIST, f)))]),
+      req.files
+        .filter((f) => !['version.json', '_headers', '_redirects'].includes(f))
+        .map((f) => [f, sha(readFileSync(path.join(DIST, f)))]),
     ),
     requires: {
       inlineScripts: req.inlineScripts,
