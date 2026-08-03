@@ -81,11 +81,15 @@ different product. A subject reading BLACK BOX above a body reading SENTINEL ALE
 contact ask which system is contacting them, at the one moment they must not hesitate. Activation
 subject is now `🚨 EMERGENCY — {name} activated SENTINEL ALERT`.)*
 
-*(NOT changed, and flagged rather than decided: the ESCALATION and DEVICE-DARK subjects still read
-"BLACK BOX", as does the email footer. Their bodies name no product, so there is no
-subject/body disagreement to fix — but a contact who receives an activation naming SENTINEL ALERT
-and a follow-up naming BLACK BOX sees two systems. That is a naming decision across the whole
-product surface, not a copy fix inside this brief.)*
+*(RESOLVED 2026-08-04, Royce: **BLACKBOX: SENTINEL is the product; SENTINEL is the alert.** The
+escalation subject, device-dark subject and email footer are corrected accordingly.*
+
+*Applied wider than the three enumerated, and reported rather than done quietly: four further
+subjects carried the product name — closure-requested, duress, session-closed and alert-ended —
+plus one SMS line. Leaving those reading "BLACK BOX" would have reproduced the exact split being
+fixed, so all emitted copy now reads BLACKBOX: SENTINEL. Only the product NAME changed; no
+message semantics were touched, including the duress subject's "DO NOT APPROVE". Code comments
+still say BLACK BOX where they describe the history of a change.)*
 
 **BRIEF 043 §A — corrected to read:**
 "Every Hono route reading a request body does so through the bounded reader. The sweep is

@@ -86,7 +86,7 @@ function shell(o: ShellOpts): string {
     o.headerText,
   )}</td></tr>
 <tr><td style="padding:18px 20px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}${cta}${note}</table></td></tr>
-<tr><td style="padding:12px 20px;color:#aaa;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-family:monospace">BLACK BOX · personal safety</td></tr>
+<tr><td style="padding:12px 20px;color:#aaa;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-family:monospace">BLACKBOX: SENTINEL · personal safety</td></tr>
 </table></td></tr></table></body></html>`;
 }
 
@@ -159,7 +159,7 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
       rows.push(['Must confirm closure', [pv.closerName, pv.closerEmail].filter(Boolean).join(' · ')]);
     }
     return {
-      subject: `🚨 BLACK BOX — ${p.userDisplayName} STILL NEEDS HELP — fresh link inside 🚨`,
+      subject: `🚨 BLACKBOX: SENTINEL — ${p.userDisplayName} STILL NEEDS HELP — fresh link inside 🚨`,
       html: shell({
         headerColor: RED,
         headerText: '🚨 STILL ACTIVE — NEW LINK',
@@ -201,7 +201,7 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
     ]);
   }
   return {
-    subject: `🚨 BLACK BOX — ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE 🚨`,
+    subject: `🚨 BLACKBOX: SENTINEL — ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE 🚨`,
     html: shell({
       headerColor: RED,
       headerText: '🚨 DEVICE WENT DARK',
@@ -219,7 +219,7 @@ export function emailEscalation(p: EscalationAlertPayload): BuiltEmail {
 
 export function emailClosureRequest(p: ClosureRequestPayload): BuiltEmail {
   return {
-    subject: `BLACK BOX — Closure requested by ${p.userDisplayName}`,
+    subject: `BLACKBOX: SENTINEL — Closure requested by ${p.userDisplayName}`,
     html: shell({
       headerColor: INK,
       headerText: 'CLOSURE REQUESTED',
@@ -239,7 +239,7 @@ export function emailClosureRequest(p: ClosureRequestPayload): BuiltEmail {
 
 export function emailDuress(p: DuressAlertPayload): BuiltEmail {
   return {
-    subject: `⚠ BLACK BOX DURESS — DO NOT APPROVE — ${p.userDisplayName} ⚠`,
+    subject: `⚠ BLACKBOX: SENTINEL DURESS — DO NOT APPROVE — ${p.userDisplayName} ⚠`,
     html: shell({
       headerColor: RED,
       headerText: '⚠ DURESS — DO NOT APPROVE',
@@ -260,7 +260,7 @@ export function emailDuress(p: DuressAlertPayload): BuiltEmail {
 
 export function emailClosureConfirmation(p: ClosureConfirmationPayload): BuiltEmail {
   return {
-    subject: `BLACK BOX — Session closed — ${p.userDisplayName}`,
+    subject: `BLACKBOX: SENTINEL — Session closed — ${p.userDisplayName}`,
     html: shell({
       headerColor: INK,
       headerText: 'SESSION CLOSED',
@@ -275,7 +275,7 @@ export function emailClosureConfirmation(p: ClosureConfirmationPayload): BuiltEm
 
 export function emailStandDownConfirmation(p: StandDownConfirmationPayload): BuiltEmail {
   return {
-    subject: `BLACK BOX — Alert ended at ${p.time} — ${p.userDisplayName}`,
+    subject: `BLACKBOX: SENTINEL — Alert ended at ${p.time} — ${p.userDisplayName}`,
     html: shell({
       headerColor: INK,
       headerText: 'ALERT ENDED',
@@ -318,7 +318,7 @@ export function emailCheckin(p: CheckinPayload): BuiltEmail {
 
 export function emailClassificationUpdate(p: ClassificationUpdatePayload): BuiltEmail {
   return {
-    subject: `BLACK BOX — Update (${p.threatLevel})`,
+    subject: `BLACKBOX: SENTINEL — Update (${p.threatLevel})`,
     html: shell({
       headerColor: RED,
       headerText: 'UPDATE',

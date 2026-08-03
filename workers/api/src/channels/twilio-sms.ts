@@ -142,7 +142,7 @@ Live dashboard: ${p.dashboardUrl}`);
     return this.send('checkin', `✓ ${p.userDisplayName} checked in — I'm OK at ${p.time}.${loc} Reassurance only, not an alert.`);
   }
   pushClassificationUpdate(_e: string, p: ClassificationUpdatePayload): Promise<boolean> {
-    return this.send('classification', `BLACK BOX update — ${p.summary} (threat: ${p.threatLevel}). ${p.dashboardUrl}`);
+    return this.send('classification', `BLACKBOX: SENTINEL update — ${p.summary} (threat: ${p.threatLevel}). ${p.dashboardUrl}`);
   }
   pushClosureRequest(_e: string, p: ClosureRequestPayload): Promise<boolean> {
     return this.send('closure', `${p.userDisplayName} requested closure. Review before standing down: ${p.dashboardUrl ?? ''}`);
