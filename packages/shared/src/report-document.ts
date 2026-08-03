@@ -23,7 +23,15 @@
  * markers with string search — no DOMParser, no HTML parser, no dependency.
  */
 import { canonicalize, canonicalHash, renderedHash } from './canonical';
-import { REPORT_DOCUMENT_FORMAT, type CertifiedReportPayload, type EvidenceZone } from './report';
+import {
+  REPORT_DOCUMENT_FORMAT,
+  type CaptureEvidence,
+  type CertifiedReportPayload,
+  type ChunkEvidence,
+  type EvidenceZone,
+  type LocationEvidence,
+  type NotificationEvidence,
+} from './report';
 
 export const DOCUMENT_FORMAT = REPORT_DOCUMENT_FORMAT;
 export const VERIFICATION_URL = 'https://www.blackboxsentinel.com/verification';
@@ -70,10 +78,28 @@ function line(label: string, value: string | number | boolean | null): string {
  * arithmetic derivation of one (§1 [A] — no AI in the evidence zone).
  */
 export function renderEvidenceText(evidence: EvidenceZone): string {
+  // ═══ Brief 43 §C — THIS RENDERER IS FED ATTACKER-CONTROLLED JSON ════════════════════════════
+  //
+  // The verifier calls this on `payload.evidence`, which comes straight out of a JSON blob in
+  // an uploaded file. The old code dereferenced `evidence.event.eventId`, `.location.included`,
+  // `.capture.chunks` and `.custody.commitmentCount` unguarded, so a document carrying
+  // `"evidence":{}` — which passes the parser's truthiness check, because `{}` is truthy —
+  // threw a TypeError instead of producing a verdict. That is denial of verification: hand the
+  // court's expert a mangled file and the tool reports an internal error rather than TAMPERED.
+  //
+  // Every dereference below is now total. The coercions are deliberately IDENTITY-PRESERVING on
+  // well-formed evidence — a real object is returned unchanged, a real array is returned
+  // unchanged — because this renderer DEFINES THE SIGNATURE. `renderedHash` of its output is
+  // bound into every attestation ever issued, so a single byte of drift here would turn every
+  // previously signed report TAMPERED. A fixture test pins that byte-for-byte.
+  const asRecord = <T>(v: unknown): T => ((v !== null && typeof v === 'object' ? v : {}) as T);
+  const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+  const ev = asRecord<EvidenceZone>(evidence);
   const out: string[] = [];
   out.push('BLACK BOX — CERTIFIED EVIDENCE RECORD');
-  out.push(`Evidence format version: ${evidence.formatVersion}`);
-  out.push(`Generated (UTC): ${evidence.generatedAt}`);
+  out.push(`Evidence format version: ${ev.formatVersion}`);
+  out.push(`Generated (UTC): ${ev.generatedAt}`);
   out.push('');
   out.push('All times are UTC (ISO 8601). This section is a factual system record and an');
   out.push('integrity check of the survivor’s own recording. It contains no interpretation,');
@@ -81,7 +107,7 @@ export function renderEvidenceText(evidence: EvidenceZone): string {
   out.push('');
 
   out.push('-- EVENT --');
-  const e = evidence.event;
+  const e = asRecord<EvidenceZone['event']>(ev.event);
   out.push(line('Event id', e.eventId));
   out.push(line('Opened', e.openedAt));
   out.push(line('Closed', e.closedAt));
@@ -96,13 +122,15 @@ export function renderEvidenceText(evidence: EvidenceZone): string {
   out.push('');
 
   out.push('-- LOCATION --');
-  if (!evidence.location.included) {
+  const location = asRecord<EvidenceZone['location']>(ev.location);
+  if (!location.included) {
     out.push('Not included in this report.');
-  } else if (evidence.location.pointCount === 0) {
+  } else if (location.pointCount === 0) {
     out.push('Included; no location points were recorded.');
   } else {
-    out.push(line('Points', evidence.location.pointCount));
-    for (const p of evidence.location.points) {
+    out.push(line('Points', location.pointCount));
+    for (const rawPoint of asArray(location.points)) {
+      const p = asRecord<LocationEvidence>(rawPoint);
       out.push(
         `  ${p.at}  lat ${p.lat}  lon ${p.lon}  accuracy ${p.accuracyM === null ? 'unknown' : `${p.accuracyM} m`}`,
       );
@@ -111,20 +139,22 @@ export function renderEvidenceText(evidence: EvidenceZone): string {
   out.push('');
 
   out.push('-- NOTIFICATIONS --');
-  if (!evidence.notifications.included) {
+  const notifications = asRecord<EvidenceZone['notifications']>(ev.notifications);
+  if (!notifications.included) {
     out.push('Not included in this report.');
-  } else if (evidence.notifications.count === 0) {
+  } else if (notifications.count === 0) {
     out.push('Included; no notification records.');
   } else {
-    out.push(line('Records', evidence.notifications.count));
-    for (const n of evidence.notifications.records) {
+    out.push(line('Records', notifications.count));
+    for (const rawRecord of asArray(notifications.records)) {
+      const n = asRecord<NotificationEvidence>(rawRecord);
       out.push(`  ${n.at}  ${n.kind}  via ${n.channel}  ${n.status}`);
     }
   }
   out.push('');
 
   out.push('-- CAPTURE --');
-  const c = evidence.capture;
+  const c = asRecord<CaptureEvidence>(ev.capture);
   if (!c.included) {
     out.push('Not included in this report.');
   } else {
@@ -140,7 +170,8 @@ export function renderEvidenceText(evidence: EvidenceZone): string {
     out.push(line('Chunks FAILING their capture-time commitment', c.chunksFailed));
     out.push('');
     out.push('  seq  recorded (UTC)              bytes  enc  commitment (sha256 of plaintext)  match');
-    for (const ch of c.chunks) {
+    for (const rawChunk of asArray(c.chunks)) {
+      const ch = asRecord<ChunkEvidence>(rawChunk);
       const match = ch.commitmentVerified === null ? 'n/a' : ch.commitmentVerified ? 'yes' : 'NO';
       const commitment = ch.commitment ?? 'none recorded';
       out.push(
@@ -153,9 +184,10 @@ export function renderEvidenceText(evidence: EvidenceZone): string {
   out.push('');
 
   out.push('-- CUSTODY --');
-  out.push(line('Commitments on record', evidence.custody.commitmentCount));
-  out.push(line('Commitments hash', evidence.custody.commitmentsHash));
-  out.push(line('Envelope algorithm', evidence.custody.algorithm));
+  const custody = asRecord<EvidenceZone['custody']>(ev.custody);
+  out.push(line('Commitments on record', custody.commitmentCount));
+  out.push(line('Commitments hash', custody.commitmentsHash));
+  out.push(line('Envelope algorithm', custody.algorithm));
   out.push('');
   out.push('A "commitment" is the SHA-256 of a recording chunk taken ON THE DEVICE BEFORE');
   out.push('encryption, and recorded by BLACK BOX at the moment of capture. "match: yes"');
@@ -275,7 +307,11 @@ export interface ParsedReport {
   statement: string;
 }
 
-function between(source: string, open: string, close: string): string | null {
+function between(source: unknown, open: string, close: string): string | null {
+  // §C — `source` is a file's contents, or whatever a caller had instead of one. A failed read
+  // hands this null; a caller that JSON-parsed first hands it an object. Neither is a string,
+  // and `null.indexOf` is a thrown TypeError where a null return is the honest answer.
+  if (typeof source !== 'string') return null;
   const start = source.indexOf(open);
   if (start === -1) return null;
   const from = start + open.length;
@@ -286,7 +322,7 @@ function between(source: string, open: string, close: string): string | null {
 
 /** Extract the machine-readable payload and the visible zones. Returns null when the file
  *  is not a BLACK BOX certified report at all (as opposed to a tampered one). */
-export function parseReportDocument(html: string): ParsedReport | null {
+export function parseReportDocument(html: unknown): ParsedReport | null {
   const rawJson = between(html, ATTESTATION_OPEN, ATTESTATION_CLOSE);
   const evidenceText = between(html, EVIDENCE_OPEN, EVIDENCE_CLOSE);
   if (rawJson === null || evidenceText === null) return null;

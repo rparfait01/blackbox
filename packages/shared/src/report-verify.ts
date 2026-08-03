@@ -128,7 +128,45 @@ export async function verifyReportSignature(
  * @param html the file's contents
  */
 export async function verifyReportDocument(
-  html: string,
+  html: unknown,
+  opts?: { trustedSigners?: readonly TrustedSigner[] },
+): Promise<VerificationResult> {
+  try {
+    return await verifyReportDocumentInner(html, opts);
+  } catch (err) {
+    // ═══ Brief 43 §C — A BACKSTOP, AND REACHING IT IS A BUG ═══════════════════════════════════
+    //
+    // Everything above this line is written to be total on hostile input; this catch exists
+    // because "written to be total" is a claim about code I have read, and the input is a file
+    // an adversary chose. It fails CLOSED to `unverifiable`, never to a verdict:
+    //
+    //   NOT `certified`   — obviously. We never guess in the reassuring direction.
+    //   NOT `tampered`    — a crash is not evidence of alteration, and saying so would let a
+    //                       verifier bug slander an authentic document in front of a court.
+    //   NOT `not_a_report`— that asserts we looked and found no evidence record. We did not
+    //                       finish looking.
+    //
+    // `unverifiable` is the one honest answer: the check did not complete, so the reader is told
+    // to check elsewhere rather than being handed a conclusion. The error text is deliberately
+    // NOT included — it is internal detail about a file the reader already has, and the page
+    // that used to print `String(e)` was leaking exactly that.
+    void err;
+    return {
+      verdict: 'unverifiable',
+      headline: 'Could not complete the check on this file',
+      detail:
+        'The verifier could not finish checking this document. That is a statement about the ' +
+        'check, not about the document: nothing here says it is altered, and nothing says it is ' +
+        'authentic. Verify the signature against the published BLACK BOX key and algorithm using ' +
+        'your own tooling, and please report this file — a document that cannot be checked is a ' +
+        'defect in the verifier.',
+      trustSetVersion: TRUST_SET_VERSION,
+    };
+  }
+}
+
+async function verifyReportDocumentInner(
+  html: unknown,
   opts?: { trustedSigners?: readonly TrustedSigner[] },
 ): Promise<VerificationResult> {
   const parsed = parseReportDocument(html);
@@ -143,11 +181,41 @@ export async function verifyReportDocument(
 
   const { payload, evidenceText, statement } = parsed;
   const { attestation } = payload;
+
+  // ═══ §C — A DOCUMENT CAN CARRY A NUMBER JSON CANNOT ROUND-TRIP ══════════════════════════════
+  //
+  // `canonicalize` refuses non-finite numbers, and that refusal is CORRECT: a hash over a value
+  // that cannot round-trip would verify against nothing. I had reasoned it was unreachable here
+  // because parsed JSON cannot contain Infinity — and the corpus disproved that in one line.
+  // `JSON.parse('1e999')` is `Infinity`, by overflow. So `"totalBytes":1e999` anywhere in the
+  // evidence zone made canonicalization throw out of the verifier: denial of verification from a
+  // single field, no forgery required.
+  //
+  // The refusal stays. What changes is that it becomes a FINDING rather than a crash. A hash that
+  // cannot be computed cannot equal the signed one, so it compares unequal and the ordinary
+  // verdict logic runs — and the result is honest, because BLACK BOX could not have signed such a
+  // document in the first place: the signing path canonicalizes with this same function.
+  const safeCanonicalHash = async (value: unknown): Promise<string | null> => {
+    try {
+      return await canonicalHash(value);
+    } catch {
+      return null;
+    }
+  };
+  const safeCanonicalize = (value: unknown): string | null => {
+    try {
+      return canonicalize(value);
+    } catch {
+      return null;
+    }
+  };
   const signedEvidenceText = renderEvidenceText(payload.evidence);
   const statementInfo = { present: statement.trim().length > 0, note: STATEMENT_NOTE };
 
   // 1. The embedded evidence JSON must hash to what was signed.
-  const evidenceHashMatches = (await canonicalHash(payload.evidence)) === attestation.evidenceHash;
+  const evidenceCanonicalHash = await safeCanonicalHash(payload.evidence);
+  const evidenceHashMatches =
+    evidenceCanonicalHash !== null && evidenceCanonicalHash === attestation.evidenceHash;
   // 2. The VISIBLE text must hash to what was signed — editing what a reader sees is caught.
   const fileTextHash = await renderedHash(evidenceText);
   const renderedTextMatches = fileTextHash === attestation.renderedHash;
@@ -164,8 +232,9 @@ export async function verifyReportDocument(
   //    but that computation grants no trust whatsoever.
   const presentedFingerprint = await fingerprintSpki(payload.publicKey);
   const trusted = findSigner(presentedFingerprint, 'report', opts?.trustedSigners ?? TRUSTED_SIGNERS);
-  const signatureValid = await verifyReportSignature(
-    canonicalize(attestation),
+  const canonicalAttestation = safeCanonicalize(attestation);
+  const signatureValid = canonicalAttestation === null ? false : await verifyReportSignature(
+    canonicalAttestation,
     payload.signature,
     trusted ? trusted.spki : payload.publicKey,
   );

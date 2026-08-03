@@ -79,7 +79,15 @@ async function handleFile(file) {
   try {
     render(await verifyReportDocument(html, PUBLISHED_KEY));
   } catch (e) {
-    render({ verdict: 'not_a_report', headline: 'Could not read this file', detail: String(e) });
+    // Brief 43 §C — the verifier is now total and this is unreachable, but it stays as the last
+    // line of defence and no longer lies about what happened. It used to render 'not_a_report'
+    // with String(e) as the detail: a thrown TypeError was shown to a reader as a finding about
+    // their document, when it was a finding about our code. A failed READ is not a verdict.
+    render({
+      verdict: 'unverifiable',
+      headline: 'Could not complete the check on this file',
+      detail: 'The check did not finish. That says nothing about whether this document is authentic — verify it against the published BLACK BOX key with your own tooling, and please report the file.',
+    });
   }
 }
 

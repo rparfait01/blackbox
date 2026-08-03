@@ -66,7 +66,11 @@ export async function canonicalHash(value: unknown): Promise<string> {
  * that survives that normalization is a real change to what the document asserts.
  */
 export function normalizeRenderedText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
+  // §C — the text being normalized comes out of an uploaded document, and a caller that had
+  // something other than a string (a failed read, a JSON field that was a number) hit
+  // `null.replace` here. `String(x)` is the identity on strings, so every hash ever computed is
+  // unchanged; a non-string now normalizes to its printed form instead of throwing.
+  return String(text).replace(/\s+/g, ' ').trim();
 }
 
 /** SHA-256 (hex) of the normalized visible evidence text. */
