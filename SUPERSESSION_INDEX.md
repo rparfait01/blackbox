@@ -11,6 +11,8 @@ Answering "was Brief 12 §3 ever touched?" is one lookup here, never a forward r
 
 | Corrected | By | Current reading (first line) | Path |
 |---|---|---|---|
+| Brief 025 | Brief 053 | The anonymous tally was never gated on tenancy or zero-knowledge custody. Its own §1 says so: it | — |
+| Brief 026 | Brief 053 | Brief 26 is roughly half shipped, not unstarted. Briefs 36–39 built the SURVIVOR half — envelope | — |
 | Brief 041 §B | Brief 043 | Enumeration resistance is a property of the WORK PERFORMED, not of the response body. Two paths | — |
 | Brief 002 §C3 | Brief 040 | Sealed evidence is retained under a storage-layer retention rule, scoped to the vault prefix, | — |
 | Brief 002 §C3 | Brief 040 | The vault sealing scan covers every eligible object. Coverage is proven by a durable cursor, | — |
@@ -69,6 +71,7 @@ Recorded rather than silently tolerated. Collisions are Brief 34 §4 items and n
 - DUPLICATE brief number 36: BRIEF_036_FIX_A_STORAGE_HEALTH_AND_QUEUE.md and BRIEF_036_FIX_ENCRYPTION_STATE_MACHINE.md (recorded, not fatal)
 - DUPLICATE brief number 40: BRIEF_040_FIX_VAULT_COVERAGE_AND_RETENTION (1).md and BRIEF_040_FIX_VAULT_COVERAGE_AND_RETENTION.md (recorded, not fatal)
 - DUPLICATE brief number 42: BRIEF_042_BUILD_HEADERS_AND_SESSION_ROTATION (1).md and BRIEF_042_BUILD_HEADERS_AND_SESSION_ROTATION.md (recorded, not fatal)
+- DUPLICATE brief number 53: BRIEF_053_CLOSE_BACKLOG_CLOSURE_TALLY_ORG_CUSTODY (1).md and BRIEF_053_CLOSE_BACKLOG_CLOSURE_TALLY_ORG_CUSTODY.md (recorded, not fatal)
 - DUPLICATE brief number 26: BRIEF_26_REVIEW_ANSWERS.md and BRIEF_26_ZK_CUSTODY.md (recorded, not fatal)
 - DUPLICATE brief number 29: BRIEF_29_CERTIFIED_REPORT (1).md and BRIEF_29_CLOSING.md (recorded, not fatal)
 - DUPLICATE brief number 30: BRIEF_030_FIX_A_SIGNUP_CAPABILITY.md and BRIEF_30_SIGNUP_GATE.md (recorded, not fatal)

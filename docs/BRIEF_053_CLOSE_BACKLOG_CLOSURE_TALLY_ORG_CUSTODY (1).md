@@ -33,6 +33,14 @@ follow in this brief.
 
 ---
 
+## CORRECTIONS — None.
+
+*(This file is a DUPLICATE SEND of Brief 53. The authoritative text, carrying the corrections its
+§0 investigation established, is `BRIEF_053_CLOSE_BACKLOG_CLOSURE_TALLY_ORG_CUSTODY.md`. Kept so
+the delivered instructions are not lost; it supersedes nothing on its own.)*
+
+---
+
 ## §0 — VERIFY BEFORE BUILDING `[REPORT ONLY]`
 
 **Report and stop before writing code for §A.**
