@@ -11,7 +11,7 @@ import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
 import { backoffFor, canaryExemption, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
 import { clearEnvironmentCache, dispatchPosture, resolveEnvironment } from './lib/environment';
 import { ALERT_TYPES, operatorAlert, type AlertType } from './lib/operator-alert';
-import { countAttempt, outboundHeadroom } from './lib/limiter-store';
+import { countAttempt, outboundHeadroom, recordLimitEvent, SUSTAINED_LIMIT_THRESHOLD } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
 import { enqueueSeal, sealCoverage } from './lib/seal';
@@ -190,18 +190,34 @@ app.use('*', async (c, next) => {
         path: pathname,
       }),
     );
-    if (level === 'error') {
-      // Brief 41 §D / Brief 35 Fix B §D — sustained limiting on ONE identifier is a targeted
-      // attack on a specific survivor, not background noise, so it goes to the channel. Not
-      // awaited: the attacker's request must not be able to slow the Worker by triggering it.
-      c.executionCtx.waitUntil(
-        operatorAlert(
-          c.env,
-          'sustained_rate_limiting',
-          `${attempts} attempts against rule '${rule.key}' on a single identifier at ${pathname} — ${rule.reason}`,
-        ),
-      );
-    }
+    /**
+     * Brief 41 §D — SUSTAINED LIMITING, DETECTED ACROSS ISOLATES.
+     *
+     * The in-isolate `attempts` counter cannot carry this signal. Acceptance 12 proved it on
+     * production: 26 rapid attempts against one identifier produced 16 rejections and ZERO
+     * alerts, because the requests landed on several isolates and no single bucket ever passed
+     * the error threshold. "A targeted attack on a specific survivor" that only fires when the
+     * attacker happens to stay on one colo is not that signal.
+     *
+     * So a REFUSED request records itself in D1 and the count across isolates decides. The write
+     * happens only after the decision to refuse, so the ordinary request still reaches no
+     * database and §E4 holds — the cost lands on the attacker.
+     */
+    c.executionCtx.waitUntil(
+      (async () => {
+        const seen = await recordLimitEvent(c.env, identifier, rule.key, rule.windowMs);
+        if (seen != null && seen === SUSTAINED_LIMIT_THRESHOLD) {
+          // Exactly AT the threshold, so one attack raises one alert rather than one per request
+          // past it. Everything after is collapsed by the channel's own window anyway, but this
+          // keeps the D1 write cheap and the signal legible.
+          await operatorAlert(
+            c.env,
+            'sustained_rate_limiting',
+            `${seen} refused attempts against rule '${rule.key}' for a single identifier at ${pathname} within ${Math.round(rule.windowMs / 60000)} minutes — ${rule.reason}`,
+          );
+        }
+      })(),
+    );
     return c.json({ error: 'slow_down', retryAfterMs: decision.retryAfterMs }, 429, {
       'Retry-After': String(Math.ceil(decision.retryAfterMs / 1000)),
     });

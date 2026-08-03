@@ -121,3 +121,40 @@ export async function outboundHeadroom(env: Env, windowMs: number, max: number, 
     return { configured: false, summary: 'OUTBOUND: NOT MEASURED (counter unavailable)' };
   }
 }
+
+/**
+ * Brief 41 §D — SUSTAINED LIMITING, COUNTED ACROSS ISOLATES.
+ *
+ * Called ONLY for a request that has already been refused, so the normal path still reaches no
+ * database and §E4 holds. Returns the number of refusals recorded for this identifier and rule in
+ * the window, so the caller can decide whether this is background noise or one survivor being
+ * targeted.
+ *
+ * Fails open like everything else here: an unreadable counter returns null and the caller simply
+ * does not escalate. A missed alert is bad; a limiter that starts throwing on the auth path is
+ * worse.
+ */
+export async function recordLimitEvent(
+  env: Env,
+  identifier: string,
+  rule: string,
+  windowMs: number,
+  now = Date.now(),
+): Promise<number | null> {
+  try {
+    await env.DB.prepare('INSERT INTO limit_events (identifier, rule, createdAt) VALUES (?, ?, ?)')
+      .bind(identifier, rule, now)
+      .run();
+    const row = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM limit_events WHERE identifier = ? AND rule = ? AND createdAt >= ?',
+    )
+      .bind(identifier, rule, now - windowMs)
+      .first<{ n: number }>();
+    return Number(row?.n ?? 0);
+  } catch {
+    return null;
+  }
+}
+
+/** Refusals against ONE identifier in a window before it is treated as a targeted attack. */
+export const SUSTAINED_LIMIT_THRESHOLD = 15;
