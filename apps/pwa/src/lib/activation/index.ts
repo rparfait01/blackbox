@@ -25,6 +25,7 @@ import {
   uploadLocation,
   uploadOrigin,
   uploadTranscript,
+  uploadTranscriptionState,
 } from '@/lib/upload';
 import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
@@ -276,6 +277,15 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
       onFinal: (text, timestamp) => {
         const seq = append(newSessionId, text, timestamp);
         uploadTranscript(newSessionId, seq, text);
+        // First words prove it is running. Reported once — the service dedupes transitions.
+        uploadTranscriptionState(newSessionId, 'active', 'transcribing');
+      },
+      // Brief 50 §C — transcription failure REACHES the coordinator and the record instead of
+      // presenting as an empty panel. Recording is untouched by any of this: audio is the floor
+      // and transcription is never a precondition for it.
+      onStatus: ({ state, detail }) => {
+        log.error('transcription degraded', { state, detail });
+        uploadTranscriptionState(newSessionId, state, detail);
       },
       lang: navigator.language,
     });

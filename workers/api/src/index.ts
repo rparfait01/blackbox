@@ -2436,6 +2436,38 @@ app.post('/v1/events/:id/closure-lockout', async (c) => {
  * Deliberately advisory: nothing downstream trusts this over the per-chunk observation. It
  * exists so a capture that never uploaded a chunk at all can still explain itself.
  */
+/**
+ * Brief 50 §C — the device reports whether it is transcribing at all.
+ *
+ * Zero transcript fragments is AMBIGUOUS: silence, not-transcribing, or not-yet. Only the device
+ * knows which — Web Speech runs there and its failure is invisible to a server that simply
+ * receives nothing. So the device says, and the coordinator surface stops presenting an empty
+ * panel as though nobody spoke.
+ *
+ * Capture-path rules apply: this never gates anything, a malformed body is ignored rather than
+ * refused, and a failure to record the state is not allowed to affect the capture it describes.
+ */
+app.post('/v1/events/:id/transcription-state', async (c) => {
+  const eventId = c.req.param('id');
+  const parsed = await boundedJson<{ state?: unknown; detail?: unknown }>(c.req, LIMITS.captureJsonBodyBytes);
+  const state = ['active', 'degraded', 'unavailable'].includes(String(parsed.value?.state))
+    ? String(parsed.value?.state)
+    : null;
+  if (!state) {
+    // Never a refusal on the capture path — an unrecognised state is simply not recorded.
+    return c.json({ ok: true, recorded: false, reason: 'unrecognised_state' }, 200);
+  }
+  const detail = clampString(parsed.value?.detail, 300).text || null;
+  try {
+    await c.env.DB.prepare('UPDATE events SET transcriptionState = ?, transcriptionDetail = ? WHERE id = ?')
+      .bind(state, detail, eventId)
+      .run();
+  } catch {
+    return c.json({ ok: true, recorded: false, reason: 'store_unavailable' }, 200);
+  }
+  return c.json({ ok: true, recorded: true }, 200);
+});
+
 app.post('/v1/events/:id/encryption-state', async (c) => {
   const eventId = c.req.param('id');
   const body = ((await boundedJson<{ state?: string; degradation?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { state?: string; degradation?: string; reason?: string }));

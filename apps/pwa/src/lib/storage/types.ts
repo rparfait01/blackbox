@@ -29,7 +29,7 @@ export interface SessionRecord {
   hmacSecret?: string;
 }
 
-export type UploadKind = 'chunk' | 'locations' | 'classifications' | 'transcripts' | 'origin' | 'close';
+export type UploadKind = 'chunk' | 'locations' | 'classifications' | 'transcripts' | 'origin' | 'close' | 'transcription-state';
 
 /** A pending upload, persisted so uploads survive offline windows and reloads. */
 export interface UploadQueueItem {

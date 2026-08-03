@@ -69,7 +69,27 @@ function ssrMap(state: ContactState): string {
 
 function transcriptHtml(state: ContactState): string {
   if (state.latestTranscriptFragments.length === 0) {
-    return '<div class="muted">Listening…</div>';
+    // Brief 50 §C — an empty panel must never read as "nothing was said".
+    //
+    // Zero fragments is ambiguous between silence, not-transcribing, and not-yet. "Listening…"
+    // asserts the first, which is the one thing we cannot know, and it was shown throughout a
+    // capture that was never transcribed at all. The device reports which it is; absent that
+    // report we say we do not know, rather than guessing in the reassuring direction.
+    const t = state.transcription;
+    if (t.state === 'unavailable') {
+      return `<div class="muted stream-warn">NOT TRANSCRIBED — this device could not transcribe speech. Audio is still recording${
+        t.detail ? ` (${escapeHtml(t.detail)})` : ''
+      }.</div>`;
+    }
+    if (t.state === 'degraded') {
+      return `<div class="muted stream-warn">TRANSCRIPTION DEGRADED — words may be missing. Audio is still recording${
+        t.detail ? ` (${escapeHtml(t.detail)})` : ''
+      }.</div>`;
+    }
+    if (t.state === 'active') {
+      return '<div class="muted">Transcribing — nothing heard yet.</div>';
+    }
+    return '<div class="muted">Waiting for the device to report whether it is transcribing.</div>';
   }
   return state.latestTranscriptFragments
     .map((f) => `<div class="tline">${escapeHtml(f.text)}</div>`)
@@ -275,21 +295,21 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   </section>
 
   <section class="sec sec-camera">
-    <div class="label">Live camera</div>
+    <div class="label">Live camera <span class="stream-state" id="camState">—</span></div>
     ${
       state.hasVideo
-        ? '<video id="cam" class="camera" controls playsinline></video><button id="camReload" class="cam-reload">↻ Refresh feed</button>'
+        ? '<video id="cam" class="camera" controls playsinline muted></video>'
         : '<div class="map-empty">No camera feed — audio-only capture.</div>'
     }
   </section>
 
   <section class="sec sec-transcript">
-    <div class="label">Live transcript · secondary (evidence/replay)</div>
+    <div class="label">Live transcript · secondary (evidence/replay) <span class="stream-state" id="transcriptState">—</span></div>
     <div class="transcript transcript-secondary" id="transcript">${transcriptHtml(state)}</div>
   </section>
 
   <section class="sec">
-    <div class="label">Audio · Live</div>
+    <div class="label">Audio <span class="stream-state" id="audioState">—</span></div>
     <audio id="audio" class="audio" preload="auto"></audio>
     <button id="audioStart" class="audio-start" hidden>Tap to start audio</button>
     <div class="muted" id="audioNote"></div>
@@ -800,27 +820,62 @@ const CLIENT_JS = `
   }
   applyClosure(S.closure);
 
-  // ---- live camera (replays captured video feed; prominent when present) ----
-  (function(){
-    var cam=el('cam'); if(!cam) return;
-    function load(){ cam.src=api('/audio/full'); }
-    load();
-    var rb=el('camReload'); if(rb){ rb.onclick=load; }
-  })();
+  // ---- stream state badges: every stream says live / degraded / stopped ----
+  //
+  // Brief 33 Fix A's rule applied to the DATA rather than the view. A stream that silently stops
+  // is worse than one that reports stopped: a coordinator watching a still frame cannot tell
+  // "nothing is happening" from "you stopped receiving ten minutes ago", and those demand
+  // opposite responses.
+  function setState(id, kind, text){
+    var n=el(id); if(!n) return;
+    n.textContent=text; n.className='stream-state ss-'+kind;
+  }
 
-  // ---- progressive audio (MSE) with /audio/full fallback ----
-  var audio=el('audio'), note=el('audioNote'), startBtn=el('audioStart');
+  // ---- media: ONE MSE path, driven by what was ACTUALLY stored ----
+  var audio=el('audio'), note=el('audioNote'), startBtn=el('audioStart'), cam=el('cam');
   var knownLatest=S.audio.latestSequence, mime=S.audio.mimeType;
-  function normMime(m){ if(!m) return ''; if(m.indexOf('audio/mp4')===0) return 'audio/mp4; codecs="mp4a.40.2"'; if(m.indexOf('audio/webm')===0) return 'audio/webm; codecs="opus"'; if(m.indexOf('video/webm')===0) return 'video/webm; codecs="vp8,opus"'; return m; }
-  function tryAutoplay(){ var p=audio.play(); if(p&&p.catch){ p.catch(function(){ startBtn.hidden=false; startBtn.onclick=function(){ audio.play(); startBtn.hidden=true; }; }); } }
+
+  // THE CODEC IS DERIVED, NEVER GUESSED.
+  //
+  // This function used to map every video/webm to codecs="vp8,opus". The recorder produces VP9
+  // (vp09.00.10.08). MediaSource.isTypeSupported says yes to the VP8 string, so MSE engaged, a
+  // SourceBuffer was created declaring VP8, VP9 bytes were appended to it, and nothing decoded.
+  // No picture AND no voice — the audio is muxed inside that same stream — which is exactly the
+  // Visible-mode failure this brief was written about.
+  //
+  // A codec mismatch MSE accepts and cannot decode is silent failure. The stored mimeType already
+  // carries its own codecs parameter, recorded from the actual MediaRecorder, so the honest
+  // answer is to use it verbatim. Synthesis happens ONLY when the stored type carries no codecs
+  // at all, and even then it is a last resort rather than an override.
+  function normMime(m){
+    if(!m) return '';
+    if(m.indexOf('codecs')!==-1) return m;           // recorded reality — never second-guess it
+    if(m.indexOf('audio/mp4')===0) return 'audio/mp4; codecs="mp4a.40.2"';
+    if(m.indexOf('audio/webm')===0) return 'audio/webm; codecs="opus"';
+    return m;                                        // unknown: let the browser decide, do not invent
+  }
+  var isVideo = (mime||'').indexOf('video/')===0;
+  // Video plays in the <video> element. Feeding a video stream to <audio> renders no picture no
+  // matter how correct the codec is, which is the second half of why nothing was visible.
+  var media = (isVideo && cam) ? cam : audio;
+  var mediaStateId = (media===cam) ? 'camState' : 'audioState';
+  function tryAutoplay(){ var p=media.play(); if(p&&p.catch){ p.catch(function(){ startBtn.hidden=false; startBtn.onclick=function(){ media.play(); startBtn.hidden=true; }; }); } }
   var useMse=false, nm=normMime(mime);
   if(knownLatest!=null && window.MediaSource && nm && window.MediaSource.isTypeSupported(nm)){
     useMse=true;
-    var ms=new MediaSource(); audio.src=URL.createObjectURL(ms);
+    var ms=new MediaSource(); media.src=URL.createObjectURL(ms);
     var sb=null, nextSeq=0, queue=[], fetching=false;
     ms.addEventListener('sourceopen',function(){ sb=ms.addSourceBuffer(nm); sb.addEventListener('updateend',pump); pumpFetch(); });
-    function pump(){ if(sb && !sb.updating && queue.length){ try{ sb.appendBuffer(queue.shift()); }catch(e){} } catchUp(); }
-    function catchUp(){ try{ if(audio.buffered.length){ var end=audio.buffered.end(audio.buffered.length-1); if(end-audio.currentTime>6){ audio.currentTime=end-2; } } }catch(e){} }
+    // A decode failure is DECLARED, not swallowed. appendBuffer throwing is exactly what the
+    // VP8/VP9 mismatch produced, and the old empty catch is why it presented as silence.
+    function pump(){
+      if(sb && !sb.updating && queue.length){
+        try{ sb.appendBuffer(queue.shift()); }
+        catch(e){ setState(mediaStateId,'degraded','DEGRADED — cannot decode'); note.textContent='This stream could not be decoded by this browser.'; }
+      }
+      catchUp();
+    }
+    function catchUp(){ try{ if(media.buffered.length){ var end=media.buffered.end(media.buffered.length-1); if(end-media.currentTime>6){ media.currentTime=end-2; } } }catch(e){} }
     function pumpFetch(){
       if(fetching) return;
       if(knownLatest==null || nextSeq>knownLatest){ return; }
@@ -829,11 +884,13 @@ const CLIENT_JS = `
         fetching=false;
         if(buf){ queue.push(new Uint8Array(buf)); nextSeq++; pump(); }
         pumpFetch();
-      }).catch(function(){ fetching=false; });
+      }).catch(function(){ fetching=false; setState(mediaStateId,'degraded','DEGRADED — fetch failed'); });
     }
     window.__pumpAudio=function(latest){ if(latest!=null){ knownLatest=latest; } pumpFetch(); };
     tryAutoplay();
-    note.textContent='Live audio · streaming';
+    setState(mediaStateId,'live', isVideo ? 'LIVE' : 'LIVE');
+    media.addEventListener('error',function(){ setState(mediaStateId,'degraded','DEGRADED — playback error'); });
+    note.textContent = isVideo ? 'Live video + audio · streaming' : 'Live audio · streaming';
   } else if(knownLatest!=null){
     // No MSE (iOS Safari): /audio/full is a byte-concatenation of independent
     // recorder segments, so a native <audio controls> reads a bogus 00:00

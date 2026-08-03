@@ -224,6 +224,8 @@ describe('§A — the capture-path exemption covers every capture route that exi
       '/v1/events/:id/origin',
       '/v1/events/:id/reason-triggered',
       '/v1/events/:id/encryption-state',
+      // Brief 50 §C — a small state report from the device, not evidence ingest.
+      '/v1/events/:id/transcription-state',
     ]);
 
     for (const route of found) {

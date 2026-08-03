@@ -57,6 +57,11 @@ export interface ContactState {
   audio: { latestSequence: number | null; mimeType: string | null };
   /** True when the captured media is video (camera feed exists). Fix Brief 5 D5. */
   hasVideo: boolean;
+  /**
+   * Brief 50 §C — is the DEVICE transcribing? Zero fragments is ambiguous between silence, not
+   * transcribing, and not yet; only the device can say which, and null means it has not said.
+   */
+  transcription: { state: 'active' | 'degraded' | 'unavailable' | null; detail: string | null };
   /** Frozen ORIGIN snapshot — immutable initial-contact anchor. Fix Brief 5 D1. */
   origin: OriginSnapshot | null;
   /** Latched, monotonic situation summary assembled from detected facts. D2/D3. */
@@ -246,7 +251,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt FROM events WHERE id = ?',
+    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt, transcriptionState, transcriptionDetail FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -266,6 +271,8 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       reasonSecured: string | null;
       reasonTriggered: string | null;
       closureLockoutAt: number | null;
+      transcriptionState: string | null;
+      transcriptionDetail: string | null;
     }>();
   if (!event) {
     return null;
@@ -396,6 +403,10 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
     latestTranscriptFragments: transcripts.results ?? [],
     audio: { latestSequence: audio?.sequence ?? null, mimeType: audio?.mimeType ?? null },
     hasVideo: (audio?.mimeType ?? '').startsWith('video/'),
+    transcription: {
+      state: (event.transcriptionState as 'active' | 'degraded' | 'unavailable' | null) ?? null,
+      detail: event.transcriptionDetail ?? null,
+    },
     origin,
     situation,
     closure: {

@@ -52,18 +52,39 @@ export interface TranscriptionOptions {
   onInterim?: (text: string) => void;
   /** BCP-47 language tag. Defaults to navigator.language, then 'en-US'. */
   lang?: string;
+  /**
+   * Brief 50 §C — transcription state, reported upward so a failure is DECLARED.
+   *
+   * Fires once per transition, not per event. `unavailable` means nothing will be transcribed for
+   * this capture; `degraded` means a recoverable error occurred. Recording continues in both
+   * cases — transcription is never a precondition for capture.
+   */
+  onStatus?: (status: { state: 'unavailable' | 'degraded'; detail: string }) => void;
 }
 
 /**
  * Continuous Web Speech transcription with auto-restart. Final fragments are
  * emitted via `onFinal` (the activation lifecycle routes them into the W3
  * transcript buffer); interim text is kept available for the classifier in real
- * time. If SpeechRecognition is unsupported, this is a silent no-op — recording
- * continues regardless.
+ * time.
+ *
+ * ═══ Brief 50 §C — FAILURE IS DECLARED, NEVER SILENT ═════════════════════════════════════════
+ *
+ * This class used to document itself as "a silent no-op" when SpeechRecognition was unsupported,
+ * and that sentence was the defect. Recording continued, nothing was transcribed, and the
+ * coordinator was shown a blank summary panel — which does not read as "we could not transcribe."
+ * It reads as NOTHING WAS SAID, at the one moment that distinction decides whether someone comes.
+ *
+ * Every terminal failure now routes to `onStatus`, which the activation lifecycle reports to the
+ * survivor, the coordinator surface, and the record. Recording still continues regardless —
+ * transcription is not a precondition for capture, and it never becomes one — but its ABSENCE is
+ * now a stated fact rather than an empty panel.
  */
 export class TranscriptionService {
   private recognition: SpeechRecognitionLike | null = null;
   private active = false;
+  /** Last reported state, so a repeating error does not spam one transition. */
+  private lastStatus: 'unavailable' | 'degraded' | null = null;
   private latestInterim = '';
   private readonly options: TranscriptionOptions;
   private readonly lang: string;
@@ -81,13 +102,29 @@ export class TranscriptionService {
     return this.latestInterim;
   }
 
+  /**
+   * Report a transcription state upward. Never throws: a failure to report a failure must not
+   * take down the capture it was reporting on.
+   */
+  private report(state: 'unavailable' | 'degraded', detail: string): void {
+    if (this.lastStatus === state) return; // one report per transition, not per event
+    this.lastStatus = state;
+    try {
+      this.options.onStatus?.({ state, detail });
+    } catch {
+      /* reporting is best-effort; recording is not */
+    }
+  }
+
   start(): void {
     if (this.active) {
       return;
     }
     const Ctor = getRecognitionCtor();
     if (!Ctor) {
+      // NOT a silent no-op. The browser cannot transcribe; say so, and keep recording.
       log.debug('SpeechRecognition unsupported; transcription disabled');
+      this.report('unavailable', 'This browser cannot transcribe speech. Audio is still recording.');
       return;
     }
     this.active = true;
@@ -103,9 +140,19 @@ export class TranscriptionService {
       recognition.maxAlternatives = 1;
       recognition.onresult = (event) => this.handleResult(event);
       recognition.onerror = (event) => {
-        // 'no-speech' and 'aborted' are routine; everything else is logged.
+        // 'no-speech' and 'aborted' are routine; everything else is logged AND declared.
         if (event.error !== 'no-speech' && event.error !== 'aborted') {
           log.error('speech recognition error', event.error);
+          // A denied or unavailable microphone for recognition is the case Brief 50 §0.2 raised:
+          // recognition opens its OWN mic and can lose that race with the recorder. Whatever the
+          // cause, the coordinator must not read the result as silence.
+          const terminal = event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture';
+          this.report(
+            terminal ? 'unavailable' : 'degraded',
+            terminal
+              ? 'Speech transcription could not access the microphone. Audio is still recording.'
+              : `Speech transcription error (${event.error}). Audio is still recording.`,
+          );
         }
       };
       recognition.onend = () => {
@@ -122,6 +169,7 @@ export class TranscriptionService {
       this.recognition = recognition;
     } catch (error) {
       log.error('speech recognition start failed', error);
+      this.report('unavailable', 'Speech transcription could not start. Audio is still recording.');
       this.active = false;
     }
   }

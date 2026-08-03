@@ -305,6 +305,36 @@ export function uploadOrigin(sessionId: string, origin: Record<string, unknown>)
   }).then(() => scheduleDrain(0));
 }
 
+/**
+ * Brief 50 §C — tell the server whether this device is transcribing at all.
+ *
+ * Zero transcript fragments is ambiguous between silence, not-transcribing, and not-yet, and only
+ * the device can resolve it: Web Speech runs here and its failure is invisible to a server that
+ * simply receives nothing. Without this the coordinator sees an empty panel that reads as "nothing
+ * was said", which is the Brief 50 §0.2 failure exactly.
+ *
+ * Fire-and-forget, and deliberately NOT queued through the retry pipeline: this is a status, not
+ * evidence. If it does not arrive the panel says it is waiting to hear, which is honest. Nothing
+ * about capture depends on it.
+ */
+export function uploadTranscriptionState(
+  sessionId: string,
+  state: 'active' | 'degraded' | 'unavailable',
+  detail: string,
+): void {
+  if (!uploadsEnabled) {
+    return;
+  }
+  void enqueueUpload({
+    sessionId,
+    kind: 'transcription-state',
+    payload: { state, detail },
+    attempts: 0,
+    nextAttemptAt: 0,
+    createdAt: Date.now(),
+  }).then(() => scheduleDrain(0));
+}
+
 export function uploadTranscript(sessionId: string, sequence: number, text: string): void {
   if (!uploadsEnabled) {
     return;

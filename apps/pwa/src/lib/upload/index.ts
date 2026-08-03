@@ -5,6 +5,7 @@ export {
   uploadLocation,
   uploadClassification,
   uploadTranscript,
+  uploadTranscriptionState,
   uploadOrigin,
   resumeUploads,
 } from './upload-manager';
