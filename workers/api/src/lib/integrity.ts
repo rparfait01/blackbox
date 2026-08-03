@@ -15,6 +15,7 @@
 import { sha256Hex } from '@blackbox/shared';
 import { runVaultScan } from './vault-scan';
 import type { Env } from '../types';
+import { operatorAlert } from './operator-alert';
 
 export const GENESIS = '0'.repeat(64);
 
@@ -173,6 +174,12 @@ export async function appendToChain(
       // Deliberately loud: a production deployment without this binding is a
       // misconfiguration, and the chain's correctness depends on it.
       console.log(JSON.stringify({ level: 'error', alert: 'integrity_do_unbound', eventId }));
+      // Brief 35 Fix B §D — to the channel as well. NOT awaited: this sits on the capture path,
+      // and a chunk must never wait on an alert about configuration. The D1 write behind it is a
+      // single statement, so the window is claimed in practice; if the isolate is reclaimed first
+      // the log above still stands. Capture latency outranks alert certainty here, and that
+      // ordering is deliberate.
+      void operatorAlert(env, 'integrity_do_unbound', `INTEGRITY_DO binding absent while appending for event ${eventId}`);
       const head = await getHead(env, eventId);
       const direct = await appendAtSequence(env, {
         eventId,

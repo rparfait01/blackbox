@@ -23,6 +23,7 @@
 import { hashBytes, openInvestigation } from './integrity';
 import { audit } from './audit';
 import type { Env } from '../types';
+import { operatorAlert } from './operator-alert';
 
 /** Objects examined per run. Small on purpose: the 20s job bound is not to be spent here. */
 export const SCAN_BATCH = 25;
@@ -230,5 +231,10 @@ export async function runVaultScan(env: Env, workerOrigin: string): Promise<void
       }),
     );
     await audit(env, null, 'vault.scan_backlog', null, { consecutive, backlog });
+    await operatorAlert(
+      env,
+      'vault_backlog',
+      `vault scan ended ${consecutive} consecutive passes with ${backlog} unverified object(s) — coverage is falling behind`,
+    );
   }
 }

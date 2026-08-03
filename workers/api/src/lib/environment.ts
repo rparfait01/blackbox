@@ -38,6 +38,7 @@
  * gate.
  */
 import type { Env } from '../types';
+import { operatorAlert } from './operator-alert';
 
 export type EnvironmentVerdict = 'PRODUCTION' | 'NON_PRODUCTION' | 'INDETERMINATE';
 
@@ -121,6 +122,9 @@ export async function mayDispatchExternally(env: Env): Promise<{ allowed: boolea
         action: 'dispatched anyway',
       }),
     );
+    // §D — the channel. Deliberately not awaited into the caller's latency: dispatch proceeds
+    // whether or not the alert lands, because the alert is about the environment, not the message.
+    void operatorAlert(env, 'environment_indeterminate', identity.detail);
     return { allowed: true, identity };
   }
   return { allowed: identity.verdict === 'PRODUCTION', identity };

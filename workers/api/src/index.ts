@@ -10,6 +10,7 @@ import { vaultCoverage } from './lib/vault-scan';
 import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
 import { backoffFor, canaryExemption, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
 import { clearEnvironmentCache, dispatchPosture, resolveEnvironment } from './lib/environment';
+import { operatorAlert } from './lib/operator-alert';
 import { countAttempt, outboundHeadroom } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
@@ -155,7 +156,12 @@ app.use('*', async (c, next) => {
   const identifier = await identifierForLimit(c);
   const attempts = countAttempt(`${rule.key}:${identifier}`, rule.windowMs);
   if (attempts === null) {
-    console.log(JSON.stringify({ limiter: 'failed_open', rule: rule.key, path: pathname }));
+    console.log(JSON.stringify({ level: 'error', limiter: 'failed_open', rule: rule.key, path: pathname }));
+    // §E3 — failing open is correct, and it must never be silent: the limiter is off for this
+    // request and an operator has to know the control is not currently protecting anything.
+    c.executionCtx.waitUntil(
+      operatorAlert(c.env, 'limiter_store_failed_open', `limiter could not count '${rule.key}' at ${pathname} — request ALLOWED`),
+    );
     return next();
   }
 
@@ -184,6 +190,18 @@ app.use('*', async (c, next) => {
         path: pathname,
       }),
     );
+    if (level === 'error') {
+      // Brief 41 §D / Brief 35 Fix B §D — sustained limiting on ONE identifier is a targeted
+      // attack on a specific survivor, not background noise, so it goes to the channel. Not
+      // awaited: the attacker's request must not be able to slow the Worker by triggering it.
+      c.executionCtx.waitUntil(
+        operatorAlert(
+          c.env,
+          'sustained_rate_limiting',
+          `${attempts} attempts against rule '${rule.key}' on a single identifier at ${pathname} — ${rule.reason}`,
+        ),
+      );
+    }
     return c.json({ error: 'slow_down', retryAfterMs: decision.retryAfterMs }, 429, {
       'Retry-After': String(Math.ceil(decision.retryAfterMs / 1000)),
     });
@@ -2315,6 +2333,13 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
       }),
     );
     await audit(c.env, eventId, 'encryption.undeclared_plaintext', null, { sequence, policy });
+    c.executionCtx.waitUntil(
+      operatorAlert(
+        c.env,
+        'plaintext_chunk_undeclared',
+        `event ${eventId} sequence ${sequence}: capture chunk arrived unencrypted with NO declaration (policy ${policy})`,
+      ),
+    );
   } else if (observation.state === 'UNENCRYPTED_DECLARED') {
     // Legitimate (FAILED_TERMINAL) but never silent — it is recorded with its reason so
     // the report can state why this capture is not confidential.

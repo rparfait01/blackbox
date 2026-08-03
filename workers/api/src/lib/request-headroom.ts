@@ -20,6 +20,7 @@
  */
 
 import type { Env } from '../types';
+import { operatorAlert } from './operator-alert';
 
 /** Free tier is 100k requests/day. Set PLAN_DAILY_REQUESTS when the plan changes. */
 export const DEFAULT_DAILY_LIMIT = 100_000;
@@ -109,6 +110,11 @@ export async function requestHeadroom(env: Env): Promise<RequestHeadroom> {
         limit,
         percent: Math.round(fraction * 100),
       }),
+    );
+    await operatorAlert(
+      env,
+      'request_headroom_low',
+      `daily Workers requests at ${Math.round(fraction * 100)}% of the ${limit} limit (${used} used) — the alert path fails when it is reached`,
     );
   }
   return {

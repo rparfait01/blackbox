@@ -36,6 +36,7 @@
  */
 
 import type { Env } from '../types';
+import { operatorAlert } from './operator-alert';
 import { audit } from './audit';
 import { isReservedDestination, isReservedEmail, isReservedPhone } from '../channels/reserved';
 
@@ -246,6 +247,12 @@ export async function assertCanaryContactsReserved(env: Env): Promise<void> {
         channel: r.channel,
       }),
     );
+    // Brief 35 Fix B §D — and to the channel, not only the log.
+    await operatorAlert(
+      env,
+      'routable_contact_on_canary_account',
+      `canary account ${r.userId} holds a ${r.channel} contact that can actually receive messages`,
+    );
     await audit(env, null, 'canary.routable_contact', null, { userId: r.userId, channel: r.channel });
   }
   throw new Error(
@@ -409,6 +416,11 @@ export async function logSuppression(
         eventId,
         channel,
       }),
+    );
+    await operatorAlert(
+      env,
+      'canary_flag_on_non_canary_account',
+      `event ${eventId} is flagged isTest but its owner is not a canary — the alert DISPATCHED normally (${channel})`,
     );
     await audit(env, eventId, 'canary.flag_mismatch', null, { channel, dispatched: true });
     return;

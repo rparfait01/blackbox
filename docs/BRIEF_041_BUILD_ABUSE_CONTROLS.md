@@ -1,5 +1,24 @@
 # BRIEF 41 — ABUSE CONTROLS: COST THE ATTACKER, NEVER THE SURVIVOR
 
+> **CARRIED IN FROM THE LAST SESSION — do these as part of this brief.**
+>
+> **Ratified, add to `STANDING_CONSTRAINTS.md` verbatim:**
+> "Two sides of a protocol never spell it separately. Do not assert that two implementations
+> agree — make them one implementation. A guard that two spellings match passes until one side
+> is edited." *(Origin: `deviceCanonical` moved to `@blackbox/shared`.)*
+>
+> **Ratified without change:** ECDSA P-256 `extractable: false`; `deviceSignatureHeaders`
+> returning `{}` on every failure with no branch in the upload; provisioning `void`-ed at launch
+> beside `resumeUploads`. The seventh comment-stripping instance (`indexOf('// Seed the first
+> location')`) and its fix to an INSERT bound are accepted; keep printing the 42-item debt count.
+>
+> **Do not arm anything.** Coverage is 0/117 and stays there until real clients provision.
+> Arming is a per-account decision Royce makes with data behind it — Brief 36 item 12 and
+> Brief 2 Fix A §E3 both wait on his device session.
+>
+> **Still open, not this brief:** Brief 2 Fix A acceptance 2, 7, 8, 11 (device session);
+> `CF_ANALYTICS_TOKEN` unset so headroom reads `NOT MEASURED`; `master` 157 commits behind HEAD.
+
 **Type:** BUILD — no prior brief shipped abuse controls
 **Priority:** P1
 **REQUIRES:** Brief 30 Fix A and Brief 2 Fix A green — the limiter keys on capabilities and device
@@ -58,6 +77,27 @@ attacker can still drain it.
 - Sustained limiting on one identifier alerts at error level — that is a targeted attack on a
   specific survivor, not background noise.
 
+## §F — THE TRIPWIRE MUST NOT TRIP ITSELF
+
+The acceptance suite is 1,401 requests and `pnpm deploy` now runs full verification in-process.
+Both will cross any limit worth having.
+
+**A blanket "test traffic is exempt" bypass is not acceptable** — that is the shape Brief 35
+Fix A §C removed from the deploy gate. Exemption is by identity, derived server-side, exactly as
+canary suppression is:
+
+| Traffic | Treatment |
+|---|---|
+| Canary account (`isCanary = 1`, server-derived, immutable per Brief 36 §G) | Exempt. Reserved-range contacts only, so it can reach no real person. |
+| Acceptance suite against **staging** | Exempt by environment. Staging is severed to `blackbox-test` / `blackbox-media-test` / `blackbox-vault-test`. |
+| Acceptance suite against **production** | **Not exempt.** If the suite trips a production limit, the limit is wrong or the suite is. Report which; do not exempt it. |
+| Any client-asserted test marking | **Never exempt.** Same rule as Brief 35 §D. |
+
+- Exemption is logged with the reason, the same way `suppressed_test` is. An exemption on a
+  non-canary, non-staging identity is an alertable operator condition.
+- The suite's request cost is reported per run against the limit's window, so a limit sized below
+  the suite is caught at design time rather than on a failed deploy.
+
 ## §E — ANTICIPATED GAPS
 
 1. **Shared egress.** A DV shelter puts many survivors behind one NAT. Per-origin limiting would
@@ -69,6 +109,9 @@ attacker can still drain it.
    **fails open** and alerts. A limiter that fails closed takes down login for everyone.
 4. **Cloudflare request cost.** Limiting consumes requests to reject requests. Reject as early as
    possible in the Worker, before any D1 read.
+5. **The limiter is on the request path the deploy gate uses.** A limit that blocks the canary
+   blocks every deploy, including the deploy that would remove the limit. §F exists to prevent
+   this; verify it before shipping, not after.
 
 ---
 
@@ -85,7 +128,11 @@ attacker can still drain it.
 6. Limiter store unavailable → fails open, alerts.
 7. Sustained limiting on one identifier → error-level alert.
 8. Survivor retrying a mistyped code → not locked out.
-9. Full acceptance suite, 90/90.
+9. **§F:** full deploy runs with limits live — canary exempt by server-derived identity, deploy
+   completes. Then attempt an exemption from a non-canary identity → refused and alerted.
+10. **§F:** acceptance suite against staging completes under limits. Its per-run cost is reported
+    against each limit's window.
+11. Full acceptance suite, 90/90.
 
 ---
 

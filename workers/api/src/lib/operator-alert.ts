@@ -32,9 +32,19 @@
  * the operator_alerts table, and no staging condition can page a human. The alternative — carving
  * an exception through §A for alerts — would be a bypass, and §E4 forbids one.
  */
-import { sendEmail } from '../channels/sendgrid-email';
 import { resolveEnvironment } from './environment';
 import type { Env } from '../types';
+
+/**
+ * The email module is imported DYNAMICALLY, and that is structural rather than stylistic.
+ *
+ * The alert channel must send mail; the mail path must consult the environment gate; the
+ * environment gate must be able to raise an alert when it cannot determine the environment. That
+ * is a static import cycle, and under ESM a cycle resolves to `undefined` at module-init time for
+ * whichever edge is evaluated first — a channel that silently becomes a no-op depending on import
+ * order. Deferring the edge to call time removes the cycle entirely, and the codebase already uses
+ * this pattern where auth.ts sends a magic link.
+ */
 
 /** One window per alert type. Long enough that a storm collapses; short enough to stay current. */
 export const ALERT_WINDOW_MS = 15 * 60 * 1000;
@@ -44,18 +54,32 @@ export const ALERT_WINDOW_MS = 15 * 60 * 1000;
  * retrofit is reviewable — an alert not on this list is an alert that still goes nowhere.
  */
 export const ALERT_TYPES = [
+  // §A/§B — dispatch posture
   'environment_indeterminate',
+  'non_production_holds_provider_credentials',
+  // Brief 35 §D/§G — suppression integrity, both directions
   'canary_flag_on_non_canary_account',
   'routable_contact_on_canary_account',
+  // Brief 40 — custody
   'seal_pending_beyond_threshold',
   'vault_backlog',
+  // Brief 41 — abuse
   'sustained_rate_limiting',
+  'limiter_store_failed_open',
+  // Brief 33 Fix A §F / Brief 35 Fix A — platform and deploy
+  'request_headroom_low',
   'deploy_gate_unavailable',
   'deploy_gate_quota_exceeded',
   'storage_degraded',
-  'request_headroom_80',
-  'limiter_store_failed_open',
-  'non_production_holds_provider_credentials',
+  // Brief 36/37/38 — capture and chain integrity. These are error level because nothing
+  // legitimate produces them once the client state machine is deployed.
+  'plaintext_chunk_undeclared',
+  'encryption_declaration_mismatch',
+  'integrity_do_unbound',
+  'terminal_claim_rejected',
+  'chain_append_failed',
+  'audit_write_failed',
+  'delivery_record_failed',
 ] as const;
 
 export type AlertType = (typeof ALERT_TYPES)[number];
@@ -184,6 +208,7 @@ async function deliver(env: Env, subject: string, text: string): Promise<{ sent:
   }
   // 'alert' classification: Brief 41 §C never counts this against the abuse cap, and §A never
   // suppresses it in production.
+  const { sendEmail } = await import('../channels/sendgrid-email');
   const r = await sendEmail(env, { to, subject, html: `<pre>${escapeHtml(text)}</pre>`, text }, 'alert');
   return { sent: r.ok === true, counted: true, reason: r.ok ? 'delivered' : `provider refused: ${r.body?.slice?.(0, 80) ?? ''}` };
 }

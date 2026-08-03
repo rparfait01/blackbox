@@ -26,6 +26,7 @@
 import { sealEvent } from './custody';
 import { audit } from './audit';
 import type { Env } from '../types';
+import { operatorAlert } from './operator-alert';
 
 /** Events sealed per cron run. Small: the 20s job bound is shared with seven other jobs. */
 export const SEAL_BATCH = 10;
@@ -202,6 +203,11 @@ export async function alertOnUnsealed(env: Env): Promise<void> {
         oldestUnsealedAgeMinutes: Math.round(coverage.oldestUnsealedAgeMs / 60_000),
         failed: coverage.failed,
       }),
+    );
+    await operatorAlert(
+      env,
+      'seal_pending_beyond_threshold',
+      `${coverage.closedUnsealed} closed event(s) unsealed; oldest ${Math.round(coverage.oldestUnsealedAgeMs / 60_000)} minutes past close, ${coverage.failed} failed`,
     );
   }
 }
