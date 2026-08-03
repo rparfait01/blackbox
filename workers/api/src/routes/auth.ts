@@ -57,6 +57,7 @@ import {
   verifyGumroadLicense as verifyGumroadLicence,
 } from '../lib/gumroad-license';
 import { normalizeCode } from '../lib/readable-code';
+import { boundedJson, LIMITS } from '../lib/request-bounds';
 
 /** Which credential is this string, from OUR ledger? A row minted by the Gumroad path is
  *  a licence key; anything else is an access code. Used only to word a refusal. */
@@ -135,8 +136,7 @@ async function lockedDuringAlert(env: Env, userId: string): Promise<boolean> {
 // NO email is sent and NO email delivery can fail here (Brief 14 P0).
 
 authRoutes.post('/signup/start', async (c) => {
-  const body = await c.req
-    .json<{
+  const body = ((await boundedJson<{
       name?: string;
       phone?: string;
       email?: string;
@@ -146,8 +146,7 @@ authRoutes.post('/signup/start', async (c) => {
       code?: string;
       /** Brief 30 Fix A §B — a client-generated nonce committed into the capability. */
       bindNonce?: string;
-    }>()
-    .catch(() => ({}) as Record<string, string>);
+    }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   if (!body.name || !body.email) {
     return c.json({ error: 'name and email are required' }, 400);
   }
@@ -339,14 +338,12 @@ async function rotatedSession(
 }
 
 authRoutes.post('/signup/finalize', async (c) => {
-  const body = await c.req
-    .json<{
+  const body = ((await boundedJson<{
       capability?: string;
       bindNonce?: string;
       displayMode?: string;
       claimUserHash?: string;
-    }>()
-    .catch(() => ({}) as Record<string, string>);
+    }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   if (body.displayMode !== 'direct' && body.displayMode !== 'covert') {
     return c.json({ error: 'displayMode must be direct or covert' }, 400);
   }
@@ -393,9 +390,7 @@ authRoutes.post('/signup/finalize', async (c) => {
 // password fall back to their closure-pin hash inside verifyLoginCredential.
 
 authRoutes.post('/signin', async (c) => {
-  const body = await c.req
-    .json<{ email?: string; password?: string }>()
-    .catch(() => ({}) as Record<string, string>);
+  const body = ((await boundedJson<{ email?: string; password?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   if (!body.email || !body.password) {
     return c.json({ error: 'email and password are required' }, 400);
   }
@@ -428,9 +423,7 @@ authRoutes.post('/signin', async (c) => {
  * user id is a UUID that only this client has just been handed.
  */
 authRoutes.post('/passkey/register/options', async (c) => {
-  const body = await c.req
-    .json<{ capability?: string; bindNonce?: string }>()
-    .catch(() => ({}) as { capability?: string; bindNonce?: string });
+  const body = ((await boundedJson<{ capability?: string; bindNonce?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { capability?: string; bindNonce?: string }));
   const sessionUserId = await bearerUserId(c);
   // A live session OR a scoped signup capability. Never a bare handle: enrolling a passkey on an
   // account is a credential-granting act, and it was reachable with a users.id alone.
@@ -459,9 +452,7 @@ authRoutes.post('/passkey/register/options', async (c) => {
 
 /** Verify enrollment and persist the passkey. */
 authRoutes.post('/passkey/register/verify', async (c) => {
-  const body = await c.req
-    .json<{ capability?: string; bindNonce?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ capability?: string; bindNonce?: string; response?: RegistrationResponseJSON; deviceLabel?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   const sessionUserId = await bearerUserId(c);
   const userId = sessionUserId ?? (await capabilitySubject(c, body, 'signup:passkey'));
   if (!userId || !body.response) {
@@ -502,9 +493,7 @@ authRoutes.post('/passkey/login/options', async (c) => {
 
 /** Verify a passkey login → session. */
 authRoutes.post('/passkey/login/verify', async (c) => {
-  const body = await c.req
-    .json<{ response?: AuthenticationResponseJSON }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ response?: AuthenticationResponseJSON }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   if (!body.response) {
     return c.json({ error: 'invalid_credentials' }, 401);
   }
@@ -534,7 +523,7 @@ authRoutes.post('/passkey/login/verify', async (c) => {
  * (that would be a map of which survivors are reachable by inbox).
  */
 authRoutes.post('/magic/start', async (c) => {
-  const body = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
+  const body = ((await boundedJson<{ email?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { email?: string }));
   const raw = (body.email ?? '').trim();
 
   /**
@@ -591,7 +580,7 @@ If you didn’t ask to sign in, ignore this email.`,
 
 /** Redeem a login link → session. */
 authRoutes.post('/magic/consume', async (c) => {
-  const body = await c.req.json<{ token?: string }>().catch(() => ({}) as { token?: string });
+  const body = ((await boundedJson<{ token?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { token?: string }));
   const token = (body.token ?? '').trim();
   if (!token) {
     return c.json({ error: 'invalid_or_expired_token' }, 400);
@@ -617,9 +606,7 @@ authRoutes.post('/magic/consume', async (c) => {
 
 /** Mint (or re-mint) recovery codes for the signed-in / just-signed-up account. */
 authRoutes.post('/recovery/issue', async (c) => {
-  const body = await c.req
-    .json<{ capability?: string; bindNonce?: string }>()
-    .catch(() => ({}) as { capability?: string; bindNonce?: string });
+  const body = ((await boundedJson<{ capability?: string; bindNonce?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { capability?: string; bindNonce?: string }));
   const sessionUserId = await bearerUserId(c);
   // Re-minting invalidates the owner's existing codes, so a bare handle here was both a takeover
   // primitive and a denial-of-recovery one. Proven on staging before this brief.
@@ -646,9 +633,7 @@ authRoutes.post('/recovery/issue', async (c) => {
  * account rather than sprayed across every account at once.
  */
 authRoutes.post('/recovery/consume', async (c) => {
-  const body = await c.req
-    .json<{ email?: string; code?: string }>()
-    .catch(() => ({}) as { email?: string; code?: string });
+  const body = ((await boundedJson<{ email?: string; code?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { email?: string; code?: string }));
   if (!body.email || !body.code) {
     return c.json({ error: 'invalid_recovery_code' }, 400);
   }

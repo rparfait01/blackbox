@@ -57,6 +57,7 @@ import {
 import { leaveOrg } from '../lib/enrollment';
 import { deleteAccount } from '../lib/users';
 import type { Env, Vars } from '../types';
+import { boundedJson, LIMITS } from '../lib/request-bounds';
 
 export const consoleRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
@@ -338,9 +339,7 @@ consoleRoutes.get('/orgs', requireLevel('operator'), async (c) => {
  */
 consoleRoutes.post('/orgs', requireLevel('operator'), async (c) => {
   const actor = c.get('userId');
-  const body = await c.req
-    .json<{ name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   const name = (body.name ?? '').trim();
   const lane = body.lane === 'paid' ? 'paid' : body.lane === 'zero_fee' ? 'zero_fee' : null;
   if (!name || !lane) {
@@ -374,7 +373,7 @@ consoleRoutes.post('/orgs', requireLevel('operator'), async (c) => {
 consoleRoutes.post('/orgs/:orgId/admin-code', requireLevel('operator'), async (c) => {
   const actor = c.get('userId');
   const orgId = c.req.param('orgId');
-  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const body = ((await boundedJson<{ reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { reason?: string }));
   const reason = (body.reason ?? '').trim();
   if (!reason) {
     return c.json({ error: 'reason_required', message: 'A reason is required — this is a logged privileged action.' }, 400);
@@ -388,7 +387,7 @@ consoleRoutes.post('/orgs/:orgId/admin-code', requireLevel('operator'), async (c
 consoleRoutes.post('/orgs/:orgId/admin-code/revoke', requireLevel('operator'), async (c) => {
   const actor = c.get('userId');
   const orgId = c.req.param('orgId');
-  const body = await c.req.json<{ code?: string; reason?: string }>().catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ code?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   const code = (body.code ?? '').trim();
   const reason = (body.reason ?? '').trim();
   if (!code || !reason) {
@@ -537,9 +536,7 @@ consoleRoutes.get('/codes', requireLevel('operator', 'admin', 'coordinator'), as
 consoleRoutes.post('/codes', requireLevel('operator', 'admin', 'coordinator'), async (c) => {
   const identity = identityOf(c);
   const actor = c.get('userId');
-  const body = await c.req
-    .json<{ role?: string; count?: number; maxUses?: number; expiresInHours?: number; orgId?: string }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ role?: string; count?: number; maxUses?: number; expiresInHours?: number; orgId?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   const requested = (body.role ?? 'survivor').trim();
 
   if (!mayIssueCodeRole(identity.level, requested)) {
@@ -689,7 +686,7 @@ consoleRoutes.post('/seats/:userId/role', requireLevel('admin'), async (c) => {
   const orgId = scopedOrg(c);
   const actor = c.get('userId');
   const targetId = c.req.param('userId');
-  const body = await c.req.json<{ role?: string }>().catch(() => ({}) as { role?: string });
+  const body = ((await boundedJson<{ role?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { role?: string }));
   const role = body.role === 'admin' ? 'admin' : body.role === 'coordinator' ? 'coordinator' : null;
   if (!role) {
     return c.json({ error: 'role_required', message: 'Role must be admin or coordinator.' }, 400);
@@ -990,9 +987,7 @@ consoleRoutes.get('/maintenance/health', requireLevel('operator'), async (c) => 
  */
 consoleRoutes.post('/maintenance/purge-media', requireLevel('operator'), async (c) => {
   const actor = c.get('userId');
-  const body = await c.req
-    .json<{ confirm?: boolean; maxObjects?: number }>()
-    .catch(() => ({}) as { confirm?: boolean; maxObjects?: number });
+  const body = ((await boundedJson<{ confirm?: boolean; maxObjects?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { confirm?: boolean; maxObjects?: number }));
   const result = await purgeOrphanedMedia(c.env, {
     confirm: body.confirm === true,
     maxObjects: typeof body.maxObjects === 'number' ? body.maxObjects : undefined,
@@ -1012,9 +1007,7 @@ consoleRoutes.post('/maintenance/purge-media', requireLevel('operator'), async (
  */
 consoleRoutes.post('/maintenance/delete-account', requireLevel('operator'), async (c) => {
   const actor = c.get('userId');
-  const body = await c.req
-    .json<{ userId?: string; email?: string; confirm?: boolean; reason?: string }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ userId?: string; email?: string; confirm?: boolean; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   const reason = (body.reason ?? '').trim();
   const target = body.userId?.trim()
     ? await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(body.userId.trim()).first<{ id: string; email: string | null }>()

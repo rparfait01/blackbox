@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { hmacSha256Hex, randomHex, TRUSTED_SIGNERS, TRUST_SET_VERSION, evaluateSigner, fingerprintSpki } from '@blackbox/shared';
 import { hmacAuth, sessionSecret } from './auth';
+import { boundedJson, CAPTURE_PATH, check, clampArray, clampString, LIMITS, validate, validateEach } from './lib/request-bounds';
 import { audit } from './lib/audit';
 import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicKeyB64, verifyManifest } from './lib/integrity';
 import { verifyChain } from './lib/chain-verdict';
@@ -260,6 +261,33 @@ async function identifierForLimit(c: { req: { raw: Request; header: (k: string) 
  * this product exists to prevent. That is §A's report-only-then-enforce process, and it is not
  * this brief's §D requirement. These three headers cannot break a render.
  */
+/**
+ * §A — the ordinary-route body bound, applied at one seam.
+ *
+ * Routes on the CAPTURE PATH are exempt here and carry their own bounds, which clamp instead of
+ * refusing. That asymmetry is the point: this middleware's job is to refuse, and refusing is the
+ * wrong answer for a device uploading evidence mid-incident.
+ *
+ * The exemption is a pattern rather than a list of literal paths so a new `/v1/events/:id/...`
+ * ingest route inherits it, and `request-bounds.guard.test.ts` asserts that every capture route
+ * actually present in this file matches — because the failure mode of getting that wrong is a
+ * survivor's upload rejected for being 64 KB, which is exactly the harm the split exists to
+ * prevent.
+ */
+// Defined in request-bounds.ts, not here, so the guard test asserts the SAME value this
+// middleware uses. A copy in the test would have passed while this one was wrong.
+
+app.use('*', async (c, next) => {
+  if (c.req.method === 'GET' || c.req.method === 'HEAD' || c.req.method === 'OPTIONS') return next();
+  const pathname = new URL(c.req.url).pathname;
+  if (CAPTURE_PATH.test(pathname)) return next(); // bounded at the route, by clamping
+  const declared = Number(c.req.header('content-length') ?? Number.NaN);
+  if (Number.isFinite(declared) && declared > LIMITS.jsonBodyBytes) {
+    return c.json({ ok: false, error: 'body_too_large', limitBytes: LIMITS.jsonBodyBytes }, 413);
+  }
+  return next();
+});
+
 app.use('*', async (c, next) => {
   await next();
   c.header('Referrer-Policy', 'no-referrer');
@@ -408,13 +436,14 @@ app.get('/.well-known/blackbox-report-public-key.json', async (c) => {
 // Ed25519 signature checks out against the manifest's published key. Stateless,
 // no auth, never throws — verification is a public, reproducible operation.
 app.post('/v1/integrity/verify', async (c) => {
-  let manifest: Record<string, unknown>;
-  try {
-    manifest = (await c.req.json()) as Record<string, unknown>;
-  } catch {
-    return c.json({ valid: false, error: 'invalid_json' }, 400);
+  // §A/§C — unauthenticated and public, so it is the most exposed body on the API. Bounded and
+  // depth-limited like every other, and the refusal is named rather than collapsed into a single
+  // `invalid_json` that cannot distinguish a typo from a 10 MB nesting bomb.
+  const read = await boundedJson<Record<string, unknown>>(c.req, LIMITS.jsonBodyBytes);
+  if (read.value === null) {
+    return c.json({ valid: false, error: read.refusal ?? 'invalid_json' }, read.refusal === 'too_large' ? 413 : 400);
   }
-  const valid = await verifyManifest(manifest);
+  const valid = await verifyManifest(read.value);
   return c.json({ valid }, 200);
 });
 
@@ -560,7 +589,7 @@ async function resumeResponse(
 }
 
 app.post('/v1/events', async (c) => {
-  const body = await c.req.json<OpenEventBody>().catch(() => ({}) as OpenEventBody);
+  const body = ((await boundedJson<OpenEventBody>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as OpenEventBody));
   const eventId = crypto.randomUUID();
   const hmacSecret = randomHex(32);
   const createdAt = Date.now();
@@ -778,9 +807,7 @@ app.route('/v1/admin/canary', canaryRoutes);
  * a RELAXED one.
  */
 app.post('/v1/admin/encryption/policy', async (c) => {
-  const body = await c.req
-    .json<{ email?: string; policy?: string; reason?: string }>()
-    .catch(() => ({}) as { email?: string; policy?: string; reason?: string });
+  const body = ((await boundedJson<{ email?: string; policy?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { email?: string; policy?: string; reason?: string }));
   const email = (body.email ?? '').trim().toLowerCase();
   const policy = body.policy === 'RELAXED' ? 'RELAXED' : body.policy === 'REQUIRED' ? 'REQUIRED' : null;
   const reason = (body.reason ?? '').trim();
@@ -832,9 +859,7 @@ app.post('/v1/admin/encryption/policy', async (c) => {
  * record; the code change is the enforcement, and the two are expected to agree.
  */
 app.post('/v1/admin/trust/record', async (c) => {
-  const body = await c.req
-    .json<{ fingerprint?: string; action?: string; reason?: string }>()
-    .catch(() => ({}) as { fingerprint?: string; action?: string; reason?: string });
+  const body = ((await boundedJson<{ fingerprint?: string; action?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { fingerprint?: string; action?: string; reason?: string }));
   const fingerprint = (body.fingerprint ?? '').trim();
   const action = body.action === 'rotate' || body.action === 'revoke' ? body.action : null;
   const reason = (body.reason ?? '').trim();
@@ -886,7 +911,7 @@ app.post('/v1/admin/trust/record', async (c) => {
  * per-isolate cache is cleared so a correction does not wait for a deploy.
  */
 app.post('/v1/admin/environment/stamp', async (c) => {
-  const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
+  const body = ((await boundedJson<{ name?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { name?: string }));
   const name = (body.name ?? '').trim().toLowerCase();
   if (!name || !/^[a-z][a-z0-9_-]{1,30}$/.test(name)) {
     return c.json({ error: 'name must be a short lowercase identifier, e.g. production or staging' }, 400);
@@ -916,7 +941,7 @@ app.post('/v1/admin/environment/stamp', async (c) => {
  * cron reports the window with its first and last. Bounded so this cannot itself become a storm.
  */
 app.post('/v1/admin/alerts/test', async (c) => {
-  const body = await c.req.json<{ type?: string; count?: number }>().catch(() => ({}) as { type?: string; count?: number });
+  const body = ((await boundedJson<{ type?: string; count?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { type?: string; count?: number }));
   const type = (body.type ?? '') as AlertType;
   if (!ALERT_TYPES.includes(type)) {
     return c.json({ error: 'unknown alert type', known: ALERT_TYPES }, 400);
@@ -1073,7 +1098,7 @@ interface AdminContactBody {
 }
 
 app.post('/v1/admin/contacts', async (c) => {
-  const body = await c.req.json<AdminContactBody>().catch(() => ({}) as AdminContactBody);
+  const body = ((await boundedJson<AdminContactBody>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as AdminContactBody));
   if (!body.userHash || !body.displayName) {
     return c.json({ error: 'userHash and displayName are required' }, 400);
   }
@@ -1118,9 +1143,7 @@ app.get('/v1/admin/contacts', async (c) => {
 // issues a REGISTRATION code, never an enrollment code — a registration code can only
 // ever create admin #1 on THIS org; it can never confer a seat or a coordinator.
 app.post('/v1/admin/orgs', async (c) => {
-  const body = await c.req
-    .json<{ name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }>()
-    .catch(() => ({}) as { name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number });
+  const body = ((await boundedJson<{ name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { name?: string; lane?: string; seatsTotal?: number; termStart?: number; termEnd?: number }));
   const name = (body.name ?? '').trim();
   const lane = body.lane === 'paid' ? 'paid' : body.lane === 'zero_fee' ? 'zero_fee' : null;
   if (!name || !lane) {
@@ -1155,7 +1178,7 @@ app.post('/v1/admin/orgs', async (c) => {
 // person, or admin #1 left before adding admin #2; or revoke a live code outright.
 app.post('/v1/admin/orgs/:orgId/registration-code/reissue', async (c) => {
   const orgId = c.req.param('orgId');
-  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const body = ((await boundedJson<{ reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { reason?: string }));
   const reason = (body.reason ?? '').trim();
   if (!reason) {
     return c.json({ error: 'reason required (this is a logged privileged action)' }, 400);
@@ -1165,7 +1188,7 @@ app.post('/v1/admin/orgs/:orgId/registration-code/reissue', async (c) => {
 });
 
 app.post('/v1/admin/orgs/:orgId/registration-code/revoke', async (c) => {
-  const body = await c.req.json<{ code?: string; reason?: string }>().catch(() => ({}) as { code?: string; reason?: string });
+  const body = ((await boundedJson<{ code?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { code?: string; reason?: string }));
   const code = (body.code ?? '').trim();
   const reason = (body.reason ?? '').trim();
   if (!code || !reason) {
@@ -1183,9 +1206,7 @@ app.post('/v1/admin/orgs/:orgId/registration-code/revoke', async (c) => {
 // paths). Idempotent + logged. For the account bought out-of-band, comped, or recovered
 // from an orphaned web receipt. Target by email or userId.
 app.post('/v1/admin/entitlement/grant', async (c) => {
-  const body = await c.req
-    .json<{ email?: string; userId?: string; reason?: string }>()
-    .catch(() => ({}) as { email?: string; userId?: string; reason?: string });
+  const body = ((await boundedJson<{ email?: string; userId?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { email?: string; userId?: string; reason?: string }));
   const userId = body.userId?.trim() || (body.email ? (await getUserByEmail(c.env, body.email))?.id : undefined);
   if (!userId) {
     return c.json({ error: 'account_not_found' }, 404);
@@ -1199,9 +1220,7 @@ app.post('/v1/admin/entitlement/grant', async (c) => {
 // exists anywhere: no chargeback hook, no license-expiry sweep. A reason is REQUIRED
 // (this deactivates a survivor's arm affordance — a privileged, audited action).
 app.post('/v1/admin/entitlement/revoke', async (c) => {
-  const body = await c.req
-    .json<{ email?: string; userId?: string; reason?: string }>()
-    .catch(() => ({}) as { email?: string; userId?: string; reason?: string });
+  const body = ((await boundedJson<{ email?: string; userId?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { email?: string; userId?: string; reason?: string }));
   const reason = (body.reason ?? '').trim();
   if (!reason) {
     return c.json({ error: 'reason required (this is a logged privileged action)' }, 400);
@@ -1240,9 +1259,7 @@ app.get('/v1/admin/investigations', async (c) => {
 
 app.post('/v1/admin/investigations/:id/resolve', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req
-    .json<{ resolution?: string; cooperated?: boolean }>()
-    .catch(() => ({}) as { resolution?: string; cooperated?: boolean });
+  const body = ((await boundedJson<{ resolution?: string; cooperated?: boolean }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { resolution?: string; cooperated?: boolean }));
   const inv = await c.env.DB.prepare(
     'SELECT id, recipientId, status FROM investigations WHERE id = ?',
   )
@@ -1281,9 +1298,7 @@ app.post('/v1/admin/investigations/:id/resolve', async (c) => {
 // and shares no code path with the Gumroad webhook — the only thing the two have in common
 // is the ONE generator, which is the point of the unified model (§B).
 app.post('/v1/admin/codes/issue', async (c) => {
-  const body = await c.req
-    .json<{ count?: number; orgId?: string; org_id?: string; role?: string; source?: string; maxUses?: number; expiresAt?: number }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ count?: number; orgId?: string; org_id?: string; role?: string; source?: string; maxUses?: number; expiresAt?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   const count = Math.max(1, Math.min(Number(body.count ?? 1) || 1, 500));
   const orgId = (body.orgId ?? body.org_id ?? '').trim() || null;
   const source = body.source === 'consumer' ? 'consumer' : orgId ? 'institutional' : 'consumer';
@@ -1327,9 +1342,7 @@ app.post('/v1/admin/codes/issue', async (c) => {
 // DRY RUN BY DEFAULT — pass {"confirm": true} to actually delete. Resumable: re-invoke
 // while `done` is false.
 app.post('/v1/admin/media/purge-orphans', async (c) => {
-  const body = await c.req
-    .json<{ confirm?: boolean; maxObjects?: number }>()
-    .catch(() => ({}) as { confirm?: boolean; maxObjects?: number });
+  const body = ((await boundedJson<{ confirm?: boolean; maxObjects?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { confirm?: boolean; maxObjects?: number }));
   const result = await purgeOrphanedMedia(c.env, {
     confirm: body.confirm === true,
     maxObjects: typeof body.maxObjects === 'number' ? body.maxObjects : undefined,
@@ -1363,7 +1376,7 @@ app.get('/v1/admin/events/active', async (c) => {
 
 app.post('/v1/admin/events/:id/force-close', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const body = ((await boundedJson<{ reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { reason?: string }));
   const reason =
     body.reason?.trim() ||
     'operator force-close — orphaned event, no reachable coordinator';
@@ -1684,9 +1697,7 @@ app.post('/v1/c/:id/secure', async (c) => {
   if (!(await requireCoordinator(c, eventId))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
-  const secureBody = await c.req
-    .json<{ override?: boolean; overrideReason?: string }>()
-    .catch(() => ({}) as { override?: boolean; overrideReason?: string });
+  const secureBody = ((await boundedJson<{ override?: boolean; overrideReason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { override?: boolean; overrideReason?: string }));
   const event = await c.env.DB
     .prepare('SELECT status FROM events WHERE id = ?')
     .bind(eventId)
@@ -1750,9 +1761,7 @@ app.post('/v1/c/:id/recipient/register', async (c) => {
   }
   const eventId = c.req.param('id');
   const token = c.req.query('t') ?? '';
-  const body = await c.req
-    .json<{ fullName?: string; agency?: string; roleRef?: string; contactType?: string; contactValue?: string; scope?: string }>()
-    .catch(() => ({}) as Record<string, string>);
+  const body = ((await boundedJson<{ fullName?: string; agency?: string; roleRef?: string; contactType?: string; contactValue?: string; scope?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   const result = await registerRecipient(c.env, eventId, token, {
     fullName: body.fullName ?? '',
     agency: body.agency ?? '',
@@ -1773,7 +1782,7 @@ app.post('/v1/c/:id/recipient/verify', async (c) => {
   }
   const eventId = c.req.param('id');
   const token = c.req.query('t') ?? '';
-  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const body = ((await boundedJson<{ code?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { code?: string }));
   const result = await verifyRecipient(c.env, eventId, token, body.code ?? '');
   if (!result.ok) {
     return c.json({ error: result.error }, result.status as 400);
@@ -2123,9 +2132,7 @@ app.post('/v1/c/:id/stand-down', async (c) => {
 // forged beacon is fail-safe.
 app.post('/v1/events/:id/lost', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req
-    .json<{ timestamp?: number; sig?: string }>()
-    .catch(() => ({}) as { timestamp?: number; sig?: string });
+  const body = ((await boundedJson<{ timestamp?: number; sig?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { timestamp?: number; sig?: string }));
   if (typeof body.timestamp !== 'number' || !body.sig) {
     return c.json({ error: 'bad beacon' }, 400);
   }
@@ -2201,9 +2208,7 @@ app.post('/v1/events/:id/standdown', async (c) => {
 // reason — NEVER the pin. This does NOT close the event; the coordinator secures.
 app.post('/v1/events/:id/closure-request', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req
-    .json<{ status?: string; reasonSecured?: string }>()
-    .catch(() => ({}) as { status?: string; reasonSecured?: string });
+  const body = ((await boundedJson<{ status?: string; reasonSecured?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { status?: string; reasonSecured?: string }));
   const status = body.status === 'unsat' ? 'unsat' : body.status === 'sat' ? 'sat' : null;
   if (!status) {
     return c.json({ error: 'status must be sat or unsat' }, 400);
@@ -2289,9 +2294,7 @@ app.post('/v1/events/:id/closure-lockout', async (c) => {
  */
 app.post('/v1/events/:id/encryption-state', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req
-    .json<{ state?: string; degradation?: string; reason?: string }>()
-    .catch(() => ({}) as { state?: string; degradation?: string; reason?: string });
+  const body = ((await boundedJson<{ state?: string; degradation?: string; reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { state?: string; degradation?: string; reason?: string }));
   const STATES = ['PREPARING', 'READY', 'FAILED_RETRYABLE', 'FAILED_TERMINAL'];
   const DEGRADED = ['NONE', 'EVIDENCE_AT_RISK', 'EVIDENCE_NOT_RETAINED'];
   const state = STATES.includes(body.state ?? '') ? body.state! : null;
@@ -2319,7 +2322,7 @@ app.post('/v1/events/:id/encryption-state', async (c) => {
 
 app.post('/v1/events/:id/reason-triggered', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const body = ((await boundedJson<{ reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { reason?: string }));
   await c.env.DB.prepare('UPDATE events SET reasonTriggered = ? WHERE id = ?')
     .bind(body.reason ?? null, eventId)
     .run();
@@ -2338,7 +2341,34 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   const eventId = c.req.param('id');
   const sequence = Number(c.req.param('sequence'));
   const mimeType = c.req.header('X-Mime-Type') ?? 'application/octet-stream';
+  // ═══ §A — THE ONE BOUND THAT IS ALLOWED TO REFUSE, AND WHY ═════════════════════════════════
+  //
+  // Every other capture-path bound clamps, because a truncated batch still carries most of the
+  // evidence. A media chunk cannot be truncated: half a chunk is a corrupt chunk that will fail
+  // its capture-time commitment and read as tampering in a report. There is no partial accept.
+  //
+  // So the bound is set where a real recording cannot reach it. Measured: chunks in real captures
+  // run about 300 KB. The limit is 16 MB — roughly fifty times the observed size — which means it
+  // can only be met by a client that is malfunctioning or hostile, and in both cases the isolate
+  // is better off refusing than being exhausted by a body it cannot store anyway.
+  //
+  // It refuses LOUDLY: an explicit status and reason, never a silent drop, because a survivor's
+  // device must be able to tell that this chunk did not land and try the next one.
+  const declaredChunkBytes = Number(c.req.header('content-length') ?? Number.NaN);
+  if (Number.isFinite(declaredChunkBytes) && declaredChunkBytes > LIMITS.chunkBytes) {
+    return c.json(
+      { ok: false, error: 'chunk_too_large', limitBytes: LIMITS.chunkBytes, declaredBytes: declaredChunkBytes },
+      413,
+    );
+  }
   const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.byteLength > LIMITS.chunkBytes) {
+    // The header lied or was absent. Measured after the fact, refused the same way.
+    return c.json(
+      { ok: false, error: 'chunk_too_large', limitBytes: LIMITS.chunkBytes, actualBytes: bytes.byteLength },
+      413,
+    );
+  }
   const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('webm') ? 'webm' : 'bin';
   const r2Key = `events/${eventId}/chunks/${sequence}.${ext}`;
   // Integrity (#C2): hash the chunk bytes on write and link into the event's
@@ -2528,10 +2558,9 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
 // the server stores it and can open none of it. hmac-authed like every event child route.
 app.post('/v1/events/:id/wrapped-keys', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req
-    .json<{ keys?: Array<{ recipientType?: string; recipientRef?: string; keyGeneration?: number; algId?: string; wrappedDek?: string }> }>()
-    .catch(() => ({}) as { keys?: unknown });
-  const keys = Array.isArray(body.keys) ? body.keys : [];
+  const body = ((await boundedJson<{ keys?: Array<{ recipientType?: string; recipientRef?: string; keyGeneration?: number; algId?: string; wrappedDek?: string }> }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { keys?: unknown }));
+  // §A — clamped, not refused: these unwrap a survivor's own recordings.
+  const { items: keys } = clampArray<{ recipientType?: string; recipientRef?: string; keyGeneration?: number; algId?: string; wrappedDek?: string }>(body.keys, LIMITS.batchItems);
   let stored = 0;
   for (const k of keys) {
     const recipientType = k.recipientType === 'org' ? 'org' : k.recipientType === 'survivor' ? 'survivor' : null;
@@ -2564,7 +2593,7 @@ app.post('/v1/events/:id/locations', async (c) => {
   // parse and keep only well-formed points (numeric ts/lat/lon) so a partially-bad
   // payload stores what it can rather than throwing mid-batch. A body with no valid
   // points is a no-op 201, not an error.
-  const body = await c.req.json<LocationPayload>().catch(() => ({}) as Partial<LocationPayload>);
+  const body = ((await boundedJson<LocationPayload>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Partial<LocationPayload>));
   const points = (Array.isArray(body.points) ? body.points : []).filter(
     (p) =>
       p != null &&
@@ -2595,7 +2624,29 @@ interface ClassificationPayloadItem {
 }
 app.post('/v1/events/:id/classifications', async (c) => {
   const eventId = c.req.param('id');
-  const { items } = await c.req.json<{ items: ClassificationPayloadItem[] }>();
+  // §A — CLAMP, NEVER REJECT. This is the capture path: a refusal is lost evidence, not a retry.
+  // Before this, a malformed body threw out of an unguarded `await c.req.json()` (a 500), and
+  // `items.length` was read off whatever came back — so a body with no `items` at all was a
+  // second throw. The array then fanned straight into D1.batch() unbounded.
+  const parsed = await boundedJson<{ items?: ClassificationPayloadItem[] }>(c.req, LIMITS.captureJsonBodyBytes);
+  const clamped = clampArray<ClassificationPayloadItem>(parsed.value?.items, LIMITS.batchItems);
+  const dropped = clamped.dropped;
+  // §B — validated PER ITEM, keeping what parses. `item.timestamp` went straight into a D1 bind
+  // as whatever the body said it was; an object or a non-finite number there is a write failure
+  // that takes the whole batch with it. Rejecting the batch would discard a survivor's other
+  // records to punish one bad field, so the good ones are kept and the rejects are counted.
+  //
+  // The ORIGINAL items are filtered rather than replaced by their validated projection. An
+  // earlier version rebuilt the row from the projection and recovered the array fields through a
+  // Map keyed by timestamp — which silently cross-assigns when two records in a batch share a
+  // timestamp, and a classifier emitting several per tick makes that ordinary rather than rare.
+  const FIELDS = {
+    timestamp: { check: check.finiteNumber(), required: true },
+    threatLevel: { check: check.string(64) },
+    summary: { check: check.string(LIMITS.stringChars) },
+  } as const;
+  const items = clamped.items.filter((i) => validate(i as unknown as Record<string, unknown>, FIELDS).value !== null);
+  const rejected = clamped.items.length - items.length;
   if (items.length > 0) {
     await c.env.DB.batch(
       items.map((item) =>
@@ -2607,13 +2658,16 @@ app.post('/v1/events/:id/classifications', async (c) => {
           item.threatLevel ?? null,
           JSON.stringify(item.matchedCategories ?? []),
           JSON.stringify(item.toneIndicators ?? []),
-          item.summary ?? null,
+          clampString(item.summary, LIMITS.stringChars).text || null,
           JSON.stringify(item.languages ?? []),
         ),
       ),
     );
   }
-  return c.json({ ok: true, count: items.length }, 201);
+  // The clamp is REPORTED, not swallowed. A client that sent 900 items and reads `count: 500`
+  // with no other signal has been told a comfortable half-truth; `dropped` and `refusal` say
+  // what actually happened to the rest.
+  return c.json({ ok: true, count: items.length, dropped, rejected, refusal: parsed.refusal }, 201);
 });
 
 interface TranscriptPayload {
@@ -2621,17 +2675,34 @@ interface TranscriptPayload {
 }
 app.post('/v1/events/:id/transcripts', async (c) => {
   const eventId = c.req.param('id');
-  const { fragments } = await c.req.json<TranscriptPayload>();
+  // §A — same disposition as classifications, and the same two latent throws removed.
+  const parsed = await boundedJson<Partial<TranscriptPayload>>(c.req, LIMITS.captureJsonBodyBytes);
+  const clampedFragments = clampArray<TranscriptPayload['fragments'][number]>(
+    parsed.value?.fragments,
+    LIMITS.batchItems,
+  );
+  const dropped = clampedFragments.dropped;
+  // §B — `sequence` was bound to D1 as whatever arrived. A string or an object there fails the
+  // write for the entire batch.
+  const { items: fragments, rejected } = validateEach<{
+    sequence: number;
+    text: string;
+    isFinal?: boolean;
+  }>(clampedFragments.items, {
+    sequence: { check: check.integerInRange(0, 1_000_000), required: true },
+    text: { check: check.string(LIMITS.transcriptChars), required: true },
+    isFinal: { check: check.boolean() },
+  });
   if (fragments.length > 0) {
     await c.env.DB.batch(
       fragments.map((f) =>
         c.env.DB.prepare(
           'INSERT OR REPLACE INTO transcripts_index (eventId, sequence, text, isFinal, createdAt) VALUES (?, ?, ?, ?, ?)',
-        ).bind(eventId, f.sequence, f.text, f.isFinal ? 1 : 0, Date.now()),
+        ).bind(eventId, f.sequence, clampString(f.text, LIMITS.transcriptChars).text, f.isFinal ? 1 : 0, Date.now()),
       ),
     );
   }
-  return c.json({ ok: true, count: fragments.length }, 201);
+  return c.json({ ok: true, count: fragments.length, dropped, rejected, refusal: parsed.refusal }, 201);
 });
 
 // Frozen ORIGIN snapshot (Fix Brief 5 D1). Write-once: INSERT OR IGNORE so the
@@ -2649,7 +2720,7 @@ interface OriginPayload {
 }
 app.post('/v1/events/:id/origin', async (c) => {
   const eventId = c.req.param('id');
-  const b = await c.req.json<OriginPayload>().catch(() => ({}) as OriginPayload);
+  const b = ((await boundedJson<OriginPayload>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as OriginPayload));
   const trigger = b.triggerType === 'deadman' || b.triggerType === 'tamper' ? b.triggerType : 'manual';
   // DTG must be the REAL activation time (Brief 12 P3): bind it to the event's
   // server-stamped createdAt, not the device clock (which can be skewed and was
@@ -2744,9 +2815,7 @@ app.get('/v1/events/:id/delivery-status', async (c) => {
 // contact through the channel router.
 app.post('/v1/events/:id/close-request', async (c) => {
   const eventId = c.req.param('id');
-  const body = await c.req
-    .json<{ pinHashWithSalt?: string; duress?: boolean }>()
-    .catch(() => ({}) as { pinHashWithSalt?: string; duress?: boolean });
+  const body = ((await boundedJson<{ pinHashWithSalt?: string; duress?: boolean }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { pinHashWithSalt?: string; duress?: boolean }));
   const duress = body.duress === true;
 
   const event = await c.env.DB.prepare('SELECT userId, userHash, status FROM events WHERE id = ?')

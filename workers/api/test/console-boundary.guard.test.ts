@@ -336,8 +336,25 @@ describe('§3 maintenance is dry-run by default and audited to a person', () => 
     expect(purge).toMatch(/confirm: body\.confirm === true/);
     expect(del).toMatch(/confirm: body\.confirm === true/);
     // A malformed body previews; it never falls through to a deletion.
-    expect(purge).toMatch(/\.catch\(\(\) => \(\{\}\)/);
-    expect(del).toMatch(/\.catch\(\(\) => \(\{\}\)/);
+    //
+    // THE INVARIANT, NOT THE SPELLING. This asserted `.catch(() => ({})` literally, and Brief 43
+    // §A broke it by routing the same body through `boundedJson` — which preserves the property
+    // exactly (an unreadable body yields an empty object, `confirm` is absent, `confirm === true`
+    // is false, the route previews) while changing the characters. A guard that fails on a change
+    // which does not touch what it governs is the class the standing constraint names.
+    //
+    // What must hold: reading the body cannot throw, and an unreadable body must not produce a
+    // truthy `confirm`. Both spellings satisfy it; a bare `await c.req.json()` would not.
+    for (const [name, body] of [
+      ['purge-media', purge],
+      ['delete-account', del],
+    ] as const) {
+      const safeRead = /\.catch\(\(\) => \(\{\}\)/.test(body) || /boundedJson</.test(body);
+      expect(safeRead, `${name} reads its body in a way that can throw`).toBe(true);
+      expect(body, `${name} defaults confirm to something other than an absent field`).not.toMatch(
+        /confirm:\s*(true|body\.confirm\s*\?\?\s*true)/,
+      );
+    }
   });
 
   it('every console audit names the acting user — never null, never a literal', () => {

@@ -33,6 +33,7 @@ import { signReportAttestation } from '../lib/report-attestation';
 import { getOwnChunkBytes, getReportMetadata, listOwnEvents } from '../lib/report-metadata';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
+import { boundedJson, LIMITS } from '../lib/request-bounds';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
@@ -51,7 +52,7 @@ userRoutes.post('/org/redeem', async (c) => {
   if (await lockedDuringAlert(c)) {
     return c.json({ error: 'locked_during_active_alert' }, 423);
   }
-  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const body = ((await boundedJson<{ code?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { code?: string }));
   const code = (body.code ?? '').trim();
   if (!code) {
     return c.json({ error: 'code_required' }, 400);
@@ -88,7 +89,7 @@ userRoutes.post('/org/leave', async (c) => {
 // survivor publishes ONLY their public key; the private half never leaves the device.
 // A capture client fetches the keys it must wrap a data key to (its own + the org's).
 userRoutes.post('/pubkey', async (c) => {
-  const body = await c.req.json<{ pubkey?: string }>().catch(() => ({}) as { pubkey?: string });
+  const body = ((await boundedJson<{ pubkey?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { pubkey?: string }));
   const pubkey = (body.pubkey ?? '').trim();
   if (!pubkey) {
     return c.json({ error: 'pubkey_required' }, 400);
@@ -105,7 +106,7 @@ userRoutes.get('/keys', async (c) => {
 // so a new device + the recovery code can restore it; the server never sees the code or
 // the private key in clear.
 userRoutes.post('/recovery-key', async (c) => {
-  const body = await c.req.json<{ wrapped?: string }>().catch(() => ({}) as { wrapped?: string });
+  const body = ((await boundedJson<{ wrapped?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { wrapped?: string }));
   const wrapped = (body.wrapped ?? '').trim();
   if (!wrapped) {
     return c.json({ error: 'wrapped_required' }, 400);
@@ -165,9 +166,7 @@ userRoutes.post('/case-files', async (c) => {
     // Fail-closed: secure storage is off, so nothing is written. Honest, specific refusal.
     return c.json({ error: 'envelope_disabled', message: 'Secure storage is not enabled — a report cannot be filed yet.' }, 409);
   }
-  const body = await c.req
-    .json<{ sealedCaseFile?: string; taxonomyVersion?: string }>()
-    .catch(() => ({}) as { sealedCaseFile?: string; taxonomyVersion?: string });
+  const body = ((await boundedJson<{ sealedCaseFile?: string; taxonomyVersion?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { sealedCaseFile?: string; taxonomyVersion?: string }));
   const sealedCaseFile = (body.sealedCaseFile ?? '').trim();
   const taxonomyVersion = (body.taxonomyVersion ?? '').trim();
   if (!sealedCaseFile || !taxonomyVersion) {
@@ -281,9 +280,7 @@ userRoutes.get('/reports/events/:id/chunks/:sequence', async (c) => {
 userRoutes.post('/reports/sign', async (c) => {
   const off = reportsOff(c);
   if (off) return off;
-  const body = await c.req
-    .json<{ eventId?: string; evidenceHash?: string; renderedHash?: string }>()
-    .catch(() => ({}) as { eventId?: string; evidenceHash?: string; renderedHash?: string });
+  const body = ((await boundedJson<{ eventId?: string; evidenceHash?: string; renderedHash?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { eventId?: string; evidenceHash?: string; renderedHash?: string }));
   const eventId = (body.eventId ?? '').trim();
   const evidenceHash = (body.evidenceHash ?? '').trim();
   const renderedHash = (body.renderedHash ?? '').trim();
@@ -327,7 +324,7 @@ userRoutes.post('/reports/sign', async (c) => {
 // submission MONTH — never the filing instant, which would correlate it with the case file.
 // DELIBERATELY NOT audited (an audit row would carry a correlatable timestamp + account).
 userRoutes.post('/intake-stats', async (c) => {
-  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+  const body = ((await boundedJson<Record<string, unknown>>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, unknown>));
   const fields = normalizeIntakeStat(body);
   const res = await submitIntakeStat(c.env, c.get('userId'), fields, Date.now());
   if (!res.ok) {
@@ -345,9 +342,7 @@ userRoutes.post('/tally', async (c) => {
   if (await lockedDuringAlert(c)) {
     return c.json({ error: 'locked_during_active_alert' }, 423);
   }
-  const body = await c.req
-    .json<{ kind?: unknown; roughlyWhen?: unknown; regionId?: unknown; reportedOfficial?: unknown }>()
-    .catch(() => ({}) as Record<string, unknown>);
+  const body = ((await boundedJson<{ kind?: unknown; roughlyWhen?: unknown; regionId?: unknown; reportedOfficial?: unknown }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, unknown>));
   const closed = normalizeSubmission(body);
   // regionId is a jurisdiction label: accept ONLY a known region id (never a finer or
   // arbitrary string), else null. Coarse-by-construction.
@@ -460,7 +455,7 @@ userRoutes.get('/', async (c) => {
 });
 
 userRoutes.post('/display-mode', async (c) => {
-  const body = await c.req.json<{ displayMode?: string }>().catch(() => ({}) as Record<string, string>);
+  const body = ((await boundedJson<{ displayMode?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   if (body.displayMode !== 'direct' && body.displayMode !== 'covert') {
     return c.json({ error: 'displayMode must be direct or covert' }, 400);
   }
@@ -469,7 +464,7 @@ userRoutes.post('/display-mode', async (c) => {
 });
 
 userRoutes.post('/region', async (c) => {
-  const body = await c.req.json<{ regionId?: string }>().catch(() => ({}) as Record<string, string>);
+  const body = ((await boundedJson<{ regionId?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   if (!body.regionId) {
     return c.json({ error: 'regionId required' }, 400);
   }
@@ -554,15 +549,13 @@ userRoutes.post('/contacts/:slot', async (c) => {
   if (!VALID_SLOTS.includes(slot)) {
     return c.json({ error: 'invalid slot' }, 400);
   }
-  const body = await c.req
-    .json<{
+  const body = ((await boundedJson<{
       contactName?: string;
       channel?: string;
       destination?: string;
       fallbackChannel?: string;
       fallbackDestination?: string;
-    }>()
-    .catch(() => ({}) as Record<string, string>);
+    }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, string>));
   const channel = body.channel as PreferredChannel | undefined;
   if (!body.contactName?.trim() || !body.destination?.trim()) {
     return c.json({ error: 'name and destination are required' }, 400);
@@ -690,9 +683,7 @@ userRoutes.post('/line-pairing/start', async (c) => {
   if (await lockedDuringAlert(c)) {
     return c.json({ error: 'locked_during_active_alert' }, 423);
   }
-  const body = await c.req
-    .json<{ slot?: string; contactName?: string }>()
-    .catch(() => ({}) as { slot?: string; contactName?: string });
+  const body = ((await boundedJson<{ slot?: string; contactName?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { slot?: string; contactName?: string }));
   const slot = body.slot as SlotKey;
   if (!VALID_SLOTS.includes(slot)) {
     return c.json({ error: 'invalid slot' }, 400);
@@ -739,9 +730,7 @@ userRoutes.delete('/account', async (c) => {
 // Check-in ("I'm OK") — Brief 10. NON-emergency: no event, no capture. NOT
 // locked during an alert (it's a separate, harmless reassurance ping).
 userRoutes.post('/checkin', async (c) => {
-  const body = await c.req
-    .json<{ location?: { lat: number; lon: number } | null; tzOffsetMinutes?: number }>()
-    .catch(() => ({}) as Record<string, never>);
+  const body = ((await boundedJson<{ location?: { lat: number; lon: number } | null; tzOffsetMinutes?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as Record<string, never>));
   // Location is ALWAYS captured on tap (Brief 17 §1) — no opt-in flag. Carried
   // when the client resolved a fix; null when it couldn't.
   const location =
@@ -759,7 +748,7 @@ userRoutes.post('/guardian-enabled', async (c) => {
   if (await lockedDuringAlert(c)) {
     return c.json({ error: 'locked_during_active_alert' }, 423);
   }
-  const body = await c.req.json<{ enabled?: boolean }>().catch(() => ({}) as { enabled?: boolean });
+  const body = ((await boundedJson<{ enabled?: boolean }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { enabled?: boolean }));
   await setGuardianEnabled(c.env, c.get('userId'), body.enabled === true);
   return c.json({ ok: true, enabled: body.enabled === true }, 200);
 });
@@ -782,7 +771,7 @@ userRoutes.post('/guardian-enabled', async (c) => {
  */
 userRoutes.post('/events/:id/purge-capture', async (c) => {
   const userId = c.get('userId');
-  const body = await c.req.json<{ confirm?: boolean; restorePoint?: string }>().catch(() => ({}) as { confirm?: boolean; restorePoint?: string });
+  const body = ((await boundedJson<{ confirm?: boolean; restorePoint?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { confirm?: boolean; restorePoint?: string }));
   const user = await getUserById(c.env, userId);
   const result = await purgeCaptureOnConsent(c.env, {
     eventId: c.req.param('id'),
@@ -812,7 +801,7 @@ userRoutes.post('/events/:id/purge-capture', async (c) => {
  */
 userRoutes.post('/devices', async (c) => {
   const userId = c.get('userId');
-  const body = await c.req.json<{ publicKey?: string; label?: string }>().catch(() => ({}) as { publicKey?: string; label?: string });
+  const body = ((await boundedJson<{ publicKey?: string; label?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { publicKey?: string; label?: string }));
   const r = await registerDevice(c.env, { userId, publicKey: body.publicKey ?? '', label: body.label ?? null });
   if (!r.ok) return c.json({ error: r.reason ?? 'invalid_public_key' }, 400);
   await audit(c.env, null, 'device.registered', userId, { credentialId: r.id });
@@ -829,7 +818,7 @@ userRoutes.get('/devices', async (c) => c.json({ devices: await listDevices(c.en
  */
 userRoutes.post('/devices/:id/revoke', async (c) => {
   const userId = c.get('userId');
-  const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+  const body = ((await boundedJson<{ reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { reason?: string }));
   const done = await revokeDevice(c.env, { userId, credentialId: c.req.param('id'), reason: body.reason ?? null });
   if (!done) return c.json({ error: 'not_found_or_already_revoked' }, 404);
   await audit(c.env, null, 'device.revoked', userId, { credentialId: c.req.param('id') });

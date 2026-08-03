@@ -15,6 +15,7 @@ import { createAdminRegistrationCode } from '../lib/org-registration';
 import { getOrgGrant, setOrgKeys } from '../lib/zk-custody';
 import { audit } from '../lib/audit';
 import type { Env, Vars } from '../types';
+import { boundedJson, LIMITS } from '../lib/request-bounds';
 
 export const orgRoutes = new Hono<{ Bindings: Env; Variables: Vars }>();
 
@@ -46,9 +47,7 @@ orgRoutes.get('/me', async (c) => {
 orgRoutes.post('/codes', requireOrgRole('coordinator'), async (c) => {
   const orgId = c.get('orgId')!;
   const actorRole = c.get('orgRole')!;
-  const body = await c.req
-    .json<{ role?: string; maxUses?: number; expiresInHours?: number }>()
-    .catch(() => ({}) as { role?: string; maxUses?: number; expiresInHours?: number });
+  const body = ((await boundedJson<{ role?: string; maxUses?: number; expiresInHours?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { role?: string; maxUses?: number; expiresInHours?: number }));
   // Brief 24 §2: an ENROLLMENT code can never confer admin — admin is ONLY created via
   // the registration ceremony (/v1/org-register), issued by the operator (admin #1) or
   // by an existing admin from inside (admin #2+, POST /admins/invite). So the only
@@ -130,9 +129,7 @@ orgRoutes.post('/admins/invite', requireOrgRole('admin'), async (c) => {
 // for every remaining seat.
 orgRoutes.post('/keys', requireOrgRole('admin'), async (c) => {
   const orgId = c.get('orgId')!;
-  const body = await c.req
-    .json<{ orgPubkey?: string; generation?: number; grants?: Array<{ seatUserId?: string; algId?: string; wrappedOrgPrivKey?: string }> }>()
-    .catch(() => ({}) as { orgPubkey?: string; generation?: number; grants?: unknown });
+  const body = ((await boundedJson<{ orgPubkey?: string; generation?: number; grants?: Array<{ seatUserId?: string; algId?: string; wrappedOrgPrivKey?: string }> }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { orgPubkey?: string; generation?: number; grants?: unknown }));
   const orgPubkey = (body.orgPubkey ?? '').trim();
   if (!orgPubkey) {
     return c.json({ error: 'orgPubkey_required' }, 400);
@@ -260,7 +257,7 @@ orgRoutes.get('/license', requireOrgRole('admin'), async (c) => {
 // §5 Seats — admin adjusts the ceiling. Cannot drop below seats already in use.
 orgRoutes.post('/seats', requireOrgRole('admin'), async (c) => {
   const orgId = c.get('orgId')!;
-  const body = await c.req.json<{ seatsTotal?: number }>().catch(() => ({}) as { seatsTotal?: number });
+  const body = ((await boundedJson<{ seatsTotal?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { seatsTotal?: number }));
   const seatsTotal = typeof body.seatsTotal === 'number' ? Math.max(0, Math.floor(body.seatsTotal)) : null;
   if (seatsTotal == null) {
     return c.json({ error: 'seatsTotal_required' }, 400);
