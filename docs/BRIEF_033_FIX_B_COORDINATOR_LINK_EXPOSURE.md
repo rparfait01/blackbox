@@ -43,6 +43,32 @@ capability token appears in a URL at most once, is redeemed on first use, and ne
 browser history, autocomplete, or sync."
 Path: `workers/api/src/dashboard/page.ts`, `workers/api/src/routes/coordinator.ts`
 
+**BRIEF 033 FIX B §D — corrected to read:**
+"The notification body states plainly what is happening: who activated, what is capturing, and
+where to look. The recipient is a VETTED SUPPORT CONTACT the survivor chose, not an incidental
+party, and disclosure to them is deliberate and correct. The constraint on this message is not
+discretion — it is TRUTH: it names a capture only when that capture is actually running."
+
+Final body, all channels:
+
+```
+🚨 EMERGENCY — {name} activated SENTINEL ALERT.
+Live video + audio + location active.
+Live dashboard: {url}
+```
+
+*(§D's original shared-device framing is STRUCK. It treated the contact as someone who might read
+the thread by accident; they are the person the alert exists to reach. The exposure this brief
+closes is the URL in a browser's history, which is a different thing from the message the
+survivor's chosen contact is meant to read.)*
+
+*(The video clause is CONDITIONAL and derived from evidence — `hasVideo` is true only when a
+chunk with a video mimeType has actually reached the server. Absent that, the line reads "Live
+audio + location active." If Brief 50 finds video unavailable on a platform, nothing here needs
+changing: no video chunks arrive, so no video is claimed. A responder who reads "live video" and
+opens a dashboard with no picture does not conclude the camera failed — they conclude the system
+lies, at the moment they most need to trust it.)*
+
 **BRIEF 043 §A — corrected to read:**
 "Every Hono route reading a request body does so through the bounded reader. The sweep is
 verified by enumeration against the router, not by inspection — a route that was not thought of
