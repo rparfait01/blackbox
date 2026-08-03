@@ -86,6 +86,71 @@ describe('§A — bounded JSON never throws and always states why', () => {
     expect(['malformed', 'too_deep']).toContain(out.refusal);
   });
 
+  it('ABANDONS an oversized body mid-stream instead of buffering it', async () => {
+    // Acceptance 3 says "without buffering the body", and that is the difference between a bound
+    // that protects the isolate and one that documents the damage after it is done. A lying
+    // Content-Length is the whole attack: declare 10 bytes, send half a gigabyte.
+    //
+    // The stream here would yield 5,000 chunks of 1 KB. The bound is 4 KB. If the reader stops at
+    // the bound it pulls 5; if it buffers first, it pulls all 5,000.
+    let pulled = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        if (pulled > 5_000) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new Uint8Array(1024).fill(120));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const req = {
+      text: async () => {
+        throw new Error('text() must not be called — that is the buffering this test forbids');
+      },
+      header: (n: string) => (n.toLowerCase() === 'content-length' ? '10' : undefined),
+      stream: () => stream,
+    };
+
+    const out = await boundedJson(req, 4 * 1024);
+    expect(out.refusal).toBe('too_large');
+    expect(pulled, `read ${pulled} chunks past a 4 KB bound — the body was buffered`).toBeLessThan(10);
+    expect(cancelled, 'the reader was not cancelled — the connection keeps feeding a dead body').toBe(true);
+  });
+
+  it('reads a legitimate body through the same streaming path', async () => {
+    // The streaming path must not be reserved for the failure case, or the normal case is
+    // still buffered and the bound still does nothing.
+    const payload = JSON.stringify({ fragments: [{ sequence: 1, text: 'hello' }] });
+    const encoded = new TextEncoder().encode(payload);
+    let served = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (served) {
+          controller.close();
+          return;
+        }
+        served = true;
+        controller.enqueue(encoded);
+      },
+    });
+    const req = {
+      text: async () => {
+        throw new Error('text() must not be called when a stream is available');
+      },
+      header: () => undefined,
+      stream: () => stream,
+    };
+    const out = await boundedJson<{ fragments: Array<{ text: string }> }>(req, 1024);
+    expect(out.refusal).toBeNull();
+    expect(out.value?.fragments[0].text).toBe('hello');
+    expect(out.bytes).toBe(encoded.byteLength);
+  });
+
   it('depthWithin is iterative — a 200k-deep value does not blow the stack', () => {
     let node: unknown = 1;
     for (let i = 0; i < 200_000; i += 1) node = [node];

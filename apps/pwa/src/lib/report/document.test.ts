@@ -42,7 +42,16 @@ describe('canonical serialization is reproducible', () => {
 });
 
 describe('the evidence rendering is deterministic and asserts nothing', () => {
-  it('is a pure function of the evidence — same input, identical text', async () => {
+  it('has no hidden nondeterminism — two equal inputs render identically', async () => {
+    // NARROW ON PURPOSE, and renamed to say so. Both sides call the same function, so for any
+    // deterministic implementation this CANNOT fail; it is not a check that the output is
+    // correct or stable. What it does catch is real and nothing else covers it: a clock, a
+    // random value, or an iteration order leaking into the render would make two equal inputs
+    // disagree. Flagged by the Brief 43 acceptance-6 fixture sweep and kept for that reason.
+    //
+    // The property its old name implied — that the bytes do not DRIFT — is covered properly in
+    // packages/shared/src/report-render-stability.test.ts, against a hash computed from the code
+    // as it stood before the change. That is the pin; this is the nondeterminism check.
     const evidence = sampleEvidence();
     expect(renderEvidenceText(evidence)).toBe(renderEvidenceText(sampleEvidence()));
     expect(await canonicalHash(evidence)).toBe(await canonicalHash(sampleEvidence()));

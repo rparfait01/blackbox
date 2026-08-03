@@ -81,7 +81,14 @@ export interface BoundedJson<T> {
  * a body can arrive chunked with no length at all.
  */
 export async function boundedJson<T>(
-  req: { text(): Promise<string>; header(name: string): string | undefined },
+  req: {
+    text(): Promise<string>;
+    header(name: string): string | undefined;
+    /** Hono's underlying Request. Its `body` is the stream this reads. */
+    raw?: { body?: ReadableStream<Uint8Array> | null } | null;
+    /** Test seam: a stream supplied directly, so a double need not fake a whole Request. */
+    stream?: () => ReadableStream<Uint8Array> | null;
+  },
   maxBytes: number,
 ): Promise<BoundedJson<T>> {
   const declared = Number(req.header('content-length') ?? Number.NaN);
@@ -89,16 +96,54 @@ export async function boundedJson<T>(
     return { value: null, refusal: 'too_large', bytes: declared };
   }
 
+  // ═══ THE BODY IS STREAMED, NOT BUFFERED ══════════════════════════════════════════════════
+  //
+  // `await req.text()` pulls the WHOLE body into the isolate before anything can measure it,
+  // which makes a size limit checked afterwards worthless against the case it exists for: the
+  // header is client-supplied, so an attacker declares 10 bytes, sends 500 MB, and the memory is
+  // already gone by the time the limit is consulted.
+  //
+  // So the stream is read chunk by chunk and ABANDONED the moment the running total passes the
+  // bound. Peak memory is the limit, not the payload. The reader is cancelled explicitly so the
+  // connection does not sit there feeding a body nobody will read.
   let text: string;
-  try {
-    text = await req.text();
-  } catch {
-    return { value: null, refusal: 'malformed', bytes: 0 };
+  let bytes = 0;
+  const stream = typeof req.stream === 'function' ? req.stream() : (req.raw?.body ?? null);
+  if (stream) {
+    const reader = stream.getReader();
+    const parts: Uint8Array[] = [];
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          return { value: null, refusal: 'too_large', bytes };
+        }
+        parts.push(value);
+      }
+    } catch {
+      return { value: null, refusal: 'malformed', bytes };
+    }
+    const joined = new Uint8Array(bytes);
+    let offset = 0;
+    for (const part of parts) {
+      joined.set(part, offset);
+      offset += part.byteLength;
+    }
+    text = new TextDecoder().decode(joined);
+  } else {
+    // No stream available (a test double, or a runtime that does not expose one). Fall back to
+    // reading, then measure — weaker, and the reason the streaming path above is preferred.
+    try {
+      text = await req.text();
+    } catch {
+      return { value: null, refusal: 'malformed', bytes: 0 };
+    }
+    bytes = new TextEncoder().encode(text).byteLength;
+    if (bytes > maxBytes) return { value: null, refusal: 'too_large', bytes };
   }
-
-  // The real measurement. A declared length that lied, or was absent, is caught here.
-  const bytes = new TextEncoder().encode(text).byteLength;
-  if (bytes > maxBytes) return { value: null, refusal: 'too_large', bytes };
 
   let parsed: unknown;
   try {
