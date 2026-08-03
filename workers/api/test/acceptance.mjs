@@ -95,7 +95,7 @@ const PER_ID = new Map();
   };
 }
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 // Privileged test creds (MAGIC_LINK_SECRET, optionally ADMIN_TOKEN/LINE_USER_ID)
 // load from env OR a gitignored test/.acceptance.env (KEY=VALUE per line) so the
@@ -2630,6 +2630,29 @@ async function run() {
   // what a complete pass says, which is the misreading the partial banner exists to prevent —
   // and the one a reader is most likely to skim to.
   console.log(ONLY ? `PARTIAL RUN PASSED — ${results.length} check(s). NOT a green suite.` : 'SUITE GREEN ✓');
+
+  // ═══ THE RECEIPT — so the same 1,442 requests are not spent twice on one commit ═══════════
+  //
+  // The standing rule is that the full suite runs ONCE, immediately before a production deploy.
+  // The pre-push hook also runs it, which meant a deploy-then-push sequence spent it TWICE on
+  // identical code — 1,442 requests to re-answer a question already answered, against the same
+  // plan limit whose exhaustion takes the alert path down.
+  //
+  // A rule the tooling contradicts is not a rule. So a FULL green run leaves a receipt naming the
+  // commit it covers, and the hook honours it for that commit only. Written on a full pass only:
+  // a partial run must never satisfy a gate that means "everything is green".
+  if (!ONLY && failed.length === 0) {
+    try {
+      const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', shell: true }).trim();
+      writeFileSync(
+        new URL('./.acceptance-receipt.json', import.meta.url),
+        JSON.stringify({ sha, at: Date.now(), checks: results.length, origin: ORIGIN }, null, 2),
+      );
+      console.log(`[receipt] full green run recorded for ${sha.slice(0, 7)} — the pre-push gate will not re-run it.`);
+    } catch {
+      /* a missing receipt costs a re-run, never a wrong answer */
+    }
+  }
 }
 
 // admin/D1 read helpers via the admin active-events endpoint + delivery is read

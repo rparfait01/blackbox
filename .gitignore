@@ -77,3 +77,4 @@ workers/*_files/
 .gate-run
 .latency/
 .facade/
+workers/api/test/.acceptance-receipt.json
