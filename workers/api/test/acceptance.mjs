@@ -60,6 +60,16 @@ let REQUESTS_ISSUED = 0;
  * run rather than discovered on a failed production deploy.
  */
 const PER_PATH = new Map();
+/**
+ * PER IDENTIFIER, because that is what the limit actually keys on.
+ *
+ * The first version of this counted per PATH and reported that the suite issues 149 signups
+ * against a burst of 12 — a number that reads authoritative while measuring the wrong thing. Those
+ * 149 are 149 DIFFERENT throwaway addresses, one attempt each, and the limiter buckets by
+ * identifier. Comparing a path total to a per-identifier burst would have condemned a correct
+ * limit, which is the same defect in the opposite direction from the one §F exists to catch.
+ */
+const PER_ID = new Map();
 {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (...a) => {
@@ -67,6 +77,17 @@ const PER_PATH = new Map();
     try {
       const url = new URL(typeof a[0] === 'string' ? a[0] : a[0].url);
       PER_PATH.set(url.pathname, (PER_PATH.get(url.pathname) ?? 0) + 1);
+      const init = a[1] ?? (typeof a[0] === 'object' ? a[0] : null);
+      let email = '';
+      if (init && typeof init.body === 'string') {
+        try {
+          email = (JSON.parse(init.body).email ?? '').trim().toLowerCase();
+        } catch {
+          /* not JSON */
+        }
+      }
+      const key = `${url.pathname}|${email || 'origin'}`;
+      PER_ID.set(key, (PER_ID.get(key) ?? 0) + 1);
     } catch {
       /* cost accounting must never break a check */
     }
@@ -2465,10 +2486,15 @@ process.on('exit', () => {
   ];
   const over = [];
   for (const [path, key, burst] of rules) {
-    const used = PER_PATH.get(path) ?? 0;
-    const flag = used > burst ? '  ← EXCEEDS BURST' : '';
-    if (used > burst) over.push(`${key}: suite issues ${used}, burst is ${burst}`);
-    console.log(`[limit] ${key.padEnd(14)} suite issued ${String(used).padStart(4)} · burst ${burst}${flag}`);
+    const total = PER_PATH.get(path) ?? 0;
+    // The limit buckets by identifier, so the number that matters is the WORST single bucket.
+    let worst = 0;
+    for (const [k, n] of PER_ID) if (k.startsWith(`${path}|`) && n > worst) worst = n;
+    const flag = worst > burst ? '  <-- EXCEEDS BURST' : '';
+    if (worst > burst) over.push(`${key}: worst single identifier issues ${worst}, burst is ${burst}`);
+    console.log(
+      `[limit] ${key.padEnd(14)} total ${String(total).padStart(4)} · worst identifier ${String(worst).padStart(3)} · burst ${burst}${flag}`,
+    );
   }
   if (over.length) {
     const lines = [
