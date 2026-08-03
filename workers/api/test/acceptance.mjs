@@ -49,10 +49,27 @@ import { createHmac, createHash } from 'node:crypto';
  * count is wrapped at the one place every request goes through, and reported at the end.
  */
 let REQUESTS_ISSUED = 0;
+/**
+ * Brief 41 §F — THE TRIPWIRE MUST NOT TRIP ITSELF, checked at DESIGN TIME.
+ *
+ * This suite is ~1,400 requests and crosses any limit worth having. It runs against staging and
+ * is exempt by environment, but that exemption must not be the only thing standing between the
+ * suite and a limit sized too low — an exemption is a reason it does not trip TODAY, not evidence
+ * the number is right. So the per-endpoint cost is counted here and reported against each rule's
+ * burst, and a limit the suite would exceed on a NON-exempt origin is named at the end of every
+ * run rather than discovered on a failed production deploy.
+ */
+const PER_PATH = new Map();
 {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (...a) => {
     REQUESTS_ISSUED += 1;
+    try {
+      const url = new URL(typeof a[0] === 'string' ? a[0] : a[0].url);
+      PER_PATH.set(url.pathname, (PER_PATH.get(url.pathname) ?? 0) + 1);
+    } catch {
+      /* cost accounting must never break a check */
+    }
     return realFetch(...a);
   };
 }
@@ -2438,6 +2455,31 @@ async function cleanup() {
 process.on('exit', () => {
   console.log(`
 [cost] acceptance suite issued ${REQUESTS_ISSUED} request(s) against the account limit.`);
+  // §F — per-limit cost, so a limit sized below this suite is a design-time finding.
+  const rules = [
+    ['/v1/auth/signin', 'signin', 10],
+    ['/v1/auth/magic/start', 'magic_start', 5],
+    ['/v1/auth/signup/start', 'signup_start', 12],
+    ['/v1/auth/recovery/consume', 'recovery', 8],
+    ['/v1/console/auth', 'console_login', 8],
+  ];
+  const over = [];
+  for (const [path, key, burst] of rules) {
+    const used = PER_PATH.get(path) ?? 0;
+    const flag = used > burst ? '  ← EXCEEDS BURST' : '';
+    if (used > burst) over.push(`${key}: suite issues ${used}, burst is ${burst}`);
+    console.log(`[limit] ${key.padEnd(14)} suite issued ${String(used).padStart(4)} · burst ${burst}${flag}`);
+  }
+  if (over.length) {
+    const lines = [
+      '',
+      '[limit] NOTE: the suite exceeds these bursts. It passes here only because staging is exempt',
+      '        by environment (§F). On a NON-exempt origin these would throttle the suite, which',
+      '        means either the limit is too low or the suite is too chatty — a finding either way:',
+      ...over.map((o) => '        - ' + o),
+    ];
+    console.log(lines.join('\n'));
+  }
 });
 
 run().catch((e) => { console.error('SUITE ERROR', e); process.exit(1); });

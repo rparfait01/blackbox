@@ -8,6 +8,8 @@ import { appendToChain, getChain, getChainGaps, getChainHead, hashBytes, publicK
 import { verifyChain } from './lib/chain-verdict';
 import { vaultCoverage } from './lib/vault-scan';
 import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
+import { backoffFor, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
+import { countAttempt, outboundHeadroom } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
 import { enqueueSeal, sealCoverage } from './lib/seal';
@@ -119,6 +121,82 @@ app.use('*', (c, next) =>
     maxAge: 86400,
   })(c, next),
 );
+
+/**
+ * Brief 41 §A/§F — ABUSE LIMITING. Placed BEFORE any route and before any D1 read (§E4), so a
+ * rejected request costs almost nothing.
+ *
+ * §0 — this middleware is a no-op for every path not on the explicit allow-list in
+ * abuse-limits.ts. The trigger, every event-scoped write, the cascade, closure and the
+ * coordinator surfaces are not on it, so they are never delayed by anything here. That is the
+ * whole design: an allow-list means a NEW capture route is unlimited until somebody deliberately
+ * limits it, whereas a deny-list would mean forgetting to exempt one silently throttles evidence.
+ *
+ * §E3 — if the counter cannot be consulted the request is ALLOWED and the condition is logged. A
+ * limiter that fails closed takes down the front door for everyone.
+ */
+app.use('*', async (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  const rule = ruleFor(pathname, c.req.method);
+  if (!rule) return next();
+
+  // §F — exemption is derived server-side and is never a client assertion. Staging is a separate
+  // deployment severed to its own D1 and R2; the canary is `isCanary = 1` on the users row.
+  const exemption = environmentExemption(c.env);
+  if (exemption) {
+    console.log(JSON.stringify({ limiter: 'exempt', reason: exemption, rule: rule.key, path: pathname }));
+    return next();
+  }
+
+  // Per IDENTIFIER first (§E1): a DV shelter puts many survivors behind one NAT, so the origin is
+  // a coarse ceiling and never the primary key. An address in the body is the identifier when one
+  // is present; otherwise fall back to the origin.
+  const identifier = await identifierForLimit(c);
+  const attempts = countAttempt(`${rule.key}:${identifier}`, rule.windowMs);
+  if (attempts === null) {
+    console.log(JSON.stringify({ limiter: 'failed_open', rule: rule.key, path: pathname }));
+    return next();
+  }
+
+  const decision = backoffFor(rule, attempts);
+  if (!decision.allowed) {
+    // §D — audited with identifier, origin and rule. Sustained limiting on ONE identifier is a
+    // targeted attack on a specific survivor, not background noise, so it alerts at error level.
+    const level = attempts > rule.burst * 4 ? 'error' : 'warn';
+    console.log(
+      JSON.stringify({
+        level,
+        limiter: 'limited',
+        rule: rule.key,
+        reason: rule.reason,
+        attempts,
+        retryAfterMs: decision.retryAfterMs,
+        path: pathname,
+      }),
+    );
+    return c.json({ error: 'slow_down', retryAfterMs: decision.retryAfterMs }, 429, {
+      'Retry-After': String(Math.ceil(decision.retryAfterMs / 1000)),
+    });
+  }
+  return next();
+});
+
+/**
+ * The limit key. Prefers a stable identifier over the origin so that many survivors behind one
+ * shelter NAT are counted separately (§E1). Reads the body without consuming it.
+ */
+async function identifierForLimit(c: { req: { raw: Request; header: (k: string) => string | undefined } }): Promise<string> {
+  const origin = c.req.header('CF-Connecting-IP') ?? c.req.header('x-forwarded-for') ?? 'unknown-origin';
+  try {
+    const clone = c.req.raw.clone();
+    const body = (await clone.json().catch(() => null)) as { email?: string; code?: string } | null;
+    const email = (body?.email ?? '').trim().toLowerCase();
+    if (email) return `email:${email}`;
+  } catch {
+    /* not JSON, or already consumed — the origin is a correct fallback */
+  }
+  return `origin:${origin}`;
+}
 
 // Structured request logging — no payload contents.
 app.use('*', async (c, next) => {
@@ -750,6 +828,7 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
   // tables, next to the claim, so partial coverage cannot hide behind a job that merely ran.
   const vault = await vaultCoverage(c.env);
   const devices = await credentialCoverage(c.env);
+  const outbound = await outboundHeadroom(c.env, UNAUTH_OUTBOUND.windowMs, UNAUTH_OUTBOUND.max);
   // §F7 — sealing coverage: pending, failures, and the oldest closed-but-unsealed event.
   const seal = await sealCoverage(c.env);
   // §F — request headroom. The Worker IS the alert path, so a billing threshold is an
@@ -781,6 +860,8 @@ app.get('/v1/admin/encryption/readiness', async (c) => {
       // Brief 2 Fix A acceptance 10 — per-account credential coverage, stated as counts so the
       // accounts still accepting userHash are visible rather than rounded away.
       devices,
+      // Brief 41 §C — outbound quota headroom, beside the request headroom from Brief 33 Fix A §F.
+      outbound,
       vault: {
         // Brief 37 Fix A — an EMPTY vault does not report as a verified one. "0/0 objects
         // verified" reads as healthy, and for two months it was the literal truth of a vault

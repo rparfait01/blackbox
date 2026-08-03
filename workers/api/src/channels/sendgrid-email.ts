@@ -29,6 +29,8 @@ import type {
   NotificationChannel,
   StandDownConfirmationPayload,
 } from './types';
+import { UNAUTH_OUTBOUND, isAlertMessage } from '../lib/abuse-limits';
+import { countOutbound } from '../lib/limiter-store';
 import type { Env } from '../types';
 import { isReservedEmail, SUPPRESSED_REASON } from './reserved';
 
@@ -87,6 +89,45 @@ export async function sendEmail(
   if (isReservedEmail(message.to)) {
     console.log(`[SendGrid] SUPPRESSED ${messageType} — reserved address, no quota spent`);
     return { ok: false, status: 0, body: SUPPRESSED_REASON, suppressed: true };
+  }
+
+  /**
+   * Brief 41 §C — THE RESERVED ALLOCATION. This is the item acceptance 3 is about.
+   *
+   * Brief 31 stopped the test suite draining the SendGrid quota. An unauthenticated attacker
+   * could still do it — hammer /v1/auth/magic/start and every real alert afterwards reaches
+   * nobody. That is an attack that takes the alert path down without ever touching the alert
+   * path, and this system has already lived through the same outcome by accident: a real 05:21
+   * alert reached no one because test runs had spent the credits first.
+   *
+   * So sends are split at the ONE place every message already passes through. Alert-path
+   * messages are never counted and never capped — no volume of abuse can reduce what is
+   * available to a survivor's cascade. Everything else draws on the ordinary allocation and is
+   * capped per identifier.
+   *
+   * The classification is derived from the message type the CALLING CODE PATH supplies, not from
+   * anything a request carries. There is no header or field that can promote a magic link to an
+   * alert.
+   */
+  if (!isAlertMessage(messageType)) {
+    const cap = await countOutbound(env, message.to.trim().toLowerCase(), UNAUTH_OUTBOUND.windowMs, UNAUTH_OUTBOUND.max);
+    if (!cap.allowed) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          outbound: 'capped',
+          messageType,
+          used: cap.used,
+          max: UNAUTH_OUTBOUND.max,
+          reason: UNAUTH_OUTBOUND.reason,
+        }),
+      );
+      return { ok: false, status: 0, body: 'outbound_cap_reached', suppressed: true };
+    }
+    if (cap.failedOpen) {
+      // §E3 — a survivor's magic link is not withheld because a counter was unreachable.
+      console.log(JSON.stringify({ level: 'warn', outbound: 'failed_open', messageType }));
+    }
   }
   const config = sendgridConfig(env);
   if (!config) {
