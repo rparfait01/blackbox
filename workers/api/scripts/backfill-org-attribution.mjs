@@ -7,9 +7,7 @@
  * 0060 adds columns and indexes and moves no data. The backfill is here because a single
  * `UPDATE chunks_index SET orgId = (SELECT ...)` runs across every row in one statement, and the
  * failure mode is not a clean error — it is a statement that exceeds a D1 limit part-way through,
- * leaving some rows attributed and some not, with nothing recording which. §F5 says batched with
- * a cursor; this is that, and the cursor is persisted in `org_backfill_progress` so an
- * interrupted run resumes instead of starting over.
+ * leaving some rows attributed and some not, with nothing recording which.
  *
  * ═══ WHAT IT WRITES, AND WHAT IT CORRECTLY DOES NOT ══════════════════════════════════════════
  *
@@ -23,20 +21,35 @@
  *                                                     legacy userHash-only contacts are real and
  *                                                     supported; they belong to no org.
  *
- * On PRODUCTION today this run is a no-op by construction: zero organizations exist, every
- * users.orgId and events.orgId is NULL, so there is nothing for any evidence row to be attributed
- * to. It is not skipped on that basis — it is RUN, and it reports 0 rows written, because
- * "I reasoned it would be a no-op" and "I observed it was a no-op" are different claims.
+ * ═══ IT REPORTS WHAT IT EXAMINED, NOT ONLY WHAT IT CHANGED ═══════════════════════════════════
+ *
+ * Standing constraint. "0 changed" and "0 examined" are different facts, and a report that cannot
+ * distinguish them is a report that a stalled job is a finished one. Every table prints three
+ * numbers — examined, needed, attributed — and the run states its MODE up front:
+ *
+ *   FULL PASS (default) — the cursor is ignored; every row is considered.
+ *   RESUMED (--resume)  — continues from the recorded cursor; rows before it are NOT re-examined.
+ *
+ * The first version of this script always resumed, so a table marked complete was never scanned
+ * again and rows created afterwards whose keys sorted before the cursor were skipped forever. It
+ * printed "0 attributed" and exited 0.
+ *
+ * ═══ WHERE THE PAGING HAPPENS, AND WHY ═══════════════════════════════════════════════════════
+ *
+ * The cursor pages over CANDIDATES — rows that still need attribution — not over every row. A
+ * version that paged the whole table spawned one wrangler process per batch: 34,104 audit rows at
+ * 100 per batch is 342 subprocesses and about twenty minutes to write nothing. The WHERE clause
+ * examines every row inside D1, which is where that work belongs; the cursor exists to bound each
+ * UPDATE statement, not to enumerate a table through a shell.
  *
  * ═══ ATTRIBUTION IS FROZEN (§F2) ═════════════════════════════════════════════════════════════
  *
  * Rows are stamped from the org the owning event was created under. A survivor who later joins or
  * leaves an org does not have her history re-attributed — a grant audit must say which org held
- * custody at the time, not which org she belongs to now. Re-running this script is therefore
- * idempotent only while event attribution is unchanged, and it never overwrites a non-NULL value.
+ * custody at the time, not which org she belongs to now. This never overwrites a non-NULL value.
  *
  * Usage:
- *   node scripts/backfill-org-attribution.mjs --env staging [--batch 200] [--dry-run]
+ *   node scripts/backfill-org-attribution.mjs --env staging [--batch 200] [--dry-run] [--resume]
  *   node scripts/backfill-org-attribution.mjs --env production --confirm
  */
 import { execFileSync } from 'node:child_process';
@@ -51,6 +64,7 @@ const flag = (name, fallback = null) => {
 const ENV = flag('env', 'staging');
 const BATCH = Number(flag('batch', 200));
 const DRY = args.includes('--dry-run');
+const RESUMING = args.includes('--resume');
 
 if (ENV === 'production' && !args.includes('--confirm')) {
   console.error('Refusing to touch production without --confirm.');
@@ -65,8 +79,8 @@ if (!Number.isInteger(BATCH) || BATCH < 1 || BATCH > 500) {
  * Each table, its cursor key, and where its org comes from.
  *
  * `keyExpr` must be a UNIQUE, ORDERABLE expression — the cursor pages on it with a strict `>`,
- * so a non-unique key would skip rows silently. Composite-keyed tables use a concatenation of
- * the full primary key rather than just `eventId`, which is NOT unique on those tables.
+ * so a non-unique key would skip rows silently. Composite-keyed tables use the full primary key
+ * rather than just `eventId`, which is NOT unique on those tables.
  */
 const TABLES = [
   { name: 'chunks_index', keyExpr: "eventId || ':' || sequence", from: 'events', fk: 'eventId' },
@@ -81,15 +95,16 @@ const TABLES = [
   { name: 'contacts', keyExpr: 'id', from: 'users', fk: 'userId' },
 ];
 
-const DB = ENV === 'production' ? 'blackbox' : 'blackbox-test';
+// Address the BINDING plus --env, not the database name. `wrangler d1 execute blackbox-test`
+// resolves against the top-level environment where that database is not bound, and fails with an
+// authentication error that looks like a credentials problem rather than a wiring one.
+const ENV_ARGS = ENV === 'production' ? ['--env', ''] : ['--env', 'staging'];
+const API_DIR = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 
 function d1(sql) {
   // Call wrangler's JS entry with node directly. `npx` is `npx.cmd` on Windows, which Node 24
   // refuses to run through execFile without a shell — and a shell would hand cmd.exe SQL full of
-  // quotes and parentheses to re-parse, which is how `^{commit}` was eaten in Brief 35. This form
-  // has neither problem and does not depend on PATH.
-  // `require.resolve('wrangler/bin/wrangler.js')` fails — the package's "exports" map does not
-  // expose the bin path. Resolve the package root through its package.json and join.
+  // quotes and parentheses to re-parse, which is how `^{commit}` was eaten in Brief 35.
   const WRANGLER = join(
     dirname(createRequire(import.meta.url).resolve('wrangler/package.json')),
     'bin',
@@ -97,43 +112,46 @@ function d1(sql) {
   );
   const out = execFileSync(
     process.execPath,
-    [WRANGLER, 'd1', 'execute', DB, '--remote', '--json', '--command', sql],
-    { cwd: new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+    [WRANGLER, 'd1', 'execute', 'DB', ...ENV_ARGS, '--remote', '--json', '--command', sql],
+    { cwd: API_DIR, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
   );
-  const parsed = JSON.parse(out.slice(out.indexOf('[')));
-  return parsed[0]?.results ?? [];
+  return JSON.parse(out.slice(out.indexOf('[')))[0]?.results ?? [];
 }
 
-console.log(`Backfilling org attribution — env=${ENV} db=${DB} batch=${BATCH}${DRY ? ' (DRY RUN)' : ''}`);
+const esc = (v) => String(v).replace(/'/g, "''");
+
+console.log(`Backfilling org attribution — env=${ENV} batch=${BATCH}${DRY ? ' (DRY RUN)' : ''}`);
+console.log(
+  RESUMING
+    ? 'MODE: RESUMED — continuing from the recorded cursor. Rows before it are NOT re-examined.'
+    : 'MODE: FULL PASS — the cursor is ignored; every row is considered.',
+);
 
 let grandTotal = 0;
+let grandExamined = 0;
 const report = [];
 
 for (const t of TABLES) {
-  // Resume from a recorded cursor if a previous run was interrupted.
-  // ═══ THE CURSOR IS FOR RESUMING AN INTERRUPTED RUN, NOT FOR SKIPPING A NEW ONE ═════════════
-  //
-  // This defaults to a FULL PASS and only resumes when asked. The first version always resumed
-  // from the recorded cursor, and the isolation pass caught what that means: a table marked
-  // complete is never scanned again, so rows created AFTERWARDS whose keys sort before the
-  // cursor are skipped forever — and the run reports "0 attributed" and exits 0, which reads as
-  // "nothing to do" rather than "I did not look". Silent under-attribution on an operations
-  // surface an institutional contract depends on.
-  //
-  // A full pass is cheap and idempotent: the UPDATE only touches rows that are still NULL and
-  // whose owner actually has an org, so re-running attributes exactly the rows that need it.
-  const RESUME = args.includes('--resume');
-  const progress = DRY || !RESUME
-    ? []
-    : d1(`SELECT lastKey, rowsWritten FROM org_backfill_progress WHERE tableName = '${t.name}'`);
+  // EXAMINED and NEEDED are counted, not inferred. A table with a million rows and no org has
+  // examined = 1,000,000 and attributed = 0, and those must not collapse into one number.
+  const examined = Number(d1(`SELECT COUNT(*) AS n FROM ${t.name}`)[0]?.n ?? 0);
+  const needed = Number(
+    d1(
+      `SELECT COUNT(*) AS n FROM ${t.name} WHERE orgId IS NULL AND ${t.fk} IS NOT NULL ` +
+        `AND (SELECT orgId FROM ${t.from} WHERE id = ${t.name}.${t.fk}) IS NOT NULL`,
+    )[0]?.n ?? 0,
+  );
+
+  const progress =
+    DRY || !RESUMING
+      ? []
+      : d1(`SELECT lastKey, rowsWritten FROM org_backfill_progress WHERE tableName = '${t.name}'`);
   let cursor = progress[0]?.lastKey ?? '';
   let written = Number(progress[0]?.rowsWritten ?? 0);
   let batches = 0;
 
   for (;;) {
-    // Page over rows that still need attribution AND whose owner actually has an org. Rows whose
-    // owner has no org are simply never selected — they keep NULL, which is their correct value.
-    const cursorClause = cursor ? `AND (${t.keyExpr}) > '${cursor.replace(/'/g, "''")}'` : '';
+    const cursorClause = cursor ? `AND (${t.keyExpr}) > '${esc(cursor)}'` : '';
     const candidates = d1(
       `SELECT (${t.keyExpr}) AS k FROM ${t.name} ` +
         `WHERE orgId IS NULL AND ${t.fk} IS NOT NULL ` +
@@ -147,11 +165,11 @@ for (const t of TABLES) {
       d1(
         `UPDATE ${t.name} SET orgId = (SELECT orgId FROM ${t.from} WHERE id = ${t.name}.${t.fk}) ` +
           `WHERE orgId IS NULL AND ${t.fk} IS NOT NULL ` +
-          `AND (${t.keyExpr}) > '${cursor.replace(/'/g, "''")}' AND (${t.keyExpr}) <= '${last.replace(/'/g, "''")}'`,
+          `AND (${t.keyExpr}) > '${esc(cursor)}' AND (${t.keyExpr}) <= '${esc(last)}'`,
       );
       d1(
         `INSERT INTO org_backfill_progress (tableName, lastKey, rowsWritten, updatedAt) ` +
-          `VALUES ('${t.name}', '${last.replace(/'/g, "''")}', ${written + candidates.length}, ${Date.now()}) ` +
+          `VALUES ('${t.name}', '${esc(last)}', ${written + candidates.length}, ${Date.now()}) ` +
           `ON CONFLICT(tableName) DO UPDATE SET lastKey = excluded.lastKey, ` +
           `rowsWritten = excluded.rowsWritten, updatedAt = excluded.updatedAt`,
       );
@@ -159,25 +177,30 @@ for (const t of TABLES) {
     cursor = last;
     written += candidates.length;
     batches += 1;
-    process.stdout.write(`  ${t.name}: ${written} row(s) in ${batches} batch(es)\r`);
   }
 
   if (!DRY) {
     d1(
       `INSERT INTO org_backfill_progress (tableName, lastKey, rowsWritten, completedAt, updatedAt) ` +
-        `VALUES ('${t.name}', ${cursor ? `'${cursor.replace(/'/g, "''")}'` : 'NULL'}, ${written}, ${Date.now()}, ${Date.now()}) ` +
-        `ON CONFLICT(tableName) DO UPDATE SET completedAt = excluded.completedAt, updatedAt = excluded.updatedAt`,
+        `VALUES ('${t.name}', ${cursor ? `'${esc(cursor)}'` : 'NULL'}, ${written}, ${Date.now()}, ${Date.now()}) ` +
+        `ON CONFLICT(tableName) DO UPDATE SET completedAt = excluded.completedAt, ` +
+        `rowsWritten = excluded.rowsWritten, updatedAt = excluded.updatedAt`,
     );
   }
 
-  // What was DELIBERATELY left alone, counted rather than assumed.
-  const leftNull = d1(`SELECT COUNT(*) AS n FROM ${t.name} WHERE orgId IS NULL`);
-  const n = Number(leftNull[0]?.n ?? 0);
-  report.push({ table: t.name, attributed: written, leftNull: n, batches });
+  const leftNull = Number(d1(`SELECT COUNT(*) AS n FROM ${t.name} WHERE orgId IS NULL`)[0]?.n ?? 0);
+  report.push({ table: t.name, examined, needed, attributed: written, leftNull, batches });
   grandTotal += written;
-  console.log(`  ${t.name}: ${written} attributed in ${batches} batch(es), ${n} correctly left NULL   `);
+  grandExamined += examined;
+  console.log(
+    `  ${t.name}: examined ${examined}, needed ${needed}, attributed ${written}, ` +
+      `${leftNull} left NULL (correct) — ${batches} batch(es)`,
+  );
 }
 
-console.log(`\n${grandTotal} row(s) attributed across ${TABLES.length} tables.`);
+console.log(
+  `\n${grandExamined} row(s) EXAMINED, ${grandTotal} attributed, across ${TABLES.length} tables ` +
+    `(${RESUMING ? 'RESUMED' : 'FULL PASS'}).`,
+);
 console.log('Rows left NULL are UNAFFILIATED — that is their correct and final value, not pending work.');
 console.table(report);

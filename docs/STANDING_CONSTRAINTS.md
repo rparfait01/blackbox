@@ -376,3 +376,17 @@ evidence — which means the throw never surfaced as an error. It converted a `R
 `ACCEPTED_FAIL_OPEN`. Anything that can make that code throw is a way to switch device
 verification off. Latent rather than live at the one call site, and closed anyway: on these paths
 the severity of a crash is the severity of the permission it grants.)*
+
+## A JOB REPORTS WHAT IT EXAMINED (ratified 2026-08-03, from Brief 23 Fix A §F5)
+
+**"A job reports what it examined, not only what it changed. '0 changed' and '0 examined' are
+different facts, and a report that cannot distinguish them is a report that a stalled job is a
+finished one. A resumable cursor states, on every run, whether it made a full pass or resumed —
+and full is the default."**
+
+*(Origin: the org-attribution backfill always resumed from its recorded cursor, so a table marked
+complete was never scanned again — rows created afterwards whose keys sorted before the cursor
+were skipped forever. It printed "0 attributed" and exited 0, which reads as "nothing needed
+doing" rather than "I did not look". Silent under-attribution on the operations surface an
+institutional contract depends on, and it was invisible precisely because the two facts shared
+one number.)*
