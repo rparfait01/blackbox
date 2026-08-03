@@ -45,6 +45,14 @@
 
 ---
 
+## CORRECTIONS — None.
+
+This brief supersedes no prior brief's text. Its findings (the referrer policy sat on the Pages
+origin while the Worker origin served the event-bound coordinator URL; the facade audit read only
+`.js` and missed six `data:font/woff2` URIs in the CSS) are recorded as standing constraints
+rather than as corrections, because they corrected an implementation and an audit rather than a
+brief.
+
 ## THE DEFECT
 
 The PWA is served without a content-security policy or the standard transport and framing

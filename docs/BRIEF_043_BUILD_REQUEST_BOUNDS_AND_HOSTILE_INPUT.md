@@ -49,6 +49,20 @@
 
 ---
 
+## CORRECTIONS
+
+**BRIEF 041 §B — corrected to read:**
+"Enumeration resistance is a property of the WORK PERFORMED, not of the response body. Two paths
+that return identical JSON but perform different work are distinguishable by timing. Equalise the
+work or move all of it off the response path; never close the gap with a delay, which adds latency
+to the life-safety path to hide a difference that is still there."
+Path: `workers/api/src/routes/auth.ts`
+
+*(Origin: `/magic/start` returned an identical body for existent and non-existent addresses and
+was believed closed on that basis. It was measurably +23ms slower for an existent address, because
+it did the link-minting and send work inline. Closed by moving every differing branch into
+`waitUntil`, so the response is emitted before the work begins.)*
+
 ## THE DEFECT
 
 Request bodies are accepted without size or shape bounds. Classification and transcript arrays are
