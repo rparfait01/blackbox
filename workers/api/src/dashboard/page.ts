@@ -272,7 +272,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   <!-- Fix Brief 8: the live map leads the coordinator view. Then
        ORIGIN → SITUATION → CAMERA → TRANSCRIPT(secondary) → audio/devices. -->
   <section class="sec">
-    <div class="label">Location · Live</div>
+    <div class="label"><span class="stream-state" id="locationState">—</span> Location · Live</div>
     <div class="map" id="map">${ssrMap(state)}</div>
     <div class="coords" id="coords">${
       state.location
@@ -566,6 +566,15 @@ export function renderTokenPage(kind: 'expired' | 'invalid' | 'spent'): string {
 }
 
 const CSS = `
+/* Brief 50 §E — every stream declares its own state, and the colours are not decoration.
+   A coordinator glancing at this page must be able to tell "nothing is happening" from
+   "you stopped receiving ten minutes ago" without reading a word. */
+.stream-state{font-size:10px;letter-spacing:.08em;font-weight:700;padding:2px 6px;border-radius:4px;vertical-align:middle;margin-left:6px}
+.ss-live{background:#0a3d20;color:#5ee08a}
+.ss-degraded{background:#4a3200;color:#ffc14d}
+.ss-stopped{background:#4a0d0d;color:#ff8080}
+.stream-warn{color:#ffc14d}
+
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
 .wrap{max-width:520px;margin:0 auto;padding:16px 16px 48px}
@@ -1058,13 +1067,50 @@ const CLIENT_JS = `
   connectWS();
 
   // ---- SSE enhancement (lower latency); polling remains the guarantee ----
+  //
+  // Brief 50 §E — THESE USED TO CLOSE PERMANENTLY ON THE FIRST ERROR.
+  //
+  // es.onerror = function(){ es.close(); } — one transient failure and a coordinator watching a
+  // live incident silently lost the low-latency path for the rest of the event. The poll still
+  // covered them, so nothing looked broken; the stream just went quiet, which is the exact shape
+  // §E calls worse than reporting stopped.
+  //
+  // Same ladder the socket already uses (Brief 33 Fix A §C): bounded attempts, capped delay,
+  // ±25% jitter so tabs that dropped together — which is what a deploy or a quota breach causes —
+  // do not retry in lockstep against a Worker that is still recovering. And it never reconnects
+  // to a closed event.
+  function sseWithBackoff(path, stateId, onData){
+    var attempts=0, src=null, timer=null;
+    function open(){
+      if(pollStopped){ setState(stateId,'stopped','STOPPED — event closed'); return; }
+      if(attempts>=WS_MAX_ATTEMPTS){ setState(stateId,'stopped','STOPPED — using poll only'); return; }
+      try{
+        src=new EventSource(api(path));
+        src.onopen=function(){ attempts=0; setState(stateId,'live','LIVE'); };
+        src.onmessage=function(e){ try{ onData(JSON.parse(e.data)); }catch(x){} };
+        src.onerror=function(){
+          try{ src.close(); }catch(x){}
+          src=null;
+          if(pollStopped){ setState(stateId,'stopped','STOPPED — event closed'); return; }
+          var delay=WS_BACKOFF_MS[Math.min(attempts, WS_BACKOFF_MS.length-1)];
+          if(delay>WS_CAP_MS) delay=WS_CAP_MS;
+          delay=Math.round(delay*(0.75+Math.random()*0.5));
+          attempts++;
+          setState(stateId,'degraded','DEGRADED — reconnecting');
+          if(attempts>=WS_MAX_ATTEMPTS){ setState(stateId,'stopped','STOPPED — using poll only'); return; }
+          timer=setTimeout(open, delay);
+        };
+      }catch(x){ setState(stateId,'stopped','STOPPED — unavailable'); }
+    }
+    open();
+    return function(){ if(timer) clearTimeout(timer); if(src){ try{src.close();}catch(x){} } };
+  }
+
   try{
-    var es1=new EventSource(api('/audio/stream'));
-    es1.onmessage=function(e){ try{ var d=JSON.parse(e.data); if(window.__pumpAudio) window.__pumpAudio(d.latestSequence); }catch(x){} };
-    es1.onerror=function(){ es1.close(); };
-    var es2=new EventSource(api('/location/stream'));
-    es2.onmessage=function(e){ try{ var d=JSON.parse(e.data); if(d.location){ lastLoc=d.location; lastTrail=d.trail||lastTrail; applyLocation(d.location,lastTrail); } }catch(x){} };
-    es2.onerror=function(){ es2.close(); };
+    sseWithBackoff('/audio/stream','audioState',function(d){ if(window.__pumpAudio) window.__pumpAudio(d.latestSequence); });
+    sseWithBackoff('/location/stream','locationState',function(d){
+      if(d.location){ lastLoc=d.location; lastTrail=d.trail||lastTrail; applyLocation(d.location,lastTrail); }
+    });
   }catch(x){}
 
   // ---- coordinator secures (Brief 12 P2): a single, deliberate confirm step.

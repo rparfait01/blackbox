@@ -13,6 +13,8 @@ Answering "was Brief 12 §3 ever touched?" is one lookup here, never a forward r
 |---|---|---|---|
 | Brief 025 | Brief 053 | The anonymous tally was never gated on tenancy or zero-knowledge custody. Its own §1 says so: it | — |
 | Brief 026 | Brief 053 | Brief 26 is roughly half shipped, not unstarted. Briefs 36–39 built the SURVIVOR half — envelope | — |
+| Brief 022 / TRIGGER-UNIFY | Brief 050 | Mode is display-only for capture as well as for triggering. One capture core, one transcription | — |
+| Brief 050 (this brief's own framing) | Brief 050 | Both observed defects are DOWNSTREAM, on the coordinator's playback surface. Capture is not | — |
 | Brief 041 §B | Brief 043 | Enumeration resistance is a property of the WORK PERFORMED, not of the response body. Two paths | — |
 | Brief 002 §C3 | Brief 040 | Sealed evidence is retained under a storage-layer retention rule, scoped to the vault prefix, | — |
 | Brief 002 §C3 | Brief 040 | The vault sealing scan covers every eligible object. Coverage is proven by a durable cursor, | — |
