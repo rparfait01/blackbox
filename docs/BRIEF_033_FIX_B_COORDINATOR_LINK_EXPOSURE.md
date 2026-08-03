@@ -43,6 +43,21 @@ capability token appears in a URL at most once, is redeemed on first use, and ne
 browser history, autocomplete, or sync."
 Path: `workers/api/src/dashboard/page.ts`, `workers/api/src/routes/coordinator.ts`
 
+**BRIEF 043 §A — corrected to read:**
+"Every Hono route reading a request body does so through the bounded reader. The sweep is
+verified by enumeration against the router, not by inspection — a route that was not thought of
+is not covered by a rule that was applied by hand."
+Path: `workers/api/src/routes/org-register.ts`
+
+*(Origin: Brief 43 §A converted 29 body reads and MISSED `POST /v1/org-register/complete`. The
+route was found by an unrelated read-only audit of Brief 24, not by the brief that claimed to have
+swept it. It matters more than most: the surface is public up to its session check and it is the
+front door an organization walks through, so an unbounded body on it is reachable by anyone
+holding a registration link. It also took `licenseVersion` and `acceptancePath` as whatever
+arrived and coerced them — a 4 KB string was accepted and RECORDED AS THE LICENCE THE ORG
+ACCEPTED, which is the artifact a contract dispute turns on. Both now bounded and validated
+against a closed vocabulary.)*
+
 ---
 
 ## §0 — THE CONSTRAINT THAT OUTRANKS THIS BRIEF

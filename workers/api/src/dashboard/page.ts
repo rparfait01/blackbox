@@ -473,12 +473,59 @@ const NOTIFIED_JS = `
 })();
 `;
 
-export function renderTokenPage(kind: 'expired' | 'invalid'): string {
-  const heading = kind === 'expired' ? 'This live link has expired' : 'This link is not valid';
+/**
+ * §B — the self-service path off a spent link. A button and a status line, no support request.
+ *
+ * The request is a POST from a click, which is also the shape a link scanner cannot produce — the
+ * same reasoning that governs redemption. It asks the server to re-send through the SAME cascade
+ * channel the alert used; the fresh link is never rendered into this page, because a page reached
+ * by an unauthenticated request must not become a way to mint credentials.
+ */
+const SPENT_SELF_SERVICE = `<p><button class="fresh" id="fresh">Send me a fresh link</button></p>
+<p id="fl" class="muted"></p>
+<script>
+document.getElementById('fresh').addEventListener('click', function () {
+  // No regex: this whole script lives inside a TS template literal, where a backslash is an
+  // escape the compiler eats before the browser ever sees it. The path here is always /c/<id>,
+  // so prefixing is exact and needs no escaping at all.
+  var api = '/v1' + location.pathname + '/fresh-link';
+  var out = document.getElementById('fl');
+  out.textContent = 'Sending…';
+  fetch(api, { method: 'POST', credentials: 'include' }).then(function (r) {
+    out.textContent = r.ok
+      ? 'Sent. It will arrive the same way the alert did.'
+      : 'Could not send. Open the most recent alert message and use the link there.';
+  }).catch(function () {
+    out.textContent = 'Could not send. Open the most recent alert message and use the link there.';
+  });
+});
+</script>`;
+
+/**
+ * Brief 33 Fix B §B — 'spent' is a THIRD outcome, and it must never be a dead end.
+ *
+ * A spent link means a human already opened this alert in another browser. The person reading
+ * this page is not an attacker in the expected case — they are the same coordinator on a second
+ * device, or a second contact the cascade also notified. Telling them "invalid" would be both
+ * wrong and useless at 3am.
+ *
+ * So it says what happened in plain words and gives a SELF-SERVICE path: request a fresh link
+ * through the same channel the alert arrived on. No support request, no dead end.
+ */
+export function renderTokenPage(kind: 'expired' | 'invalid' | 'spent'): string {
+  const heading =
+    kind === 'expired'
+      ? 'This live link has expired'
+      : kind === 'spent'
+        ? 'This link is already open somewhere else'
+        : 'This link is not valid';
   const body =
     kind === 'expired'
       ? 'Live links are active for one hour. Check LINE for the most recent alert message and open the dashboard link there.'
-      : 'The link may be incomplete or mistyped. Open the dashboard from the link in the LINE alert message.';
+      : kind === 'spent'
+        ? 'Someone has already opened this alert from another device or browser — that may well have been you. ' +
+          'To open it here, request a fresh link and it will arrive the same way the alert did.'
+        : 'The link may be incomplete or mistyped. Open the dashboard from the link in the LINE alert message.';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -492,6 +539,7 @@ export function renderTokenPage(kind: 'expired' | 'invalid'): string {
   <div class="brand">BLACK BOX</div>
   <h1>${heading}</h1>
   <p>${body}</p>
+  ${kind === 'spent' ? SPENT_SELF_SERVICE : ''}
 </main>
 </body>
 </html>`;
@@ -593,8 +641,24 @@ html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Seg
 const CLIENT_JS = `
 (function(){
   var CFG=window.__CFG, S=window.__STATE0;
-  var base=CFG.base, q='?t='+encodeURIComponent(CFG.token);
+  // Brief 33 Fix B - NO TOKEN ON THE WIRE.
+  //
+  // Every one of these URLs used to carry the token as a query parameter, so the coordinator's
+  // credential sat in every request line, every proxy log, and the WebSocket handshake for the
+  // whole of a live alert. Auth is now the HttpOnly bbview cookie, which none of those can see.
+  //
+  // The query fallback survives only when the page was served with a token still in hand: the
+  // cookie may be blocked or cleared, and a coordinator wrongly refused is worse than a token
+  // wrongly honoured. When the exchange worked, CFG.token is empty and this is ''.
+  //
+  // (No backticks in this comment on purpose - the whole script is inside a TS template literal,
+  // and one backtick here terminates it. That is exactly how this block broke once already.)
+  var base=CFG.base, q=CFG.token?('?t='+encodeURIComponent(CFG.token)):'';
   function api(path){return base+'/v1/c/'+CFG.eventId+path+q;}
+
+  // The human signal that binds this link to this browser. A link scanner issues GETs and runs
+  // no page script, so it never reaches this line and never spends a coordinator's link.
+  try{ fetch(api('/redeem'),{method:'POST',credentials:'include'}); }catch(e){}
   function el(id){return document.getElementById(id);}
 
   // ---- elapsed ticker ----

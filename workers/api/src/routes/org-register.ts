@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 
 import { requireSession } from '../auth';
 import { completeAdminRegistration, getRegistrationOrgView } from '../lib/org-registration';
+import { boundedJson, check, LIMITS, validate } from '../lib/request-bounds';
 import type { Env, Vars } from '../types';
 
 // Mounted at /v1/org-register — a DISTINCT base path from the session-gated /v1/org
@@ -43,15 +44,42 @@ orgRegisterRoutes.get('/:code', async (c) => {
 // permanently burns the code. Org name/lane/seats/term are fixed on the server record —
 // nothing here lets the registrant edit them.
 orgRegisterRoutes.post('/complete', requireSession, async (c) => {
-  const body = await c.req
-    .json<{ code?: string; licenseVersion?: string; acceptancePath?: string }>()
-    .catch(() => ({}) as { code?: string; licenseVersion?: string; acceptancePath?: string });
-  const code = (body.code ?? '').trim();
+  // ═══ Brief 43 §A/§B, applied late — this route was MISSED by that brief's sweep ═════════════
+  //
+  // Brief 43 converted every Hono body read to the bounded reader and this one was left on the
+  // raw `c.req.json().catch()`. The miss matters more here than on most routes: this surface is
+  // PUBLIC up to the session check and it is the front door an organization walks through, so an
+  // unbounded body on it is reachable by anyone holding a registration link.
+  //
+  // Bounds are only half of it. The old code took `licenseVersion` and `acceptancePath` as
+  // whatever arrived and coerced them — `(body.licenseVersion ?? 'v1').trim()` throws on a number
+  // and silently accepts a 4 KB string as a licence version, which is then RECORDED AS THE
+  // LICENCE THE ORG ACCEPTED. That record is the artifact a contract dispute turns on, so it gets
+  // a closed vocabulary and a length, not a coercion.
+  const read = await boundedJson<Record<string, unknown>>(c.req, LIMITS.jsonBodyBytes);
+  if (read.value === null) {
+    return c.json({ error: read.refusal ?? 'invalid_json' }, read.refusal === 'too_large' ? 413 : 400);
+  }
+  const fields = validate<{ code: string; licenseVersion?: string; acceptancePath?: 'out_of_band' | 'click_through' }>(
+    read.value,
+    {
+      code: { check: check.requiredString(200), required: true },
+      licenseVersion: { check: check.string(40) },
+      // An allow-list, never a deny-list: an unrecognised acceptance path is refused rather than
+      // quietly folded into 'click_through', because those two are a signed contract and a
+      // checkbox and the record must not blur them.
+      acceptancePath: { check: check.oneOf(['out_of_band', 'click_through'] as const) },
+    },
+  );
+  if (fields.value === null) {
+    return c.json({ error: 'invalid_request', issues: fields.issues }, 400);
+  }
+  const code = fields.value.code.trim();
   if (!code) {
     return c.json({ error: 'code_required' }, 400);
   }
-  const acceptancePath = body.acceptancePath === 'out_of_band' ? 'out_of_band' : 'click_through';
-  const licenseVersion = (body.licenseVersion ?? 'v1').trim() || 'v1';
+  const acceptancePath = fields.value.acceptancePath ?? 'click_through';
+  const licenseVersion = (fields.value.licenseVersion ?? 'v1').trim() || 'v1';
   const res = await completeAdminRegistration(c.env, {
     userId: c.get('userId'),
     code,

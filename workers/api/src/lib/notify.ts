@@ -625,6 +625,54 @@ async function closerIdentity(
  * Runs from the 1-min cron. Each event is claimed atomically (CAS on
  * lastLinkIssuedAt) so concurrent crons never double-reissue.
  */
+/**
+ * Brief 33 Fix B §B — reissue ONE event's link, on a coordinator's own request.
+ *
+ * The self-service path off a spent link. `reissueExpiredLinks` is a cron sweep scoped to links
+ * that have EXPIRED; this is a live link that was redeemed in another browser, which is a
+ * different condition entirely — the link works, it is simply bound elsewhere.
+ *
+ * It reuses the one dispatcher and sends to the contacts the cascade already knows. The fresh
+ * link is never returned to the caller: this is reachable without credentials by design (whoever
+ * calls it has just been refused), and an endpoint that hands a working link to whoever asks
+ * would be a larger hole than the address-bar exposure this brief closes.
+ */
+export async function reissueLinkForEvent(env: Env, eventId: string, workerOrigin: string): Promise<number> {
+  if (!env.MAGIC_LINK_SECRET) return 0;
+  const ev = await env.DB.prepare(
+    "SELECT id, userId, userHash, createdAt, tzOffsetMinutes FROM events WHERE id = ? AND status = 'active'",
+  )
+    .bind(eventId)
+    .first<{ id: string; userId: string | null; userHash: string | null; createdAt: number; tzOffsetMinutes: number | null }>();
+  if (!ev) return 0;
+
+  const contacts = await listCascadeContacts(env, { userId: ev.userId, userHash: ev.userHash });
+  if (contacts.length === 0) {
+    await audit(env, ev.id, 'link_reissue_skipped', ev.userHash, { reason: 'no_contact' });
+    return 0;
+  }
+
+  const now = Date.now();
+  const token = await mintMagicToken(env.MAGIC_LINK_SECRET, ev.id, now);
+  const dashboardUrl = `${workerOrigin}/c/${ev.id}?t=${token}`;
+  await env.DB.prepare('UPDATE events SET lastLinkIssuedAt = ? WHERE id = ?').bind(now, ev.id).run();
+  await audit(env, ev.id, 'link_reissued_on_request', ev.userHash, { recipients: contacts.length });
+
+  for (const contact of contacts) {
+    await dispatch(env, contact.id, {
+      kind: 'escalation',
+      eventId: ev.id,
+      payload: {
+        userDisplayName: contact.displayName,
+        dashboardUrl,
+        reason: 'link_reissued',
+        location: await latestLocation(env, ev.id),
+      },
+    });
+  }
+  return contacts.length;
+}
+
 export async function reissueExpiredLinks(env: Env, workerOrigin: string): Promise<void> {
   if (!env.MAGIC_LINK_SECRET) {
     return;

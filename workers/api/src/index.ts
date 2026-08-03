@@ -31,6 +31,14 @@ import {
   recordUserAssent,
 } from './lib/closure-consent';
 import { broadcastEventChange } from './event-channel';
+import {
+  createViewSession,
+  getViewSession,
+  redeemViewSession,
+  tokenDisposition,
+  VIEW_COOKIE,
+  VIEW_COOKIE_OPTS,
+} from './lib/coordinator-session';
 import { qrSvg } from './lib/qr';
 import {
   getVerifiedRecipient,
@@ -44,7 +52,8 @@ import { renderRecipientRegistration } from './dashboard/recipient-page';
 import { scheduled } from './scheduled';
 import { getContactForEvent, listCascadeContacts, listContacts, listFollows, upsertContact } from './lib/contacts';
 import { hasDeliverableRecipient } from './lib/roles';
-import { advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
+import {
+  reissueLinkForEvent, advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
 import { purgeOrphanedMedia } from './lib/media-purge';
 import { createEnrollmentCode } from './lib/org';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
@@ -1514,11 +1523,25 @@ app.post('/v1/activation/webhook', handleActivationWebhook);
 
 // --- Contact magic-link view (no login; the signed token is the auth) ---
 async function requireMagicToken(c: AppContext): Promise<boolean> {
+  const eventId = c.req.param('id') ?? '';
+
+  // ═══ Brief 33 Fix B §A/§E1 — COOKIE FIRST, TOKEN SECOND ═══════════════════════════════════
+  //
+  // Before this, every dashboard API call and the WebSocket URL carried `?t=<token>` — so the
+  // credential was not merely in the address bar, it was in every request line and every proxy
+  // log for the duration of a live alert. A view session moves all of that onto an HttpOnly
+  // cookie the address bar and the logs never see.
+  //
+  // The token path REMAINS, and that is deliberate rather than transitional: §C requires links
+  // already in the wild to keep working, and §B requires this to fail open. A coordinator whose
+  // cookie was blocked, cleared, or never set still gets in with the tokened URL.
+  const viewSession = await getViewSession(c.env, getCookie(c, VIEW_COOKIE) ?? '', eventId);
+  if (viewSession) return true;
+
   const secret = c.env.MAGIC_LINK_SECRET;
   if (!secret) {
     return false;
   }
-  const eventId = c.req.param('id') ?? '';
   const token = c.req.query('t') ?? '';
   // Accept any valid role token (guardian/coordinator/notified/dispatch) so the
   // dashboard sub-routes work on both the guardian and authority paths.
@@ -1545,12 +1568,67 @@ app.get('/c/:id', async (c) => {
   const secret = c.env.MAGIC_LINK_SECRET;
   const eventId = c.req.param('id');
   const token = c.req.query('t') ?? '';
-  const { verdict, role } = secret
-    ? await verifyTokenRole(secret, eventId, token)
-    : ({ verdict: 'invalid' as const, role: 'guardian' as const });
-  if (verdict !== 'ok') {
-    return c.html(renderTokenPage(verdict === 'expired' ? 'expired' : 'invalid'), 401);
+  const presentedSession = getCookie(c, VIEW_COOKIE) ?? null;
+
+  // ═══ Brief 33 Fix B §A — THE EXCHANGE ══════════════════════════════════════════════════════
+  //
+  // A tokened URL is swapped for a cookie and REDIRECTED to a bare one. An HTTP redirect leaves
+  // only the destination in the back stack, so `…/c/<event>?t=<token>` never enters history,
+  // autocomplete, or cross-device sync — and it costs no interstitial, no button, and no
+  // JavaScript, which §0 requires above everything this brief fixes.
+  //
+  // Arriving WITHOUT a token is the ordinary case after the redirect: the cookie authenticates
+  // and `verifyTokenRole` is skipped entirely.
+  type LinkRole = 'guardian' | 'dispatch' | 'notified' | 'coordinator';
+  let role = 'guardian' as LinkRole;
+  if (!token) {
+    const session = await getViewSession(c.env, presentedSession ?? '', eventId);
+    if (!session) {
+      // No token and no session: an expired cookie, a different browser, or a bare URL typed
+      // from memory. Honest page, and §B's self-service path — never a dead end.
+      return c.html(renderTokenPage('invalid'), 401);
+    }
+    role = session.role as typeof role;
+  } else {
+    const verified = secret
+      ? await verifyTokenRole(secret, eventId, token)
+      : ({ verdict: 'invalid' as const, role: 'guardian' as const });
+    if (verified.verdict !== 'ok') {
+      return c.html(renderTokenPage(verified.verdict === 'expired' ? 'expired' : 'invalid'), 401);
+    }
+    role = verified.role as typeof role;
+
+    // §B — refuse ONLY the one case the brief names: a human already redeemed this link in a
+    // DIFFERENT browser. Everything else proceeds, including a link nobody has redeemed and a
+    // repeat visit from the browser that did.
+    const disposition = await tokenDisposition(c.env, { eventId, token, presentedSessionKey: presentedSession });
+    if (disposition.state === 'bound_elsewhere') {
+      await audit(c.env, eventId, 'coordinator_link_spent', null, JSON.stringify({ redeemedAt: disposition.redeemedAt }));
+      return c.html(renderTokenPage('spent'), 401);
+    }
+
+    // ═══ THE EXCHANGE IS SCOPED TO THE COORDINATOR PATH, AND HERE IS WHY ═══════════════════
+    //
+    // The AUTHORITY (dispatch) path binds its verified recipient to the TOKEN — `getBinding(env,
+    // eventId, token)`, the Fix Brief 3 R3 identity gate. Redirecting that path to a bare URL
+    // would sever the binding and drop a responding agency back to the registration form
+    // mid-incident. That is a worse failure than the exposure being fixed.
+    //
+    // It is also a different exposure. This brief's threat model is explicit: the coordinator is
+    // typically the survivor's CLOSEST CONTACT, plausibly on a shared device, plausibly in the
+    // same household as the person the alert is about. A link in that browser's history
+    // discloses an alert to whoever opens it next. The authority path is an agency workstation
+    // whose holder has already registered and verified an identity against that token.
+    //
+    // Scoped, stated, and revisitable — not overlooked.
+    const sessionKey = role === 'dispatch' ? null : await createViewSession(c.env, { eventId, token, role });
+    if (sessionKey) {
+      setCookie(c, VIEW_COOKIE, sessionKey, VIEW_COOKIE_OPTS);
+      // 303: the browser follows with a GET and keeps only this destination in history.
+      return c.redirect(`/c/${encodeURIComponent(eventId)}`, 303);
+    }
   }
+
   const workerOrigin = new URL(c.req.url).origin;
 
   // AUTHORITY (dispatch) path — the C1 verify-identity gate applies HERE ONLY
@@ -1601,6 +1679,72 @@ app.get('/c/:id', async (c) => {
   // Location-only view. Offer to take coordination only when unclaimed.
   await audit(c.env, eventId, claimed ? 'notified_view' : 'claimable_view', null, null);
   return c.html(renderNotifiedPage({ eventId, base: workerOrigin, state, claimable: !claimed }), 200, NO_STORE_HTML);
+});
+
+/**
+ * Brief 33 Fix B §B — REDEEM. The human signal, and the ONLY thing that binds a link.
+ *
+ * Issued by the loaded dashboard page. Link scanners, SMS previewers and mail-security bots
+ * issue GETs and do not execute page script, so they never reach here — which is precisely why
+ * binding lives on a POST from the page rather than on the GET that serves it. A prefetch
+ * therefore cannot spend a coordinator's link.
+ *
+ * ITS FAILURE MODE, STATED: a coordinator with JavaScript disabled never redeems either, so the
+ * link stays unbound and keeps working from any browser. That is today's behaviour minus the
+ * address bar, and it is the direction §B requires this to fail in — a coordinator wrongly
+ * refused is worse than a token wrongly honoured.
+ *
+ * §E3 — THIS IS NOT A CLAIM. Brief 7 locked coordination to an explicit "Take coordination"
+ * POST because merely opening a link must never claim it; duress would otherwise route to
+ * whoever opened first. Redeeming binds a VIEW session and touches neither
+ * `coordinatorClaimedAt` nor the `bbcoord` cookie.
+ */
+app.post('/v1/c/:id/redeem', async (c) => {
+  const eventId = c.req.param('id');
+  const sessionKey = getCookie(c, VIEW_COOKIE) ?? '';
+  if (!sessionKey) {
+    // No session to bind. Not an error — the tokened path still works.
+    return c.json({ ok: true, redeemed: false, reason: 'no_session' }, 200);
+  }
+  const session = await getViewSession(c.env, sessionKey, eventId);
+  if (!session) {
+    return c.json({ ok: true, redeemed: false, reason: 'unknown_session' }, 200);
+  }
+  const done = await redeemViewSession(c.env, sessionKey, eventId);
+  return c.json({ ok: true, redeemed: done }, 200);
+});
+
+/**
+ * §B — the self-service path off a spent link. Never a dead end, never a support request.
+ *
+ * Re-sends through the SAME cascade channel the alert used. The fresh link is deliberately NOT
+ * returned in the response: this endpoint is reachable without credentials by design (the caller
+ * has, by definition, just been refused), and a page that mints a working credential for whoever
+ * asks would be a larger hole than the one this brief closes. It goes to the contact the cascade
+ * already knows, or nowhere.
+ */
+app.post('/v1/c/:id/fresh-link', async (c) => {
+  const eventId = c.req.param('id');
+  const event = await c.env.DB.prepare("SELECT id, status FROM events WHERE id = ?")
+    .bind(eventId)
+    .first<{ id: string; status: string }>();
+  if (!event) {
+    return c.json({ ok: false, error: 'not_found' }, 404);
+  }
+  await audit(c.env, eventId, 'coordinator_fresh_link_requested', null, null);
+  // Re-notify through the existing cascade. Deliberately reuses the dispatcher rather than
+  // minting and rendering a link here — one notification path, and it already knows who to
+  // reach and how (§D: this brief does not change dispatch content).
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        await reissueLinkForEvent(c.env, eventId, new URL(c.req.url).origin);
+      } catch {
+        /* an honest failure surfaces as "could not send" on the page */
+      }
+    })(),
+  );
+  return c.json({ ok: true }, 202);
 });
 
 // Deliberate coordinator claim (Brief 7 / grooming). Atomic: the first POST that

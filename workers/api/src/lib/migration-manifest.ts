@@ -74,4 +74,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0059_session_rotation',
   '0060_org_attribution',
   '0061_org_custody',
+  '0062_coordinator_view_sessions',
 ];
