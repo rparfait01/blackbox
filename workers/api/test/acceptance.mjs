@@ -173,9 +173,12 @@ const uniq = () => `${Date.now().toString(36)}${(SEQ += 1)}`;
 
 const created = { emails: [], events: [] };
 
-async function api(method, path, { body, bearer, cookie } = {}) {
+// `rawBody` sends the string verbatim, WITHOUT JSON.stringify. Brief 43 needs to send bodies that
+// are not valid JSON at all ('{"items":', '') — stringifying those would turn a malformed-body
+// test into a well-formed-string test, which is a probe that cannot reach what it names.
+async function api(method, path, { body, bearer, cookie, rawBody } = {}) {
   const headers = {};
-  const raw = body == null ? undefined : JSON.stringify(body);
+  const raw = rawBody != null ? rawBody : body == null ? undefined : JSON.stringify(body);
   if (raw != null) headers['content-type'] = 'application/json';
   if (bearer) headers.authorization = `Bearer ${bearer}`;
   if (cookie) headers.cookie = cookie;
@@ -198,6 +201,22 @@ async function signed(method, path, eventSecret, eventId, body) {
     'X-Signature': hmacHex(eventSecret, canonical),
   };
   const res = await fetch(ORIGIN + path, { method, headers, body: body == null ? undefined : raw });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  return { status: res.status, data };
+}
+
+// Brief 43 — signed request with a VERBATIM body, for bodies that are not valid JSON.
+async function signedRaw(method, path, eventSecret, eventId, rawBody) {
+  const ts = Date.now();
+  const canonical = [method.toUpperCase(), path, String(ts), sha256hex(rawBody)].join('\n');
+  const headers = {
+    'content-type': 'application/json',
+    'X-Event-Id': eventId,
+    'X-Timestamp': String(ts),
+    'X-Signature': hmacHex(eventSecret, canonical),
+  };
+  const res = await fetch(ORIGIN + path, { method, headers, body: rawBody });
   const text = await res.text();
   let data; try { data = JSON.parse(text); } catch { data = text; }
   return { status: res.status, data };
@@ -2426,6 +2445,87 @@ async function run() {
     // finalize is simply broken.
     const viaBody = await api('POST', '/v1/auth/signup/finalize', { body: { capability: cap, displayMode: 'direct' } });
     assert(viaBody.data?.sessionToken, `body-carried capability failed: ${JSON.stringify(viaBody.data)}`);
+  });
+
+  await check('88. Brief 43 §A: an oversized ordinary body is refused at the STATED bound', async () => {
+    // The bound fires in middleware, BEFORE auth, which is the point — an unauthenticated flood
+    // must not need a valid session to be cheap to refuse. /v1/integrity/verify is public, so this
+    // reaches the bound with nothing else in the way.
+    const big = JSON.stringify({ pad: 'x'.repeat(80 * 1024) });
+    const r = await api('POST', '/v1/integrity/verify', { rawBody: big });
+    assert(r.status === 413, `expected 413, got ${r.status}: ${JSON.stringify(r.data)}`);
+    assert(r.data?.error === 'body_too_large', `error not stable: ${JSON.stringify(r.data)}`);
+    assert(r.data?.limitBytes === 65536, `bound not stated: ${JSON.stringify(r.data)}`);
+
+    // ...and a body UNDER it is not refused, so the check above is the bound and not an outage.
+    const ok = await api('POST', '/v1/integrity/verify', { rawBody: JSON.stringify({ pad: 'x'.repeat(1024) }) });
+    assert(ok.status !== 413, `a 1 KB body was refused: ${ok.status}`);
+  });
+
+  await check('89. Brief 43 §A/§B: malformed capture batches never throw — a verdict, never a 5xx', async () => {
+    // TWO EARLIER VERSIONS OF THIS CHECK WERE VACUOUS, and both looked green.
+    //   1. Unauthenticated: every case returned 401 and never reached a line of parsing code.
+    //   2. Bearer-authenticated: also 401 — capture routes are gated by PER-EVENT HMAC, not a
+    //      session — and the assertion `status < 500` is satisfied by a 401, so it still passed.
+    // The assertion is now 201: the route must have RUN, clamped the garbage to nothing, and
+    // answered. Anything else, including the 401s that made this pass before, is a failure.
+    const u = await signup();
+    const ev = await trigger(u.session, 'bounds');
+    assert(ev?.eventId && ev?.hmacSecret, `could not open a signed event: ${JSON.stringify(ev)}`);
+
+    const hostile = [
+      ['no items key', '{}'],
+      ['items is null', '{"items":null}'],
+      ['items is a string', '{"items":"nope"}'],
+      ['items of nulls', '{"items":[null,null]}'],
+      ['wrong field types', '{"items":[{"timestamp":"not-a-number","threatLevel":{}}]}'],
+      ['malformed json', '{"items":'],
+      ['empty body', ''],
+    ];
+    for (const [name, raw] of hostile) {
+      const path = `/v1/events/${ev.eventId}/classifications`;
+      const r = await signedRaw('POST', path, ev.hmacSecret, ev.eventId, raw);
+      assert(r.status === 201, `classifications ${name} → ${r.status}: ${JSON.stringify(r.data)}`);
+      assert(r.data?.count === 0, `garbage was STORED for ${name}: ${JSON.stringify(r.data)}`);
+    }
+    const frags = [
+      ['fragments is a number', '{"fragments":42}'],
+      ['sequence is a string', '{"fragments":[{"sequence":"1","text":"hi"}]}'],
+      ['text is an object', '{"fragments":[{"sequence":1,"text":{}}]}'],
+      ['deeply nested', `{"fragments":${'['.repeat(60)}${']'.repeat(60)}}`],
+    ];
+    for (const [name, raw] of frags) {
+      const path = `/v1/events/${ev.eventId}/transcripts`;
+      const r = await signedRaw('POST', path, ev.hmacSecret, ev.eventId, raw);
+      assert(r.status === 201, `transcripts ${name} → ${r.status}: ${JSON.stringify(r.data)}`);
+      assert(r.data?.count === 0, `garbage was STORED for ${name}: ${JSON.stringify(r.data)}`);
+    }
+  });
+
+  await check('90. Brief 43 §A: a long LEGITIMATE capture is kept; the clamp degrades, never refuses', async () => {
+    const u = await signup();
+    const ev = await trigger(u.session, 'bounds-long');
+    const path = `/v1/events/${ev.eventId}/transcripts`;
+
+    // 400 fragments — a long incident, inside the clamp. Every one must survive.
+    const long = { fragments: Array.from({ length: 400 }, (_, i) => ({ sequence: i, text: `fragment ${i} of a long capture` })) };
+    const r = await signed('POST', path, ev.hmacSecret, ev.eventId, long);
+    assert(r.status === 201, `a 400-fragment capture was refused: ${r.status} ${JSON.stringify(r.data)}`);
+    assert(r.data?.count === 400, `fragments lost INSIDE the bound: ${JSON.stringify(r.data)}`);
+
+    // 900 — past the clamp. It DEGRADES: accepts what it can and says what it dropped. A refusal
+    // here would be lost evidence, which is the whole reason the capture path clamps.
+    const over = { fragments: Array.from({ length: 900 }, (_, i) => ({ sequence: i, text: `fragment ${i}` })) };
+    const r2 = await signed('POST', path, ev.hmacSecret, ev.eventId, over);
+    assert(r2.status === 201, `past the clamp the route REFUSED (${r2.status}) instead of degrading`);
+    assert(r2.data?.count === 500 && r2.data?.dropped === 400, `the clamp was not reported honestly: ${JSON.stringify(r2.data)}`);
+
+    // A capture body far over the ORDINARY 64 KB bound must not be caught by that middleware —
+    // the exemption is the thing being proven, on the deployed Worker rather than in a regex test.
+    const fat = { fragments: Array.from({ length: 300 }, (_, i) => ({ sequence: i, text: 'y'.repeat(600) })) };
+    const r3 = await signed('POST', path, ev.hmacSecret, ev.eventId, fat);
+    assert(r3.status === 201, `a ~184 KB capture body was refused by the ordinary bound: ${r3.status}`);
+    assert(r3.data?.count === 300, `the fat body was truncated: ${JSON.stringify(r3.data)}`);
   });
 
   // ---- cleanup ----
