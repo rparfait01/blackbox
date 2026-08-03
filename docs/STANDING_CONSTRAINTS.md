@@ -322,3 +322,16 @@ policy break the facade?" and returned a confident green while never opening the
 `@font-face` lives. Six `data:` font URIs would have been blocked on enforcement, changing the
 Hidden facade's typography — a covert-mode failure — and the audit had no idea because it read
 only `.js`.
+
+## GUARDS ASSERT THE INVARIANT (ratified 2026-08-03, from Brief 42 §C)
+
+**"A guard asserts the invariant, not the implementation. Parsed structure is necessary but not
+sufficient — a guard pinned to an exact query string fails on a change that does not touch what it
+governs. Assert the property, not the spelling."**
+
+Companion to the parsed-structure rule, and a correction to it: stripping comments stops a guard
+matching prose, but it does nothing about a guard matching the wrong thing precisely. A tenancy
+guard pinned to `SELECT sessionsValidFrom, orgId FROM users WHERE id = ?` broke when a revocation
+subquery joined the same statement — a change that does not touch where `orgId` comes from. The
+property is "orgId is read from the users row and never parsed out of the token", and that is what
+it asserts now.

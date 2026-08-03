@@ -243,6 +243,30 @@ async function identifierForLimit(c: { req: { raw: Request; header: (k: string) 
   return `origin:${origin}`;
 }
 
+/**
+ * Brief 42 §B/§D — SECURITY HEADERS ON THE WORKER, not only on Pages.
+ *
+ * `_headers` is a Cloudflare Pages file and applies to the PWA origin only. The Worker serves the
+ * COORDINATOR DASHBOARD, and its URL carries an event-bound magic token — so the one origin whose
+ * referrer actually matters was the one with no referrer policy at all. Any link a coordinator
+ * clicked from that page would have sent the token-bearing URL to wherever they went.
+ *
+ * `no-referrer` rather than `strict-origin-when-cross-origin`: the token is in the PATH, and a
+ * policy that emits an origin still emits nothing useful here while a policy that emits a path
+ * emits the token. There is no middle setting worth having.
+ *
+ * DELIBERATELY NOT A CSP. The dashboard renders inline script, so a strict policy needs nonces,
+ * and the dashboard is ON the alert path — a coordinator who cannot see an alert is the failure
+ * this product exists to prevent. That is §A's report-only-then-enforce process, and it is not
+ * this brief's §D requirement. These three headers cannot break a render.
+ */
+app.use('*', async (c, next) => {
+  await next();
+  c.header('Referrer-Policy', 'no-referrer');
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+});
+
 // Structured request logging — no payload contents.
 app.use('*', async (c, next) => {
   const requestId = crypto.randomUUID();
