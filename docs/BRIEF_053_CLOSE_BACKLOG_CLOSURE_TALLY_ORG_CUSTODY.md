@@ -33,6 +33,32 @@ follow in this brief.
 
 ---
 
+## CORRECTIONS
+
+**BRIEF 025 — corrected to read:**
+"The anonymous tally was never gated on tenancy or zero-knowledge custody. Its own §1 says so: it
+holds no identified data, so there is nothing to encrypt. It has been runnable the entire time and
+was listed as blocked in error."
+Path: `workers/api/migrations/0032_incident_tally.sql`, `workers/api/src/lib/tally.ts`
+
+**BRIEF 026 — corrected to read:**
+"Brief 26 is roughly half shipped, not unstarted. Briefs 36–39 built the SURVIVOR half — envelope
+encryption with a per-capture DEK sealed on-device, AAD binding capture id ‖ chunk index ‖ final
+flag, a terminal marker in the chain, `plaintext_commitments`, and a server holding only
+ciphertext, hash and wrapped keys. The ORG half was untouched, and it is the half institutional
+licensing depends on."
+Path: `apps/pwa/src/lib/crypto/envelope.ts`, `workers/api/migrations/0034_zk_custody.sql`
+
+**BRIEF 053 §0.1 and §0.3 — corrected by the §0 investigation this brief required:**
+"§A's premise is FALSE against the shipped code. Brief 0B is live: `decideConsent` derives the
+required parties from who is actually engaged and returns `close_solo` when nobody is, and there
+is no hardcoded 2 anywhere in `closure-consent.ts`. §B's premise is likewise false — the tally
+shipped in 0032. What was genuinely missing was an end-to-end proof of solo close and a severance
+guard, both of which this brief delivered."
+Path: `workers/api/src/lib/closure-consent.ts`, `workers/api/test/tally-severance.guard.test.ts`
+
+---
+
 ## §0 — VERIFY BEFORE BUILDING `[REPORT ONLY]`
 
 **Report and stop before writing code for §A.**
