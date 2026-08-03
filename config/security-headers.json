@@ -1,0 +1,77 @@
+{
+  "_comment": [
+    "Brief 42 §A/§B — the security headers, as TRACKED CONFIG rather than a string in a script.",
+    "",
+    "Same reasoning as config/deploy-targets.json: a policy that lives in code is a policy nobody",
+    "reviews. This file is the input to scripts/facade-audit.mjs, which checks it against what the",
+    "built PWA actually requires and refuses a policy that would break the facade.",
+    "",
+    "THE FACADE IS THE ACCEPTANCE CRITERION (§E4). A CSP that breaks Stillpoint's rendering in",
+    "Hidden mode is a covert-mode failure discovered by a survivor, so this policy is derived from",
+    "an audit of the real bundle and not from a template."
+  ],
+
+  "csp": {
+    "_derivation": [
+      "Audited from apps/pwa/dist on 2026-08-03:",
+      "  0 inline <script>, 0 inline <style>  -> no 'unsafe-inline', no nonces, no hashes needed",
+      "  1 module script, 1 stylesheet, both same-origin",
+      "  blob: used by capture (MediaRecorder + createObjectURL) -> media-src/img-src need blob:",
+      "  service worker registered -> worker-src 'self'",
+      "  only network destination is the API origin -> connect-src is exactly that plus 'self'",
+      "  no wasm, no `new Worker`, no external fonts, no third-party anything"
+    ],
+    "default-src": ["'self'"],
+    "script-src": ["'self'"],
+    "style-src": ["'self'"],
+    "img-src": ["'self'", "data:", "blob:"],
+    "media-src": ["'self'", "blob:"],
+    "font-src": ["'self'"],
+    "connect-src": ["'self'", "https://blackbox-api.stillpoint-dev.workers.dev"],
+    "worker-src": ["'self'"],
+    "manifest-src": ["'self'"],
+    "frame-ancestors": ["'none'"],
+    "base-uri": ["'self'"],
+    "form-action": ["'self'"],
+    "object-src": ["'none'"]
+  },
+
+  "_originsMentionedButNeverFetched": {
+    "_comment": [
+      "Classified 2026-08-03 by reading each occurrence in the built bundle. A URL in an error",
+      "message, a documentation shortlink, or a string written INTO a report is not a fetch, so",
+      "none of these belong in connect-src — adding them would widen the policy for no reason.",
+      "",
+      "They are listed so the audit can tell a CLASSIFIED mention from a NEW one. An origin",
+      "appearing here that is not on this list is a signal: either a new dependency started",
+      "talking to something, or a fetch was added. Both are worth a look before enforcing."
+    ],
+    "https://bit.ly": "Workbox console.warn — a docs shortlink in a precache warning string",
+    "https://reactjs.org": "React error-message URL",
+    "https://simplewebauthn.dev": "SimpleWebAuthn error-message URL",
+    "https://www.blackboxsentinel.com": "the verification URL written into a certified report for a recipient to visit; the app never requests it"
+  },
+
+  "headers": {
+    "_hsts": [
+      "§B/§E3 — max-age 15552000 is 180 days. NOT two years, and preload is NOT requested,",
+      "because HSTS is hard to reverse and this domain is under active development. A preload",
+      "entry is removed on Chrome's timetable, not ours, and pages.dev is a shared apex we do not",
+      "control. 180 days is long enough to be a real commitment and short enough to unwind."
+    ],
+    "Strict-Transport-Security": "max-age=15552000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "_referrer": [
+      "§B/§D — no-referrer, not strict-origin-when-cross-origin. The coordinator dashboard is",
+      "reached by an event-bound magic token in the URL, and any policy that emits a Referer at",
+      "all leaks that token's page to whatever the recipient clicks next."
+    ],
+    "Referrer-Policy": "no-referrer",
+    "_permissions": [
+      "§B — only what capture needs. Everything else is denied explicitly rather than left to a",
+      "browser default that may change."
+    ],
+    "Permissions-Policy": "microphone=(self), camera=(self), geolocation=(self), accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), display-capture=(), gyroscope=(), magnetometer=(), midi=(), payment=(), usb=(), xr-spatial-tracking=()",
+    "X-Frame-Options": "DENY"
+  }
+}

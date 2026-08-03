@@ -76,3 +76,4 @@ workers/*.html
 workers/*_files/
 .gate-run
 .latency/
+.facade/

@@ -1,59 +1,47 @@
 # BRIEF 42 — SECURITY HEADERS AND SESSION ROTATION
 
-> **CARRIED IN FROM BRIEF 41 — do these as part of this brief.**
+> **CARRIED IN — the prior block is complete. These are new.**
 >
-> **1. Finish Brief 41 acceptance 2, 3, 6, 7. Do them first; they are cheap and they are the
-> guarantees Brief 41 exists for.**
+> **1. Ratified, add to `STANDING_CONSTRAINTS.md` verbatim:**
+> "Any counter a security decision depends on lives in durable storage, not isolate memory.
+> Isolate-local state answers a question about one isolate, which is never the question being
+> asked. Second occurrence of the isolate class: the capability key rotation recomputing against
+> whatever key was current, and the rate limiter counting refusals per isolate so a targeted
+> attack on one survivor never crossed the alert threshold."
 >
-> - **Acceptance 3 — prove it live on STAGING, not production.** Lift the staging exemption for
->   one non-reserved identifier, drain the unauthenticated outbound cap, then fire a real
->   trigger and confirm the cascade delivers in full from the reserved allocation. Staging is
->   severed to `blackbox-test` / `blackbox-media-test` / `blackbox-vault-test`, so no real
->   recipient is touched and no production quota is spent. Restore the exemption afterward and
->   confirm it is restored. **Do not run this on production.**
->   Rationale: every property this project has proven by construction has failed on its first
->   live run — the capability key rotation, `expectedPublicKey`, `PURGED_BY_CONSENT`. The
->   reserved allocation is the last guarantee still resting on construction, and it is the one
->   that decides whether a survivor's cascade survives an attack.
-> - **Acceptance 2 — measure the timing distribution.** Identical response bodies are not
->   sufficient; report the distribution for existent vs non-existent identifiers.
-> - **Acceptance 6 — exercise the limiter store failure live on staging.** It must fail open and
->   alert. A limiter that fails closed takes down login for everyone.
-> - **Acceptance 7 — confirm the sustained-limiting alert actually reaches an operator**, not
->   just that it fires. That is a targeted attack on one survivor; a signal nobody receives is
->   not a signal.
+> "A guard that extracts a region of code asserts its landmarks were found. A slice whose start or
+> end marker is absent silently runs to end-of-file and the guard tests nothing. Test the property,
+> not the spelling."
+> *(Origin: the hot-path guard bounded by a comment `code()` had already stripped — the same
+> mistake made twice inside a guard written to enforce the rule against it.)*
 >
-> **2. Ratified, add to `STANDING_CONSTRAINTS.md` verbatim:**
-> "Safety-critical exemption is an allow-list, never a deny-list. A path is unlimited,
-> unthrottled, or ungated because it was never added — not because someone remembered to exempt
-> it. A deny-list silently captures every route added after it was written, and that failure is
-> invisible until the day it matters."
-> *(Origin: Brief 41 `LIMITED` / `ruleFor()` returning null for anything absent.)*
+> **2. Ratified without change:** the §D retrofit and its ten types; the two-way guard (a named
+> error-level alert without `operatorAlert` fails, and a declared type nothing raises fails —
+> which caught `integrity_do_unbound`); migration 0058 writing refusals to D1 only after the
+> refusal, so §E4 holds and the cost lands on the attacker; the three-state credential panel with
+> no permanent amber; acceptance 8 at 12/12 and acceptance 9 collapsing 26 to one immediate plus
+> one summary with none dropped.
 >
-> "A measurement must measure the thing the limit acts on. A per-path total says nothing about a
-> per-identifier bucket, and reporting one as the other condemns a correct control or exonerates
-> a broken one."
-> *(Origin: Brief 41 §F reporting 149 signups against a burst of 12 — 149 distinct identifiers,
-> one attempt each.)*
+> **3. Brief 35 Fix B acceptance 11 stays open, and that is the correct call.** Forcing an
+> isolate-memory failure live would require a bypass in the limiter, and a test-only hole in a
+> security control is worse than an unproven acceptance row. Leave it unit-covered and recorded as
+> open. Do not add the hole.
 >
-> **3. Ratified without change:** the §F exemption completion (canary by server-derived identity,
-> D1 read only when a request is about to be rejected, so §E4 holds); the corrected §F cost
-> report; burst-then-decay with no lockout state.
+> **4. Status correction for the record:** Brief 42 was reported shipped. It was not — its
+> carried-in block was. This brief proper has not started.
 >
-> **4. Do not arm anything.** Brief 36 item 12 and Brief 2 Fix A §E3 both wait on Royce's device
-> session.
+> **5. Build the facade-diff harness first.** §E4 requires the Hidden facade to be diffed, not
+> eyeballed, and no harness exists. It is the first task of this brief, the same shape as the
+> latency harness that made Brief 2 Fix A §0 checkable. **Do not begin CSP work before it exists**
+> — enforcing a CSP without a way to prove the facade is byte-identical is enforcing blind.
 >
-> **5. Still open, not this brief:** Brief 2 Fix A acceptance 2, 7, 8, 11 (device session);
-> `CF_ANALYTICS_TOKEN` unset so headroom reads `NOT MEASURED`; `master` 157 commits behind HEAD.
-
-**Type:** BUILD — no prior brief shipped headers or rotation
-**Priority:** P2
-**REQUIRES:** Brief 36 Fix A green (§E1 tests offline capture under CSP, which needs the queue
-bounded); Brief 41 green (§C rotation interacts with the limiter's session keying).
-**Ship order:** EIGHTH.
-**Floor:** Briefs 35–41, Brief 36 Fix A. **Zero regression to the §0a Hidden facade** — a CSP
-that alters Stillpoint's rendering breaks covert mode and fails this brief.
-**Audit ref:** Pass 1 Finding 12 · Pass 2 Finding 12 (Confirmed — P2)
+> **6. Do not arm anything.** Brief 36 item 12 and Brief 2 Fix A §E3 are owned by **Brief 51**
+> (VERIFY — device session and arming), which runs on Royce's phone in parallel.
+>
+> **7. Queue after this brief:** Brief 43 (bounds — closes the audit set, and carries the timing
+> oracle, `CF_ANALYTICS_TOKEN`, and the `master` reconciliation), then Brief 23 Fix A (tenancy
+> attribution — `orgId` stays nullable, no mandatory affiliation), then Brief 50 (capture
+> integrity and live relay).
 
 ---
 

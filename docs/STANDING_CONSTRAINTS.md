@@ -292,3 +292,20 @@ Both were live: several dispatch proofs reported "0 delivery rows" when the real
 contact was ever saved", and a cap-draining run reported "0 counted" when the address had been
 suppressed two checks earlier. Neither failure announced itself — each read as a finding about
 the system rather than about the harness.
+
+## SECURITY COUNTERS LIVE IN DURABLE STORAGE (ratified 2026-08-03, from Brief 41 §D)
+
+**"Any counter a security decision depends on lives in durable storage, not isolate memory.
+Isolate-local state answers a question about one isolate, which is never the question being asked.
+Second occurrence of the isolate class: the capability key rotation recomputing against whatever
+key was current, and the rate limiter counting refusals per isolate so a targeted attack on one
+survivor never crossed the alert threshold."**
+
+## A GUARD ASSERTS ITS LANDMARKS (ratified 2026-08-03, from Brief 35 Fix B)
+
+**"A guard that extracts a region of code asserts its landmarks were found. A slice whose start or
+end marker is absent silently runs to end-of-file and the guard tests nothing. Test the property,
+not the spelling."**
+
+*(Origin: the hot-path guard bounded by a comment `code()` had already stripped — the same mistake
+made twice inside a guard written to enforce the rule against it.)*
