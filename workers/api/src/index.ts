@@ -10,7 +10,7 @@ import { vaultCoverage } from './lib/vault-scan';
 import { credentialCoverage, verifyDeviceProof } from './lib/device-credential';
 import { backoffFor, canaryExemption, environmentExemption, ruleFor, UNAUTH_OUTBOUND } from './lib/abuse-limits';
 import { clearEnvironmentCache, dispatchPosture, resolveEnvironment } from './lib/environment';
-import { operatorAlert } from './lib/operator-alert';
+import { ALERT_TYPES, operatorAlert, type AlertType } from './lib/operator-alert';
 import { countAttempt, outboundHeadroom } from './lib/limiter-store';
 import { checkPollCeiling } from './lib/poll-ceiling';
 import { requestHeadroom } from './lib/request-headroom';
@@ -861,6 +861,49 @@ app.post('/v1/admin/environment/stamp', async (c) => {
   const identity = await resolveEnvironment(c.env);
   await audit(c.env, null, 'environment.stamped', null, { name, verdict: identity.verdict });
   return c.json({ ok: true, ...identity }, 200);
+});
+
+/**
+ * Brief 35 Fix B §D acceptance 8/9 — FIRE THE CHANNEL AND SEE WHETHER IT ARRIVES.
+ *
+ * An alert channel that has never been exercised is an assumption, and this brief exists because
+ * assumptions about alerting were wrong for eight briefs running. This is the operator tool that
+ * turns "the code looks right" into "an email landed": admin-gated, restricted to the declared
+ * alert types, and it reports exactly what the channel did with each one.
+ *
+ * `count` exists to prove §D's storm behaviour: the first fires, the rest are counted, and the
+ * cron reports the window with its first and last. Bounded so this cannot itself become a storm.
+ */
+app.post('/v1/admin/alerts/test', async (c) => {
+  const body = await c.req.json<{ type?: string; count?: number }>().catch(() => ({}) as { type?: string; count?: number });
+  const type = (body.type ?? '') as AlertType;
+  if (!ALERT_TYPES.includes(type)) {
+    return c.json({ error: 'unknown alert type', known: ALERT_TYPES }, 400);
+  }
+  const count = Math.min(Math.max(Number(body.count ?? 1), 1), 25);
+  const results = [];
+  for (let i = 0; i < count; i += 1) {
+    results.push(await operatorAlert(c.env, type, `acceptance probe ${i + 1} of ${count} for ${type}`));
+  }
+  return c.json(
+    {
+      type,
+      fired: count,
+      sentImmediately: results.filter((r) => r.sent).length,
+      countedIntoWindow: results.filter((r) => !r.sent && r.counted).length,
+      first: results[0],
+      last: results[results.length - 1],
+    },
+    200,
+  );
+});
+
+/** The open alert windows, so acceptance can read what the channel is holding. */
+app.get('/v1/admin/alerts', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT alertType, windowStart, firstAt, lastAt, count, notifiedAt, summarisedAt FROM operator_alerts ORDER BY windowStart DESC, alertType ASC LIMIT 50',
+  ).all();
+  return c.json({ windows: results ?? [] }, 200);
 });
 
 /** The stamp as this Worker reads it — used by the deploy gate to prove production can dispatch. */

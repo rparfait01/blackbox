@@ -72,11 +72,33 @@ describe('every error-level alert reaches the channel', () => {
   });
 
   it('alerts on latency-sensitive paths are not awaited into the request', () => {
-    // The capture path and the limiter must not slow down because an alert is being raised —
-    // and an attacker must not be able to add latency by triggering one.
+    // Scoped to the HOT PATHS rather than the whole file. The admin probe endpoint awaits
+    // deliberately — it exists to report what the channel did — and a guard that forbade every
+    // inline await would be broader than the rule it enforces, which is how a guard starts
+    // failing on changes it does not govern.
     const index = code(join(SRC, 'index.ts'));
-    const inline = index.match(/await operatorAlert\(/g) ?? [];
-    expect(inline, 'index.ts must raise alerts via waitUntil, not inline await').toEqual([]);
+    // CODE landmarks, not comments. The first attempt bounded these with
+    // `indexOf('// Structured request logging')` — which `code()` had already stripped, so the
+    // slice ran to the end of the file and swallowed the admin endpoint. A comment is not an
+    // interface, and this is the second time that exact mistake has been made inside a guard
+    // written to enforce it.
+    const between = (from: string, to: string): string => {
+      const a = index.indexOf(from);
+      const b = index.indexOf(to, a + 1);
+      expect(a, `landmark not found: ${from}`).toBeGreaterThan(-1);
+      expect(b, `landmark not found: ${to}`).toBeGreaterThan(a);
+      return index.slice(a, b);
+    };
+    const hot = [
+      // the abuse limiter middleware: an attacker must not add latency by tripping it
+      between('const rule = ruleFor(pathname', 'async function identifierForLimit'),
+      // the capture path
+      between("app.post('/v1/events/:id/chunks/:sequence'", 'const tz = await eventTzOffset'),
+    ];
+    for (const region of hot) {
+      expect(region.length, 'hot-path region not found — the guard is looking at nothing').toBeGreaterThan(100);
+      expect(region.match(/await operatorAlert\(/g) ?? [], 'hot paths must use waitUntil').toEqual([]);
+    }
     expect(index).toMatch(/waitUntil\(\s*operatorAlert\(/);
   });
 });
