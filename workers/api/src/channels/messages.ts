@@ -54,13 +54,33 @@ function infoRow(label: string, value: string): LineMessage {
 }
 
 /** EMERGENCY activation alert — red header, location, audio + dashboard links. */
+/**
+ * Brief 33 Fix B §D — WHAT IS ACTUALLY CAPTURING, in one place.
+ *
+ * Four channels carry this sentence (LINE, SMS, email, push) and they used to spell it four
+ * times. A line that must be literally true is the last thing to keep four copies of: the first
+ * one someone forgets to update becomes a claim the system cannot back.
+ *
+ * VIDEO IS NAMED ONLY ON EVIDENCE. `hasVideo` is derived from the mimeType of a chunk the server
+ * has actually received — not a device capability, not an intention, not a config flag. When it
+ * is false or unknown the line reads "Live audio + location active", which is the truthful
+ * subset. If Brief 50 finds video unavailable on a platform, this needs no change: no video
+ * chunks arrive, so no video is claimed.
+ *
+ * A responder who reads "live video" and opens a dashboard showing no picture does not conclude
+ * the camera failed. They conclude the system lies — at the moment they most need to trust it.
+ */
+export function captureLine(hasVideo: boolean | undefined): string {
+  return hasVideo ? 'Live video + audio + location active.' : 'Live audio + location active.';
+}
+
 export function activationAlert(_eventId: string, p: ActivationAlertPayload): BuiltMessage {
   // Locale-correct emergency number (Brief 12 P3) — falls back to the JP pilot
   // default so the LINE action never disagrees with the dashboard.
   const police = p.emergency?.police ?? '110';
   const bodyContents: LineMessage[] = [
-    { type: 'text', text: `${p.userDisplayName} activated BLACK BOX.`, weight: 'bold', wrap: true, size: 'md' },
-    { type: 'text', text: 'Live audio + location active.', wrap: true, color: MUTE, size: 'sm' },
+    { type: 'text', text: `${p.userDisplayName} activated SENTINEL ALERT.`, weight: 'bold', wrap: true, size: 'md' },
+    { type: 'text', text: captureLine(p.hasVideo), wrap: true, color: MUTE, size: 'sm' },
     { type: 'separator', margin: 'md' },
   ];
   const coords = coordLabel(p.location);
@@ -75,7 +95,7 @@ export function activationAlert(_eventId: string, p: ActivationAlertPayload): Bu
     messages: [
       {
         type: 'flex',
-        altText: `🚨 EMERGENCY — ${p.userDisplayName} activated BLACK BOX`,
+        altText: `🚨 EMERGENCY — ${p.userDisplayName} activated SENTINEL ALERT`,
         contents: {
           type: 'bubble',
           header: {
@@ -121,8 +141,8 @@ export function activationAlert(_eventId: string, p: ActivationAlertPayload): Bu
       },
     ],
     fallback:
-      `🚨 EMERGENCY — ${p.userDisplayName} activated BLACK BOX. ` +
-      `Live audio + location active.\nLive dashboard: ${p.dashboardUrl}`,
+      `🚨 EMERGENCY — ${p.userDisplayName} activated SENTINEL ALERT.\n` +
+      `${captureLine(p.hasVideo)}\nLive dashboard: ${p.dashboardUrl}`,
   };
 }
 

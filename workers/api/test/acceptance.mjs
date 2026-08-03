@@ -277,6 +277,13 @@ function bbcoordFrom(setCookie) {
   const m = /bbcoord=([^;]+)/.exec(setCookie);
   return m ? `bbcoord=${m[1]}` : null;
 }
+/** Brief 33 Fix B — a guardian dashboard token, minted the same way claimCoordinator does. */
+function mintDashboardToken(eventId) {
+  if (!MAGIC) return null;
+  const expiry = Date.now() + 60 * 60 * 1000;
+  return `${expiry}.${hmacHex(MAGIC, `${eventId}.${expiry}`)}`;
+}
+
 // Mint a guardian magic token + claim coordinator; returns {token, cookie}.
 async function claimCoordinator(eventId) {
   if (!MAGIC) throw new Error('BBX_MAGIC_LINK_SECRET required for coordinator flows');
@@ -2605,6 +2612,93 @@ async function run() {
       reopened.status === 200 || reopened.status === 409,
       `re-closing a closed event errored oddly: ${reopened.status}`,
     );
+  });
+
+  await check('92. Brief 33 Fix B §A: a tokened link REDIRECTS to a bare URL and sets a view cookie', async () => {
+    // Acceptance 3. Items 1, 2 and 7 need a real browser (address bar, history list, two devices)
+    // and ride on Brief 51; what is provable here is the mechanism that produces them.
+    const u = await signup();
+    const ev = await trigger(u.session, 'link-exposure');
+    const token = mintDashboardToken(ev.eventId);
+    if (!token) return; // MAGIC_LINK_SECRET absent — reported by the coordinator checks already
+
+    const res = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    assert(res.status === 303, `expected a 303 redirect, got ${res.status}`);
+    const location = res.headers.get('location') ?? '';
+    assert(location === `/c/${ev.eventId}`, `redirect target still carries a token: ${location}`);
+    assert(!location.includes('t='), `THE TOKEN IS STILL IN THE URL: ${location}`);
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    assert(/bbview=/.test(setCookie), `no view cookie issued: ${setCookie}`);
+    assert(/HttpOnly/i.test(setCookie), `view cookie is not HttpOnly: ${setCookie}`);
+    assert(/Secure/i.test(setCookie), `view cookie is not Secure: ${setCookie}`);
+
+    // Acceptance 4 — the same token from the same browser succeeds, not "replay refused".
+    const again = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    assert(again.status === 303, `re-presenting the same token was refused: ${again.status}`);
+  });
+
+  await check('93. Brief 33 Fix B §A: the bare URL works cookie-borne, with no token anywhere', async () => {
+    const u = await signup();
+    const ev = await trigger(u.session, 'link-cookie');
+    const token = mintDashboardToken(ev.eventId);
+    if (!token) return;
+
+    const first = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0];
+    assert(cookie.startsWith('bbview='), `no view cookie to carry: ${cookie}`);
+
+    // Acceptance 3 (reload) — the bare URL, authenticated by the cookie alone.
+    const bare = await fetch(`${ORIGIN}/c/${ev.eventId}`, { headers: { cookie } });
+    assert(bare.status === 200, `the bare URL did not load cookie-borne: ${bare.status}`);
+    const html = await bare.text();
+    assert(!html.includes(token), 'THE PAGE STILL EMBEDS THE TOKEN — it would go back on the wire');
+
+    // ...and without the cookie it is not a way in.
+    const naked = await fetch(`${ORIGIN}/c/${ev.eventId}`);
+    assert(naked.status === 401, `a bare URL authenticated with no cookie at all: ${naked.status}`);
+  });
+
+  await check('94. Brief 33 Fix B §B: a scanner-style GET does not spend the link', async () => {
+    // Acceptance 6. The mechanism: binding happens on POST /redeem, issued by page script. A
+    // scanner issues GETs and runs no script, so the token stays usable for the human afterwards.
+    const u = await signup();
+    const ev = await trigger(u.session, 'link-prefetch');
+    const token = mintDashboardToken(ev.eventId);
+    if (!token) return;
+
+    // The "scanner": fetches the link, keeps no cookie, runs no script.
+    const scan = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    assert(scan.status === 303, `scanner GET got ${scan.status}`);
+
+    // The human, afterwards, in a fresh browser. Must still get in.
+    const human = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    assert(human.status === 303, `A PREFETCH SPENT THE COORDINATOR'S LINK — human got ${human.status}`);
+  });
+
+  await check('95. Brief 33 Fix B §B/§C: a spent link refuses only OTHER browsers, with a way back', async () => {
+    const u = await signup();
+    const ev = await trigger(u.session, 'link-spent');
+    const token = mintDashboardToken(ev.eventId);
+    if (!token) return;
+
+    const first = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0];
+    // The human signal: the page's redeem POST, which binds the link to THIS browser.
+    const redeemed = await fetch(`${ORIGIN}/v1/c/${ev.eventId}/redeem`, { method: 'POST', headers: { cookie } });
+    assert(redeemed.ok, `redeem failed: ${redeemed.status}`);
+
+    // Acceptance 4 — the redeeming browser keeps working.
+    const same = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, {
+      headers: { cookie },
+      redirect: 'manual',
+    });
+    assert(same.status === 303, `the browser that redeemed was locked out of its own link: ${same.status}`);
+
+    // Acceptance 5 — a DIFFERENT browser is refused, and the page offers a way back.
+    const other = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    assert(other.status === 401, `a spent link was honoured in another browser: ${other.status}`);
+    const body = await other.text();
+    assert(/fresh link/i.test(body), 'the spent page is a dead end — no self-service path');
   });
 
   // ---- cleanup ----

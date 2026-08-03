@@ -88,6 +88,8 @@ interface ActivationCtx {
   audioUrl: string;
   location: { lat: number; lon: number } | null;
   threatSummary: string | null;
+  /** Brief 33 Fix B §D — video named in the alert only on evidence a chunk actually arrived. */
+  hasVideo: boolean;
   /** Region-resolved emergency numbers (null when region unknown — the message
    *  then falls back to the JP pilot default). Brief 12 P3. */
   emergency: { police: string; ambulance: string } | null;
@@ -118,8 +120,35 @@ async function activationCtx(
     audioUrl: `${workerOrigin}/v1/c/${eventId}/audio/latest?t=${token}`,
     location: await latestLocation(env, eventId),
     threatSummary: await latestSummary(env, eventId),
+    // Brief 33 Fix B §D — video is named in the alert ONLY on evidence the server holds: a chunk
+    // that actually arrived with a video mimeType. Not a device capability, not an intention.
+    // At activation, before any chunk has landed, this is false and the message truthfully reads
+    // "Live audio + location active" — the subset we can stand behind.
+    hasVideo: await hasVideoChunk(env, eventId),
     emergency,
   };
+}
+
+/**
+ * Has a VIDEO chunk actually arrived for this event?
+ *
+ * Positive evidence only. Any failure answers `false`, because the failure direction here is not
+ * symmetric: under-claiming costs a responder nothing they cannot see for themselves on the
+ * dashboard, and over-claiming tells them the system lies at the moment they most need to trust
+ * it. If Brief 50 finds video unavailable on a platform this needs no change — no video chunks
+ * arrive, so no video is claimed.
+ */
+async function hasVideoChunk(env: Env, eventId: string): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT 1 AS n FROM chunks_index WHERE eventId = ? AND mimeType LIKE 'video/%' LIMIT 1",
+    )
+      .bind(eventId)
+      .first<{ n: number }>();
+    return !!row;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -166,6 +195,7 @@ async function dispatchStep(
         audioUrl: ctx.audioUrl,
         location: ctx.location,
         threatSummary: ctx.threatSummary,
+        hasVideo: ctx.hasVideo,
         emergency: ctx.emergency,
       },
     },

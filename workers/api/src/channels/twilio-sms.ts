@@ -25,6 +25,7 @@ import type {
 } from './types';
 import { mayDispatchExternally } from '../lib/environment';
 import type { Env } from '../types';
+import { captureLine } from './messages';
 
 export interface TwilioConfig {
   accountSid: string;
@@ -129,7 +130,9 @@ export class TwilioSmsChannel implements NotificationChannel {
 
   pushActivationAlert(_e: string, p: ActivationAlertPayload): Promise<boolean> {
     const where = p.location ? ` Location: ${p.location.lat.toFixed(4)},${p.location.lon.toFixed(4)}.` : '';
-    return this.send('activation', `🚨 ${p.userDisplayName} activated BLACK BOX. Live audio + location.${where} Open: ${p.dashboardUrl}`);
+    return this.send('activation', `🚨 EMERGENCY — ${p.userDisplayName} activated SENTINEL ALERT.
+${captureLine(p.hasVideo)}${where}
+Live dashboard: ${p.dashboardUrl}`);
   }
   pushEscalation(_e: string, p: EscalationAlertPayload): Promise<boolean> {
     return this.send('escalation', `🚨 ${p.userDisplayName}'s phone went dark — ALERT STILL ACTIVE, more urgent not resolved. Open: ${p.dashboardUrl}`);

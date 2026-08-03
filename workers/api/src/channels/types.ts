@@ -24,6 +24,19 @@ export interface ActivationAlertPayload {
   summaryUrl?: string;
   /** Magic-link URL that streams the latest audio chunk. */
   audioUrl: string;
+  /**
+   * Brief 33 Fix B §D — is VIDEO actually capturing right now?
+   *
+   * Derived from the mimeType of a chunk the server has actually received, never from a device
+   * capability or an intention. The message names video only when this is true; otherwise it
+   * reads "Live audio + location active."
+   *
+   * NEVER CLAIM A CAPTURE THAT IS NOT HAPPENING. A responder who reads "live video" and opens a
+   * dashboard with no picture does not conclude the camera failed — they conclude the system
+   * lies, at the moment they most need to trust it. Undefined means unknown, and unknown claims
+   * nothing.
+   */
+  hasVideo?: boolean;
   /** Latest known location, if any fix has arrived yet. */
   location?: { lat: number; lon: number } | null;
   /** Latest descriptive classification summary, if any. */

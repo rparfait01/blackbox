@@ -6,6 +6,7 @@
  * that strip HTML.
  */
 
+import { captureLine } from './messages';
 import type {
   ActivationAlertPayload,
   CheckinPayload,
@@ -96,7 +97,7 @@ function coords(location: ActivationAlertPayload['location']): string {
 export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
   const rows: Row[] = [
     ['Who', p.userDisplayName],
-    ['Status', 'Live audio + location active'],
+    ['Status', captureLine(p.hasVideo).replace(/\.$/, '')],
     p.location
       ? ['Where', `${coords(p.location)} — open map`, mapLink(p.location.lat, p.location.lon)]
       : ['Where', coords(p.location)],
@@ -118,7 +119,7 @@ export function emailActivation(p: ActivationAlertPayload): BuiltEmail {
       ctaText: 'OPEN LIVE DASHBOARD',
     }),
     text:
-      `EMERGENCY — ${p.userDisplayName} activated BLACK BOX. Live audio + location active.\n` +
+      `EMERGENCY — ${p.userDisplayName} activated SENTINEL ALERT.\n${captureLine(p.hasVideo)}\n` +
       `Where: ${coords(p.location)}\n${p.threatSummary ? `Heard: ${p.threatSummary}\n` : ''}` +
       `Open the live dashboard: ${p.dashboardUrl}\n` +
       `${p.summaryUrl ? `Emergency services — CAD dispatch summary: ${p.summaryUrl}\n` : ''}`,
