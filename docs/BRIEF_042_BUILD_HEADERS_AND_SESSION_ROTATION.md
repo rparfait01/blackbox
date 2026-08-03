@@ -139,4 +139,19 @@ and that the referrer policy prevents the event-bound token leaking from the das
 
 ## CARRIES FORWARD (open, owned by)
 
+- **BRIEF 33 FIX B — coordinator link exposure. New, surfaced by this brief's §B.**
+  The coordinator dashboard is reached by an event-bound token carried **in the URL**.
+  `Referrer-Policy: no-referrer` stops the token leaking outward to whatever the recipient clicks
+  next, and that is why this brief chose it — but it does nothing about the URL itself, which
+  lands in the coordinator's browser history, address-bar autocomplete, cross-device sync, and
+  any screenshot.
+  The coordinator is typically the survivor's closest contact. Plausibly a shared device.
+  Plausibly the same household as the person the alert is about. This is the same exposure class
+  as routing survivor-facing access through marketing pages, which is already a locked
+  constraint.
+  Scope for that brief: move the token out of the URL path or query — a one-time redemption that
+  exchanges it for a cookie-borne session, or a POST-and-redirect — without adding a step a
+  coordinator must complete under pressure, and without breaking the existing links already in
+  the wild. **Never add friction to a coordinator responding to a live alert.**
+  Not this brief. Recorded here so it is owned rather than remembered.
 - Request bounds. **Brief 43.**

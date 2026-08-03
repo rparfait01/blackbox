@@ -31,6 +31,19 @@ describe('§A the policy is strict, and derived from what the bundle actually ne
     expect(config.csp['frame-ancestors']).toEqual(["'none'"]);
   });
 
+  it('font-src permits data: — the build inlines font subsets (found by the browser pass)', () => {
+    // Six @font-face rules inline their smallest subsets as data:font/woff2. Under font-src
+    // 'self' they are blocked and the facade's typography changes, which in Hidden mode is a
+    // covert-mode failure. The first static audit missed this because it read only .js.
+    expect(config.csp['font-src']).toContain('data:');
+  });
+
+  it('the audit reads CSS, not just JS — that gap is how the data: fonts were missed', () => {
+    const audit = code('scripts/facade-audit.mjs');
+    expect(audit).toMatch(/endsWith\('\.css'\)/);
+    expect(audit).toMatch(/cssDataFonts/);
+  });
+
   it('capture survives the policy: blob: for media, self for the service worker', () => {
     // These two are the difference between a CSP and a covert-mode outage. blob: is how a
     // recording plays back; worker-src is whether offline capture registers at all (§E1).

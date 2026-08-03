@@ -69,6 +69,13 @@ function requirements() {
   const files = walk(DIST);
   const js = files.filter((f) => f.endsWith('.js')).map((f) => readFileSync(path.join(DIST, f), 'utf8'));
   const bundle = js.join('\n');
+  // CSS TOO. The first version read only .js and therefore never saw the stylesheet — which is
+  // where @font-face lives, and where six data: font URIs were hiding. The browser report-only
+  // pass caught it; a resource audit that skips a file type audits nothing about that file type.
+  const css = files
+    .filter((f) => f.endsWith('.css'))
+    .map((f) => readFileSync(path.join(DIST, f), 'utf8'))
+    .join('\n');
 
   const attr = (re) => [...html.matchAll(re)].map((m) => m[1]);
   const externalScripts = attr(/<script[^>]+src="([^"]+)"/g);
@@ -84,6 +91,11 @@ function requirements() {
     icons: attr(/<link[^>]+rel="[^"]*icon[^"]*"[^>]+href="([^"]+)"/g),
     usesBlob: /blob:|createObjectURL/.test(bundle),
     usesDataUri: /data:image|data:application/.test(bundle) || /data:image/.test(html),
+    // Split by the directive each one lands under: font-src, img-src and style-src treat data:
+    // separately, and one permitted does not permit the others.
+    cssDataFonts: (css.match(/url\(["']?data:font\//g) ?? []).length,
+    cssDataImages: (css.match(/url\(["']?data:image\//g) ?? []).length,
+    cssFontUrls: [...new Set([...css.matchAll(/@font-face[^}]*?url\(["']?([^"')]+)/g)].map((m) => m[1].split(';')[0].slice(0, 24)))],
     registersServiceWorker: /serviceWorker/.test(bundle),
     usesDedicatedWorker: /new\s+Worker\s*\(/.test(bundle),
     usesWasm: /WebAssembly|\.wasm/.test(bundle),
@@ -129,6 +141,15 @@ function audit() {
   }
   for (const href of req.stylesheets) {
     if (href.startsWith('/') && !permits('style-src', "'self'")) problems.push(`stylesheet ${href} but style-src lacks 'self'`);
+  }
+  if (req.cssDataFonts > 0 && !permits('font-src', 'data:')) {
+    problems.push(
+      `${req.cssDataFonts} @font-face rule(s) load a data: font URI but font-src does not permit data: — ` +
+        "those faces would be BLOCKED and the facade's typography would change. In Hidden mode that is a covert-mode failure.",
+    );
+  }
+  if (req.cssDataImages > 0 && !permits('img-src', 'data:')) {
+    problems.push(`${req.cssDataImages} CSS data: image(s) but img-src does not permit data:`);
   }
   if (req.usesBlob && !(permits('media-src', 'blob:') || permits('default-src', 'blob:'))) {
     problems.push("capture uses blob: URLs (MediaRecorder/createObjectURL) but media-src does not permit blob: — recordings would not play back");
@@ -183,6 +204,8 @@ function audit() {
   console.log(`  WebSocket        : ${req.usesWebSocket ? 'yes' : 'no'}`);
   console.log(`  EventSource      : ${req.usesEventSource ? 'yes' : 'no'}`);
   console.log(`  eval/Function    : ${req.usesEval ? 'present in bundle text' : 'no'}`);
+  console.log(`  CSS data: fonts  : ${req.cssDataFonts}`);
+  console.log(`  CSS data: images : ${req.cssDataImages}`);
   console.log(`\n  absolute origins mentioned in the bundle:`);
   for (const o of req.absoluteOrigins) {
     const label = apiOrigins.includes(o) ? 'connect-src ' : o in classified ? 'string only ' : 'UNCLASSIFIED';
