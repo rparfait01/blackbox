@@ -346,3 +346,11 @@ someone was looking rather than the place it mattered."**
 *(Origin: `_headers` is a Cloudflare Pages file; the coordinator dashboard is served by the
 Worker, which had no security headers at all — so the one origin whose URL carries an event-bound
 magic token was the one with no referrer policy.)*
+
+## THE ENVIRONMENT IS A TEST INPUT (ratified 2026-08-03, from Brief 43 §D)
+
+**"The environment is a test input. Timezone, locale, and clock are assumptions a test makes
+silently, and a suite that only ever runs in one of them cannot catch a bug in the others. Date
+and time behaviour is exercised across at least two zones, one of them offset across a date
+boundary from the other. This machine's Asia/Tokyo made getUTCDate and getDate identical for the
+tested instant, so both the vacuous test and its replacement were invisible."**

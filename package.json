@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "BLACK BOX — a personal safety system for people who cannot afford to be safe.",
+  "description": "BLACK BOX \u2014 a personal safety system for people who cannot afford to be safe.",
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=20"
@@ -19,9 +19,10 @@
     "test": "pnpm -r test",
     "acceptance": "pnpm -F @blackbox/api acceptance",
     "deploy": "node scripts/deploy.mjs",
-    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build:all",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:tz && pnpm build:all",
     "gate": "pnpm verify && pnpm acceptance",
-    "setup-hooks": "git config core.hooksPath .githooks"
+    "setup-hooks": "git config core.hooksPath .githooks",
+    "test:tz": "node scripts/test-second-tz.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
