@@ -257,3 +257,21 @@ correction is structural rather than vigilant — arming is a per-account timest
 (`users.deviceCredentialArmedAt`) and the flag only decides whether that timestamp may be SET, so
 there is no value the pair can take that means "armed everywhere but still accepting the old
 credential". The state does not exist to be shipped by mistake.
+
+## ALLOW-LIST, NEVER DENY-LIST (ratified 2026-08-03, from Brief 41)
+
+**"Safety-critical exemption is an allow-list, never a deny-list. A path is unlimited,
+unthrottled, or ungated because it was never added — not because someone remembered to exempt it.
+A deny-list silently captures every route added after it was written, and that failure is
+invisible until the day it matters."**
+
+*(Origin: Brief 41 `LIMITED` / `ruleFor()` returning null for anything absent.)*
+
+## MEASURE WHAT THE CONTROL ACTS ON (ratified 2026-08-03, from Brief 41 §F)
+
+**"A measurement must measure the thing the limit acts on. A per-path total says nothing about a
+per-identifier bucket, and reporting one as the other condemns a correct control or exonerates a
+broken one."**
+
+*(Origin: Brief 41 §F reporting 149 signups against a burst of 12 — 149 distinct identifiers, one
+attempt each.)*
