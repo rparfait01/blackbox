@@ -11,6 +11,7 @@ Answering "was Brief 12 §3 ever touched?" is one lookup here, never a forward r
 
 | Corrected | By | Current reading (first line) | Path |
 |---|---|---|---|
+| Brief 041 §B | Brief 043 | Enumeration resistance is a property of the WORK PERFORMED, not of the response body. Two paths | — |
 | Brief 002 §C3 | Brief 040 | Sealed evidence is retained under a storage-layer retention rule, scoped to the vault prefix, | — |
 | Brief 002 §C3 | Brief 040 | The vault sealing scan covers every eligible object. Coverage is proven by a durable cursor, | — |
 | Brief 034 §5 (Vault retention) | Brief 040 | Sealed evidence is retained for 36 months under a verified storage-layer retention rule. | — |
@@ -25,15 +26,12 @@ Answering "was Brief 12 §3 ever touched?" is one lookup here, never a forward r
 | Brief 002 §C2 | Brief 037 | The signed chain head always corresponds to a record that exists in the chain. | — |
 | Brief 036 §B | Brief 037 | `PREPARING` and `FAILED_RETRYABLE` hold. `READY` encrypts and transmits. `FAILED_TERMINAL` | — |
 | Brief 036 §A | Brief 037 | Encryption state is derived server-side from inspection of the received bytes, never from a | — |
-| Brief 026 §CUSTODY MODEL | Brief 036 | No evidence chunk transmits from the device in any state other than READY. Encryption is a | — |
-| Brief 026 §CUSTODY MODEL | Brief 036 | The alert path — event creation, contact dispatch, location, heartbeat, closure — never | — |
-| Brief 026 §CUSTODY MODEL | Brief 036 | Every chunk carries a server-verifiable encryption state. The server rejects a chunk whose | — |
-| Brief 034 §5 (Encryption) | Brief 036 | Capture is encrypted before transmission. Plaintext chunks are not reachable on any path. | — |
-| Brief 035 §D | Brief 036 | Dispatch suppression requires two conditions, both re-derived server-side at dispatch time: | — |
-| Brief 035 §C | Brief 036 | The canary reserved contact number is `+14155550199`. The reserved block is exchange 555 | — |
-| Brief 035 §C | Brief 036 | The canary resolves the deployed version through the same fail-closed poller the currency | — |
-| Brief 021 §1 | Brief 035 | Deploy currency requires three conditions, all enforced before publish: the PWA and Worker | — |
-| Brief 021 §1 | Brief 035 | A production build with no API origin is not a degraded build. It is a build in which the | — |
+| Brief 036 §D | Brief 036 | Brief 36 §D defines the degradation contract: which conditions constitute degradation and how | — |
+| Brief 021 §1 | Brief 035 | The currency poll distinguishes not-yet-propagated from infrastructure-unavailable from | — |
+| Brief 035 FIX A §B | Brief 035 | `isOurBuild` invokes git without a shell. On Windows `cmd.exe` treats `^` as an escape | — |
+| Brief 035 FIX A §C | Brief 035 | The gate's run marker is single-use and is spent even by a wrong guess. A length check is not a | — |
+| Brief 035 FIX A §F | Brief 035 | The request-cost line is read from the spawned child's reported count, not from an in-memory | — |
+| Brief 035 §C | Brief 035 | The deploy gate terminates in exactly two states: passed or failed. No operator completes, | — |
 
 ## Pre-34 ledger (seeded from Brief 34 §3 and §5)
 
@@ -63,7 +61,16 @@ These predate the corrections convention. The briefs that made them are **not re
 
 Recorded rather than silently tolerated. Collisions are Brief 34 §4 items and need adjudication.
 
+- DUPLICATE brief number 2: BRIEF_002_FIX_A_DEVICE_CREDENTIAL.md and BRIEF_002_FIX_A_SCOPE_ADDITIONS.md (recorded, not fatal)
+- DUPLICATE brief number 33: BRIEF_033_FIX_A_COORDINATOR_POLLING.md and BRIEF_033_FIX_B_COORDINATOR_LINK_EXPOSURE.md (recorded, not fatal)
+- DUPLICATE brief number 35: BRIEF_035_FIX_A_DEPLOY_TOOLCHAIN (1).md and BRIEF_035_FIX_A_DEPLOY_TOOLCHAIN.md (recorded, not fatal)
+- DUPLICATE brief number 35: BRIEF_035_FIX_A_DEPLOY_TOOLCHAIN.md and BRIEF_035_FIX_B_STAGING_SEND_SUPPRESSION.md (recorded, not fatal)
+- DUPLICATE brief number 35: BRIEF_035_FIX_A_DEPLOY_TOOLCHAIN.md and BRIEF_035_FIX_DEPLOY_GATE.md (recorded, not fatal)
+- DUPLICATE brief number 36: BRIEF_036_FIX_A_STORAGE_HEALTH_AND_QUEUE.md and BRIEF_036_FIX_ENCRYPTION_STATE_MACHINE.md (recorded, not fatal)
 - DUPLICATE brief number 40: BRIEF_040_FIX_VAULT_COVERAGE_AND_RETENTION (1).md and BRIEF_040_FIX_VAULT_COVERAGE_AND_RETENTION.md (recorded, not fatal)
+- DUPLICATE brief number 42: BRIEF_042_BUILD_HEADERS_AND_SESSION_ROTATION (1).md and BRIEF_042_BUILD_HEADERS_AND_SESSION_ROTATION.md (recorded, not fatal)
 - DUPLICATE brief number 26: BRIEF_26_REVIEW_ANSWERS.md and BRIEF_26_ZK_CUSTODY.md (recorded, not fatal)
 - DUPLICATE brief number 29: BRIEF_29_CERTIFIED_REPORT (1).md and BRIEF_29_CLOSING.md (recorded, not fatal)
+- DUPLICATE brief number 30: BRIEF_030_FIX_A_SIGNUP_CAPABILITY.md and BRIEF_30_SIGNUP_GATE.md (recorded, not fatal)
+- DUPLICATE brief number 33: BRIEF_033_FIX_A_COORDINATOR_POLLING.md and BRIEF_33_DASHBOARD.md (recorded, not fatal)
 

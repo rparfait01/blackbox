@@ -66,6 +66,13 @@
 
 ---
 
+## CORRECTIONS — None.
+
+*(This file is the FIRST SEND of Brief 42, retained because the brief was reissued with a
+different carried-in block rather than amended. The authoritative text is
+`BRIEF_042_BUILD_HEADERS_AND_SESSION_ROTATION.md`; this copy is kept so the earlier instructions
+are not lost, and it supersedes nothing.)*
+
 ## THE DEFECT
 
 The PWA is served without a content-security policy or the standard transport and framing

@@ -40,6 +40,13 @@ The exempt-path list is stated explicitly in code and **proven** in acceptance, 
 
 ---
 
+## CORRECTIONS — None.
+
+This brief supersedes no prior brief's text.
+
+*(Note: Brief 43 later CORRECTED this brief's §B — an identical response body was treated as
+proof of enumeration resistance, and it is not. See BRIEF_043 § CORRECTIONS.)*
+
 ## THE DEFECT
 
 Shared authentication and lookup endpoints have no abuse controls: no per-identifier or
