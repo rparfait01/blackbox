@@ -1,0 +1,6 @@
+{
+  "//": "Brief 43 §D — EMIT excludes tests; TYPECHECK does not.",
+  "//2": "Giving this package a test runner put *.test.ts under `src`, and `tsc -p tsconfig.json` emitted them straight into dist — the artifact the Worker and the verifier bundle consume would have carried test code. Excluding them from tsconfig.json itself would have fixed dist and quietly stopped typechecking the tests, which is not free: the arity bug in the hostile-input corpus (verifyReportSignature takes three arguments, the test passed two) was caught by `pnpm typecheck`, not by running it. So the two concerns get two configs: this one emits, tsconfig.json checks everything including the tests.",
+  "extends": "./tsconfig.json",
+  "exclude": ["src/**/*.test.ts"]
+}

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderEvidenceText } from './document';
-import { sha256Hex } from '@blackbox/shared';
-import type { EvidenceZone } from '@blackbox/shared';
+import { renderEvidenceText } from './report-document';
+import { sha256Hex } from './hmac';
+import type { EvidenceZone } from './report';
 
 /**
  * Brief 43 §C — THE RENDERER'S OUTPUT IS A SIGNED ARTIFACT, SO ITS BYTES ARE PINNED.

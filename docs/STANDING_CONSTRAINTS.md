@@ -354,3 +354,25 @@ silently, and a suite that only ever runs in one of them cannot catch a bug in t
 and time behaviour is exercised across at least two zones, one of them offset across a date
 boundary from the other. This machine's Asia/Tokyo made getUTCDate and getDate identical for the
 tested instant, so both the vacuous test and its replacement were invisible."**
+
+*(Measured, 2026-08-03. The standing second-zone pass — `pnpm test:tz`, America/Los_Angeles —
+found NOTHING new: 1,261 tests pass identically in both zones. That is not a null result and must
+not be read as one. The evidence for the rule is the injection: replacing `getUTCDate` with
+`getDate` in the evidence label produced **1 failure under Asia/Tokyo and 5 under
+America/Los_Angeles**. Four behavioural tests were blind on this machine, including the one
+asserting the rendered label. A clean second-zone run means the zone-dependent bugs are absent
+today, not that the pass is unnecessary — it is the reason we know that.)*
+
+## A THROW INSIDE A FAIL-OPEN BOUNDARY IS A BYPASS (ratified 2026-08-03, from Brief 43 §C)
+
+**"Inside a fail-open boundary, every throw is a silent bypass of the control that boundary
+protects. Fail-open is correct on the alert path and it converts crashes into permissions. Code
+inside one is total by construction, and a throw there is a defect of the same severity as the
+bypass it produces."**
+
+*(Origin: `deviceCanonical` threw on a null method. The server-side call sits inside the capture
+path's fail-open catch — correct, because an infrastructure failure must never cost a survivor her
+evidence — which means the throw never surfaced as an error. It converted a `REFUSED` verdict into
+`ACCEPTED_FAIL_OPEN`. Anything that can make that code throw is a way to switch device
+verification off. Latent rather than live at the one call site, and closed anyway: on these paths
+the severity of a crash is the severity of the permission it grants.)*

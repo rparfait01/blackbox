@@ -6,9 +6,20 @@ import type { KeywordLibrary } from '../keywords/types';
 const PUNCTUATION = /[.,!?;:"'`~()[\]{}<>/\\|@#$%^&*_+=…。、！？「」『』（）-]/g;
 const CJK = /[぀-ヿ㐀-鿿ｦ-ﾟ]/;
 
-/** Lowercase, strip punctuation, collapse whitespace. */
+/**
+ * Lowercase, strip punctuation, collapse whitespace.
+ *
+ * Brief 43 §C — TOTAL, BECAUSE THE CALLER SWALLOWS THROWS. The classify tick in the PWA runs
+ * inside a try/catch that logs and continues, which is right: a classification failure must never
+ * take down a capture in progress. It also means a throw here does not surface as an error, it
+ * silently switches THREAT CLASSIFICATION OFF while the recording carries on looking healthy —
+ * every tick, for the rest of the session, if the transcript source keeps handing back the same
+ * bad value. `text.toLowerCase()` threw on null, undefined and every non-string.
+ *
+ * `String(x)` is the identity on strings, so no transcript scores differently than before.
+ */
 export function normalize(text: string): string {
-  return text
+  return String(text ?? '')
     .toLowerCase()
     .replace(PUNCTUATION, ' ')
     .replace(/\s+/g, ' ')
@@ -97,6 +108,8 @@ export function matchKeywords(
 
 /** 3+ rapid repeats of any short word flags a repetition signal. */
 export function detectRepetition(tokens: string[]): boolean {
+  // §C — a caller that had no tokens (a failed split, an absent transcript) passed null here.
+  if (!Array.isArray(tokens)) return false;
   let run = 1;
   for (let i = 1; i < tokens.length; i += 1) {
     const current = tokens[i];
@@ -114,11 +127,14 @@ export function detectRepetition(tokens: string[]): boolean {
 
 /** Detect languages present by script (rough but dependency-free). */
 export function detectLanguages(transcript: string): string[] {
+  // §C — RegExp.test coerces its argument, so this never threw; it is normalized anyway so the
+  // whole text path has one rule rather than one rule and an exception nobody can recall.
+  const text = String(transcript ?? '');
   const languages: string[] = [];
-  if (CJK.test(transcript)) {
+  if (CJK.test(text)) {
     languages.push('ja');
   }
-  if (/[a-z]/i.test(transcript)) {
+  if (/[a-z]/i.test(text)) {
     languages.push('en');
   }
   return languages;

@@ -18,13 +18,13 @@ import {
   UNPARSEABLE_FINGERPRINT,
   verifyReportDocument,
   verifyReportSignature,
-} from '@blackbox/shared';
+} from './index';
 
 /*
- * Lives in apps/pwa because `packages/shared` has no test runner of its own — it declares only
- * build, typecheck and lint, so `pnpm -r test` never reaches it. That is a real gap and it is
- * reported rather than papered over; this file follows the existing convention (label.test.ts
- * tests shared code from here) so the coverage exists NOW rather than after a tooling change.
+ * Lives beside the code it tests. It was written in apps/pwa because `packages/shared` had no
+ * test runner at all — §D gave it one, and these moved to where they belong. The verifier is the
+ * artifact a third party runs against evidence without us present; it does not get to sit outside
+ * the suite.
  */
 
 /**
