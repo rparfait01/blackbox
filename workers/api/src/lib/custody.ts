@@ -246,9 +246,9 @@ export async function sealEvent(
       });
     }
     await env.DB.prepare(
-      'INSERT OR IGNORE INTO vault_objects (vaultKey, eventId, packageHash, sealedAt, expiresAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO vault_objects (vaultKey, eventId, packageHash, sealedAt, expiresAt, tzOffsetMinutes, orgId) VALUES (?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
     )
-      .bind(vaultKey, eventId, packageHash, now, addMonths(now, RETENTION_MONTHS), event.tzOffsetMinutes)
+      .bind(vaultKey, eventId, packageHash, now, addMonths(now, RETENTION_MONTHS), event.tzOffsetMinutes, eventId)
       .run();
   }
 
@@ -278,7 +278,7 @@ export async function exportPackage(
   }
   const custodyId = `CUS-${crypto.randomUUID()}`;
   await env.DB.prepare(
-    'INSERT INTO custody_transfers (id, eventId, recipientId, packageHash, manifestHash, vaultKey, createdAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO custody_transfers (id, eventId, recipientId, packageHash, manifestHash, vaultKey, createdAt, tzOffsetMinutes, orgId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
   )
     .bind(
       custodyId,
@@ -289,6 +289,7 @@ export async function exportPackage(
       sealed.vaultKey ?? '',
       Date.now(),
       sealed.tzOffsetMinutes,
+      eventId,
     )
     .run();
   await logRecipientAction(env, recipientId, eventId, 'export', `package ${sealed.packageHash.slice(0, 12)}`);

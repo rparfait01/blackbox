@@ -42,7 +42,7 @@ export interface DeliveryRecordRow extends DeliveryRecordInput {
 export async function recordDelivery(env: Env, input: DeliveryRecordInput): Promise<void> {
   try {
     await env.DB.prepare(
-      'INSERT INTO delivery_records (id, eventId, messageKind, channel, status, providerMessageId, detail, createdAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO delivery_records (id, eventId, messageKind, channel, status, providerMessageId, detail, createdAt, tzOffsetMinutes, orgId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
     )
       .bind(
         crypto.randomUUID(),
@@ -55,6 +55,7 @@ export async function recordDelivery(env: Env, input: DeliveryRecordInput): Prom
         Date.now(),
         // The server runs in UTC; offset is 0. Render uses the event's offset.
         0,
+        input.eventId,
       )
       .run();
   } catch (error) {

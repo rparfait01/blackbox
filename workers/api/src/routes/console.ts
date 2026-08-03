@@ -56,6 +56,7 @@ import {
 } from '../lib/org-registration';
 import { leaveOrg } from '../lib/enrollment';
 import { deleteAccount } from '../lib/users';
+import { deleteOrgData, orgExport, orgInventory } from '../lib/org-operations';
 import type { Env, Vars } from '../types';
 import { boundedJson, LIMITS } from '../lib/request-bounds';
 
@@ -985,6 +986,56 @@ consoleRoutes.get('/maintenance/health', requireLevel('operator'), async (c) => 
  * routine with one flag flipped, so the count shown is the count that would be deleted,
  * not a separate estimate that could disagree.
  */
+/**
+ * Brief 23 Fix A §C/§E — PER-ORG INVENTORY, EXPORT AND TERMINATION DELETION.
+ *
+ * OPERATOR ONLY, and deliberately so. These cross tenant boundaries by construction — an org
+ * admin must not be able to enumerate or delete their own org wholesale, because "delete
+ * everything" issued by a compromised shelter account is indistinguishable from a legitimate
+ * contract termination, and only one of those is recoverable. Operator is the single deliberate
+ * cross-org level Brief 23 established; this rides on it rather than inventing a second.
+ *
+ * The orgId is a PARAMETER here, which is the one place in this file that is correct: an operator
+ * is not scoped to an org, so there is no `scopedOrg(c)` to derive it from. Every org-scoped
+ * handler above still derives its org server-side and never reads one from a request.
+ */
+consoleRoutes.get('/org/:orgId/inventory', requireLevel('operator'), async (c) => {
+  const actor = c.get('userId');
+  const orgId = c.req.param('orgId');
+  const inventory = await orgInventory(c.env, orgId);
+  await audit(c.env, null, 'console.org_inventory', actor, { orgId, totalRows: inventory.totalRows });
+  return c.json(inventory, 200);
+});
+
+consoleRoutes.get('/org/:orgId/export', requireLevel('operator'), async (c) => {
+  const actor = c.get('userId');
+  const orgId = c.req.param('orgId');
+  const data = await orgExport(c.env, orgId);
+  await audit(c.env, null, 'console.org_export', actor, { orgId, events: data.events.length });
+  return c.json(data, 200);
+});
+
+/**
+ * Contract-termination deletion. DRY RUN BY DEFAULT — `confirm: true` is required, matching the
+ * other maintenance routines, and a malformed body previews rather than deleting.
+ */
+consoleRoutes.post('/org/:orgId/delete', requireLevel('operator'), async (c) => {
+  const actor = c.get('userId');
+  const orgId = c.req.param('orgId');
+  const body = ((await boundedJson<{ confirm?: boolean; maxObjects?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { confirm?: boolean; maxObjects?: number }));
+  const result = await deleteOrgData(c.env, orgId, {
+    confirm: body.confirm === true,
+    maxObjects: typeof body.maxObjects === 'number' ? body.maxObjects : undefined,
+  });
+  await audit(c.env, null, result.dryRun ? 'console.org_delete_preview' : 'console.org_delete', actor, {
+    orgId,
+    eventsDeleted: result.eventsDeleted,
+    accountsUnbound: result.accountsUnbound,
+    vaultRetained: result.vaultObjectsRetained,
+  });
+  return c.json(result, 200);
+});
+
 consoleRoutes.post('/maintenance/purge-media', requireLevel('operator'), async (c) => {
   const actor = c.get('userId');
   const body = ((await boundedJson<{ confirm?: boolean; maxObjects?: number }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { confirm?: boolean; maxObjects?: number }));

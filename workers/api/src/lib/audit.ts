@@ -14,7 +14,10 @@ export async function audit(
 ): Promise<void> {
   try {
     await env.DB.prepare(
-      'INSERT INTO audit_log (id, eventId, action, actorHash, timestamp, metadataJson) VALUES (?, ?, ?, ?, ?, ?)',
+      // §C — attributed from the event when there is one. `eventId` is NULLABLE here (account-level
+      // entries carry no event), and the subselect yields NULL for those rather than failing:
+      // an audit entry with no event and no org is correctly unattributed, not broken.
+      'INSERT INTO audit_log (id, eventId, action, actorHash, timestamp, metadataJson, orgId) VALUES (?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
     )
       .bind(
         crypto.randomUUID(),
@@ -23,6 +26,7 @@ export async function audit(
         actorHash,
         Date.now(),
         metadata ? JSON.stringify(metadata) : null,
+        eventId,
       )
       .run();
   } catch {

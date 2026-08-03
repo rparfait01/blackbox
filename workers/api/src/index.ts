@@ -2519,9 +2519,14 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
 
   await c.env.MEDIA.put(r2Key, bytes, { httpMetadata: { contentType: mimeType } });
   await c.env.DB.prepare(
-    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal, encryptionState, terminalReason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    // §C — orgId is attributed IN THE SAME STATEMENT via a subselect, not by a prior read.
+    // This is the capture path: a separate `SELECT orgId FROM events` before every chunk write
+    // would add a round trip and a failure mode to the one path that must never gain either.
+    // NULL propagates for free — an unaffiliated survivor's event has orgId NULL and so does
+    // her evidence, which is the correct and complete value.
+    'INSERT OR REPLACE INTO chunks_index (eventId, sequence, r2Key, sizeBytes, mimeType, createdAt, sha256, tzOffsetMinutes, isFinal, encryptionState, terminalReason, orgId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
   )
-    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal, observation.state, terminalReason)
+    .bind(eventId, sequence, r2Key, bytes.byteLength, mimeType, Date.now(), sha256, tz, isFinal, observation.state, terminalReason, eventId)
     .run();
   // §C — the natural idempotency key for a chunk is its own position. A retried upload
   // of the same sequence now returns the ORIGINAL chain result instead of appending a
@@ -2532,9 +2537,9 @@ app.post('/v1/events/:id/chunks/:sequence', async (c) => {
   // capture-time commitment.
   if (commitment) {
     await c.env.DB.prepare(
-      'INSERT OR REPLACE INTO plaintext_commitments (eventId, sequence, plaintextHash, createdAt) VALUES (?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO plaintext_commitments (eventId, sequence, plaintextHash, createdAt, orgId) VALUES (?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
     )
-      .bind(eventId, sequence, commitment, Date.now())
+      .bind(eventId, sequence, commitment, Date.now(), eventId)
       .run();
     await appendToChain(c.env, eventId, 'commitment', `${eventId}/${sequence}`, commitment, `commitment:${sequence}`);
   }
@@ -2566,7 +2571,7 @@ app.post('/v1/events/:id/wrapped-keys', async (c) => {
     const recipientType = k.recipientType === 'org' ? 'org' : k.recipientType === 'survivor' ? 'survivor' : null;
     if (!recipientType || !k.algId || !k.wrappedDek) continue;
     await c.env.DB.prepare(
-      'INSERT INTO wrapped_keys (id, eventId, sequence, recipientType, recipientRef, keyGeneration, algId, wrappedDek, createdAt) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO wrapped_keys (id, eventId, sequence, recipientType, recipientRef, keyGeneration, algId, wrappedDek, createdAt, orgId) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
     )
       .bind(
         crypto.randomUUID(),
@@ -2577,6 +2582,7 @@ app.post('/v1/events/:id/wrapped-keys', async (c) => {
         k.algId,
         k.wrappedDek,
         Date.now(),
+        eventId,
       )
       .run();
     stored += 1;

@@ -145,9 +145,12 @@ export async function ensureContactForUser(
   }
   const id = crypto.randomUUID();
   await env.DB.prepare(
-    'INSERT INTO contacts (id, userHash, userId, displayName, createdAt) VALUES (?, NULL, ?, ?, ?)',
+    // §C/§F4 — INVENTORY ONLY. Nothing in the notification path reads this column: a survivor's
+    // emergency contact may be affiliated with another org or with none, and must still be
+    // reached. Dispatch is never org-gated.
+    'INSERT INTO contacts (id, userHash, userId, displayName, createdAt, orgId) VALUES (?, NULL, ?, ?, ?, (SELECT orgId FROM users WHERE id = ?))',
   )
-    .bind(id, userId, displayName, Date.now())
+    .bind(id, userId, displayName, Date.now(), userId)
     .run();
   return id;
 }

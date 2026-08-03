@@ -173,9 +173,11 @@ export async function provisionCanary(env: Env): Promise<CanaryAccount> {
   if (!contact) {
     const contactId = crypto.randomUUID();
     await env.DB.prepare(
-      "INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, status, statusUpdatedAt, createdAt) VALUES (?, NULL, ?, ?, ?, 'contact', 1, 'confirmed', ?, ?)",
+      // The canary account is deliberately UNAFFILIATED (§A), so this subselect yields NULL —
+      // which is the correct value, not an omission.
+      "INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, status, statusUpdatedAt, createdAt, orgId) VALUES (?, NULL, ?, ?, ?, 'contact', 1, 'confirmed', ?, ?, (SELECT orgId FROM users WHERE id = ?))",
     )
-      .bind(contactId, userId, 'Canary Contact', 'Canary Contact', now, now)
+      .bind(contactId, userId, 'Canary Contact', 'Canary Contact', now, now, userId)
       .run();
     contact = { id: contactId };
   } else {

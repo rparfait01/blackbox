@@ -113,12 +113,12 @@ export async function appendAtSequence(
       // No OR IGNORE. The (eventId, seq) primary key IS the collision detector, and a
       // collision has to reach the caller rather than vanish.
       env.DB.prepare(
-        'INSERT INTO integrity_records (eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, createdAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).bind(eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, now, tz),
+        'INSERT INTO integrity_records (eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, createdAt, tzOffsetMinutes, orgId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
+      ).bind(eventId, seq, recordType, recordRef, recordHash, prevHash, chainHash, now, tz, eventId),
       env.DB.prepare(
-        'INSERT INTO integrity_heads (eventId, seq, chainHead, updatedAt, tzOffsetMinutes) VALUES (?, ?, ?, ?, ?) ' +
+        'INSERT INTO integrity_heads (eventId, seq, chainHead, updatedAt, tzOffsetMinutes, orgId) VALUES (?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?)) ' +
           'ON CONFLICT(eventId) DO UPDATE SET seq = excluded.seq, chainHead = excluded.chainHead, updatedAt = excluded.updatedAt',
-      ).bind(eventId, seq, chainHash, now, tz),
+      ).bind(eventId, seq, chainHash, now, tz, eventId),
     ];
     if (idempotencyKey) {
       statements.push(
@@ -235,7 +235,10 @@ export async function recordChainGap(
       .bind(eventId, head?.seq ?? -1, recordType, recordRef, reason, Date.now())
       .run();
     await env.DB.prepare(
-      'INSERT INTO audit_log (id, eventId, action, actorHash, timestamp, metadataJson) VALUES (?, ?, ?, ?, ?, ?)',
+      // §C — attributed from the event when there is one. `eventId` is NULLABLE here (account-level
+      // entries carry no event), and the subselect yields NULL for those rather than failing:
+      // an audit entry with no event and no org is correctly unattributed, not broken.
+      'INSERT INTO audit_log (id, eventId, action, actorHash, timestamp, metadataJson, orgId) VALUES (?, ?, ?, ?, ?, ?, (SELECT orgId FROM events WHERE id = ?))',
     )
       .bind(
         crypto.randomUUID(),
@@ -244,6 +247,7 @@ export async function recordChainGap(
         null,
         Date.now(),
         JSON.stringify({ recordRef, reason }),
+        eventId,
       )
       .run();
   } catch (error) {

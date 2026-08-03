@@ -213,8 +213,8 @@ export async function upsertSlot(
   const contactId = crypto.randomUUID();
   statements.push(
     env.DB.prepare(
-      'INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, createdAt, status, statusUpdatedAt) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(contactId, userId, input.userDisplayName, input.contactName, addr.role, addr.priority, now, status, now),
+      'INSERT INTO contacts (id, userHash, userId, displayName, contactName, role, priority, createdAt, status, statusUpdatedAt, orgId) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT orgId FROM users WHERE id = ?))',
+    ).bind(contactId, userId, input.userDisplayName, input.contactName, addr.role, addr.priority, now, status, now, userId),
     env.DB.prepare(
       'INSERT INTO contact_endpoints (id, contactId, channel, channelIdentifier, priority, verifiedAt, createdAt) VALUES (?, ?, ?, ?, 1, ?, ?)',
     ).bind(crypto.randomUUID(), contactId, input.channel, input.destination, now, now),
