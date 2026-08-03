@@ -275,3 +275,20 @@ broken one."**
 
 *(Origin: Brief 41 §F reporting 149 signups against a burst of 12 — 149 distinct identifiers, one
 attempt each.)*
+
+## TEST HARNESSES ASSERT THEIR OWN SETUP (ratified 2026-08-03, from Brief 35 Fix B)
+
+**"A test harness asserts its own setup succeeded. An unchecked non-2xx during setup makes every
+downstream reading meaningless — an empty address book reads as a failed cascade, and a test that
+can never pass is the mirror of a test that cannot fail."**
+
+*(Origin: `/v1/me/contacts/1` against named slots; `@nonexistent.invalid` suppressed as a reserved
+TLD before reaching the cap.)*
+
+**"A reserved or sentinel value is inert by design. A test that drives a control with one proves
+the control was never reached."**
+
+Both were live: several dispatch proofs reported "0 delivery rows" when the real state was "no
+contact was ever saved", and a cap-draining run reported "0 counted" when the address had been
+suppressed two checks earlier. Neither failure announced itself — each read as a finding about
+the system rather than about the harness.

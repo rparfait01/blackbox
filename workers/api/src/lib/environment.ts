@@ -135,30 +135,68 @@ export function clearEnvironmentCache(): void {
   cached = null;
 }
 
+/**
+ * §C — CREDENTIAL STATE IS THREE-VALUED, NOT A BOOLEAN.
+ *
+ * `absent`, `placeholder` and `present` are three different facts and the panel reports which one
+ * it observes. It does NOT assert authenticity it cannot verify — nothing here can tell a live key
+ * from a revoked one — and it does not collapse `placeholder` into `absent`, because a slot
+ * holding something is a different operational state from an empty slot, and an operator reading
+ * "absent" about a populated secret has been told something untrue.
+ *
+ * A placeholder is recognised by a documented sentinel in the value. That is an OBSERVATION about
+ * a convention this project controls, not a judgement about whether a credential would work.
+ */
+const PLACEHOLDER_MARKERS = ['placeholder', 'cannot-authenticate', 'not-a-real-key'];
+
+export type CredentialState = 'absent' | 'placeholder' | 'present';
+
+export function credentialState(value: string | undefined): CredentialState {
+  const v = (value ?? '').trim();
+  if (!v) return 'absent';
+  const lower = v.toLowerCase();
+  // Also treats an all-zero token as a placeholder: it is a sentinel by any reading.
+  if (PLACEHOLDER_MARKERS.some((m) => lower.includes(m)) || /^0+$/.test(v)) return 'placeholder';
+  return 'present';
+}
+
 /** §C — what the readiness panel reports, per environment. */
 export async function dispatchPosture(env: Env) {
   const identity = await resolveEnvironment(env);
-  const credentials = {
-    sendgrid: Boolean(env.SENDGRID_API_KEY),
-    twilio: Boolean(env.TWILIO_AUTH_TOKEN),
-    line: Boolean(env.LINE_CHANNEL_ACCESS_TOKEN),
+  const credentials: Record<string, CredentialState> = {
+    sendgrid: credentialState(env.SENDGRID_API_KEY),
+    twilio: credentialState(env.TWILIO_AUTH_TOKEN),
+    line: credentialState(env.LINE_CHANNEL_ACCESS_TOKEN),
   };
-  const present = Object.entries(credentials)
-    .filter(([, v]) => v)
-    .map(([k]) => k);
-  // §C — a non-production environment holding a provider credential is an alertable condition:
-  // §A prevents the call, but two independent barriers is the requirement, not one.
-  const alerting = identity.verdict === 'NON_PRODUCTION' && present.length > 0;
+  const live = Object.entries(credentials).filter(([, s]) => s === 'present').map(([k]) => k);
+  const placeholders = Object.entries(credentials).filter(([, s]) => s === 'placeholder').map(([k]) => k);
+
+  // §C — the alertable condition is a non-production environment holding a credential that might
+  // actually authenticate. A recognised placeholder is the DESIRED state there, so it is reported
+  // and not alerted: an amber light that is always on is a light nobody looks at.
+  const alerting = identity.verdict === 'NON_PRODUCTION' && live.length > 0;
+
+  const credentialSummary =
+    live.length || placeholders.length
+      ? [
+          live.length ? `present: ${live.join(', ')}` : '',
+          placeholders.length ? `placeholder: ${placeholders.join(', ')}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : 'no provider credentials';
+
   return {
     environment: identity.name ?? 'INDETERMINATE',
     verdict: identity.verdict,
     externalDispatch: identity.verdict !== 'NON_PRODUCTION',
-    providerCredentials: present,
+    credentials,
+    providerCredentials: live,
+    placeholderCredentials: placeholders,
     alerting,
     summary:
-      `DISPATCH: ${identity.name ?? 'INDETERMINATE'} · external ${identity.verdict === 'NON_PRODUCTION' ? 'SUPPRESSED' : 'ENABLED'}` +
-      (present.length ? ` · credentials present: ${present.join(', ')}` : ' · no provider credentials') +
-      (alerting ? ' · ALERT: a non-production environment holds provider credentials (§C)' : ''),
+      `DISPATCH: ${identity.name ?? 'INDETERMINATE'} · external ${identity.verdict === 'NON_PRODUCTION' ? 'SUPPRESSED' : 'ENABLED'} · ${credentialSummary}` +
+      (alerting ? ' · ALERT: a non-production environment holds a credential that may authenticate (§C)' : ''),
     detail: identity.detail,
   };
 }

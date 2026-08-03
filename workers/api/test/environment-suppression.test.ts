@@ -104,7 +104,10 @@ describe('§B an uncertain environment DISPATCHES — this is the half that matt
 
 describe('§C the readiness panel reports posture, and flags the dangerous combination', () => {
   it('a non-production environment holding provider credentials is ALERTING', async () => {
-    const p = await dispatchPosture(envWith({ name: 'staging' }, { secrets: { SENDGRID_API_KEY: 'sg-x' } }));
+    // A value with no sentinel in it reads as `present` — it might authenticate, and that is
+    // exactly the condition §C wants surfaced.
+    const p = await dispatchPosture(envWith({ name: 'staging' }, { secrets: { SENDGRID_API_KEY: 'SG.aVeryRealLookingKey' } }));
+    expect(p.credentials.sendgrid).toBe('present');
     expect(p.alerting).toBe(true);
     expect(p.externalDispatch).toBe(false);
     expect(p.summary).toMatch(/ALERT/);
@@ -117,7 +120,7 @@ describe('§C the readiness panel reports posture, and flags the dangerous combi
   });
 
   it('production with credentials is the expected state, not an alert', async () => {
-    const p = await dispatchPosture(envWith({ name: 'production' }, { secrets: { SENDGRID_API_KEY: 'sg-x' } }));
+    const p = await dispatchPosture(envWith({ name: 'production' }, { secrets: { SENDGRID_API_KEY: 'SG.aVeryRealLookingKey' } }));
     expect(p.alerting).toBe(false);
     expect(p.externalDispatch).toBe(true);
   });
