@@ -126,3 +126,28 @@ export function watchPosture(): PostureWatch {
 export function covertVideoWanted(posture: Posture): boolean {
   return posture === 'face-down';
 }
+
+/**
+ * ═══ EVALUATED ONCE, AT CAPTURE START. RULED, NOT OVERLOOKED. ════════════════════════════════
+ *
+ * The brief asked for continuous re-evaluation — screen wakes, video stops; screen sleeps, video
+ * resumes. Royce ruled against it on the cost, and the cost is structural rather than awkward:
+ * switching the camera on or off mid-event means tearing down the MediaRecorder and building a
+ * new one. That produces a NEW CONTAINER mid-capture, and three shipped guarantees assume one
+ * continuous recorder —
+ *
+ *   the chunk sequence            (monotonic, and the integrity chain is keyed on it)
+ *   the AAD binding               (capture id ‖ chunk index ‖ final flag, Brief 38)
+ *   the terminal-chunk marker     (a restart makes a live capture look ended, Brief 38's defect)
+ *
+ * — so a posture change would be paid for in custody-chain integrity. That trade is not worth
+ * video. If the phone is picked up mid-event, the capture keeps whatever it started with.
+ *
+ * A COROLLARY WORTH STATING, because it decides whether this feature ever fires: the reading must
+ * already exist when capture starts. `devicemotion` delivers asynchronously, so a watcher started
+ * at trigger time has no sample yet, `available()` is false, posture is `unknown`, and the gate
+ * correctly yields audio-only — every time. For the Android face-down case to ever engage, the
+ * watch has to be running BEFORE the trigger, from the idle facade. Capture is never delayed to
+ * wait for a sample: on the alert path, a recording that starts late is worse than one without
+ * video.
+ */
