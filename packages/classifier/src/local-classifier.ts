@@ -21,12 +21,53 @@ export class LocalClassifier implements Classifier {
     this.libraries = libraries;
   }
 
+  /**
+   * §C — TOTAL BY CONSTRUCTION, because this runs inside a swallowing boundary.
+   *
+   * The classify tick in the PWA sits in a try/catch that logs and continues, which is right — a
+   * classifier crash must never take down a capture. It also means a throw here does not surface
+   * as an error: it silently switches threat classification OFF for the rest of the session.
+   * That is exactly how the `normalize()` defect hid, and it is why every path below returns
+   * rather than throws.
+   */
   classify(transcript: string, context: ClassificationContext): Promise<Classification | null> {
-    const text = transcript.trim();
-    const tone = context.tone;
+    try {
+      return Promise.resolve(this.classifyInner(transcript, context));
+    } catch (error) {
+      // A crash is REPORTED, never swallowed into absence. The event carries a failed
+      // classification rather than looking like an event nobody said anything during.
+      return Promise.resolve(this.failed(String(error).slice(0, 200)));
+    }
+  }
+
+  /** The failure record. Loud about what happened, and never a manufactured threat level. */
+  private failed(reason: string): Classification {
+    return {
+      timestamp: Date.now(),
+      source: 'local',
+      threatLevel: 'unclassified',
+      matchedCategories: [],
+      toneIndicators: [],
+      languages: [],
+      repetitionDetected: false,
+      summary: 'Classification could not run for this segment.',
+      confidence: 0,
+      unclassifiedReason: null,
+      state: 'failed',
+      failureReason: reason,
+    };
+  }
+
+  private classifyInner(transcript: string, context: ClassificationContext): Classification | null {
+    // `.trim()` threw on every non-string — the same shape as the normalize() defect, one
+    // function along. String() is the identity on strings, so no transcript scores differently.
+    const text = String(transcript ?? '').trim();
+    const tone = context?.tone;
     const hasInput = text.length > 0 || (tone !== undefined && tone.volumeBand !== 'silent');
     if (!hasInput) {
-      return Promise.resolve(null);
+      // Genuinely nothing to judge — silence, not speech we could not read. Null here is the
+      // caller skipping a tick, and it stays distinct from both unclassified and failed.
+      return null;
     }
 
     const { matched, repetitionDetected } = matchKeywords(text, this.libraries);
@@ -40,7 +81,7 @@ export class LocalClassifier implements Classifier {
       hasInput,
     );
 
-    return Promise.resolve({
+    return {
       timestamp: Date.now(),
       source: 'local',
       threatLevel,
@@ -49,7 +90,22 @@ export class LocalClassifier implements Classifier {
       languages,
       repetitionDetected,
       summary: buildSummary(matched, toneResult.indicators, tone, repetitionDetected, languages),
+      // §D — name the reason, and name the language when we can see one. `detectLanguages`
+      // reads SCRIPT, so it recognises Japanese text even when no Japanese keyword matched;
+      // that is precisely the case a coordinator must not read as calm. Okinawan is written in
+      // the same scripts and is not separately detectable, so it reports as Japanese here — the
+      // honest statement is about the lexicon missing, not about which language it was.
+      unclassifiedReason:
+        threatLevel === 'unclassified'
+          ? languages.length > 0
+            ? `speech detected (${languages.join(', ')}) but no scored terms matched — this device could not judge it`
+            : 'audio was heard but produced no scored terms — this device could not judge it'
+          : null,
       confidence: fuseConfidence(matched.length, toneResult.indicators.length, repetitionDetected),
-    });
+      // §C — which of the three things happened, stated rather than left for a reader to infer
+      // from a badge. Derived from the level, so it cannot drift out of step with it.
+      state: threatLevel === 'unclassified' ? 'unclassified' : 'classified',
+      failureReason: null,
+    };
   }
 }

@@ -28,8 +28,31 @@ thresholds (`packages/classifier/src/scoring/fusion.ts`):
 | 5 | high |
 | 2.5 | medium |
 | >0 | low |
-| 0 (audible) | low |
+| 0 (audible) | **unclassified** |
 | 0 (silent) | unknown |
+
+**`unclassified` is not a severity (Brief 52 §D).** It means the classifier ran and could not
+judge — audible input that produced no scored terms, most often speech in a language whose lexicon
+this device does not carry. It previously mapped to `low`, which told a coordinator "we listened
+and it is fine" when the truth was "we could not read this at all". Finding no keywords in
+Japanese speech is not evidence of calm.
+
+Ranking, which is a claim about how much is KNOWN and not only about severity:
+`unknown` < `unclassified` < `low` < `medium` < `high` < `critical`.
+
+## Classification state (Brief 52 §C)
+
+Every classification carries `state`, so a reader never infers it from a badge:
+
+| state | meaning |
+|---|---|
+| `classified` | ran, understood the input, produced a level |
+| `unclassified` | ran, could not judge — see `unclassifiedReason` |
+| `failed` | the classifier itself broke — see `failureReason` |
+
+A failure is shown loudly AS a failure and never as a manufactured `critical`: inventing a threat
+level out of a crash is a false positive by construction, and false positives are spent
+coordinator trust. "We could not run" and "we ran and found nothing" are different sentences.
 
 ## Latching + monotonicity (the SITUATION summary)
 The contact dashboard's SITUATION is **assembled from detected facts**, not

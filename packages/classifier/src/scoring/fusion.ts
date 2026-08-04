@@ -27,9 +27,15 @@ export function fuseThreatLevel(
     }
   }
   if (score > 0) {
+    // Scored above zero but below `medium`: the classifier understood something and judged it
+    // low. That is a real finding and stays `low`.
     return 'low';
   }
-  return hasInput ? 'low' : 'unknown';
+  // ZERO SCORE ON AUDIBLE INPUT IS NOT LOW THREAT. It is the classifier declining to judge —
+  // most often because the speech is in a language whose lexicon it does not carry. Reporting it
+  // as `low` told a coordinator "we listened and it is fine" when the truth was "we could not
+  // read this at all". No threshold moved to fix this; the mapping was simply wrong.
+  return hasInput ? 'unclassified' : 'unknown';
 }
 
 export function fuseConfidence(

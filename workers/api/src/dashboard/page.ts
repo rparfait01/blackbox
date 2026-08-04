@@ -125,7 +125,20 @@ function catLabel(c: string): string {
   return CATEGORY_LABEL[c] ?? c;
 }
 function threatClass(level: string): string {
-  return level === 'critical' || level === 'high' ? 'th-high' : level === 'medium' ? 'th-med' : 'th-low';
+  // Brief 52 §D — UNCLASSIFIED and UNKNOWN never wear the low-threat colour. A green badge on
+  // speech nobody could read is the blank-summary lie in another form: it says "we listened and
+  // it is fine" when the truth is "we could not read this at all".
+  if (level === 'critical' || level === 'high') return 'th-high';
+  if (level === 'medium') return 'th-med';
+  if (level === 'unclassified' || level === 'unknown') return 'th-unclassified';
+  return 'th-low';
+}
+
+/** The reader-facing word. `unclassified` says what happened; it does not imply a severity. */
+function threatLabel(level: string): string {
+  if (level === 'unclassified') return 'NOT CLASSIFIED';
+  if (level === 'unknown') return 'NO AUDIO YET';
+  return level.toUpperCase();
 }
 const TRIGGER_LABEL: Record<string, string> = {
   manual: 'Manual activation',
@@ -176,7 +189,7 @@ function situationHtml(s: ContactState['situation']): string {
   parts.push(
     `<div class="th-row"><span class="kv-k">Threat (rule-derived)</span><span class="th-badge ${threatClass(
       s.threatLevel,
-    )}">${escapeHtml(s.threatLevel.toUpperCase())}</span></div>`,
+    )}">${escapeHtml(threatLabel(s.threatLevel))}</span></div>`,
   );
   if (s.categories.length > 0) {
     parts.push(
@@ -574,6 +587,8 @@ const CSS = `
 .ss-degraded{background:#4a3200;color:#ffc14d}
 .ss-stopped{background:#4a0d0d;color:#ff8080}
 .stream-warn{color:#ffc14d}
+/* Brief 52 §D — unclassified is amber-on-dark: visible, unmistakably NOT the low-threat green. */
+.th-unclassified{background:#4a3200;color:#ffc14d}
 
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#000;color:#e8e8e8;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}

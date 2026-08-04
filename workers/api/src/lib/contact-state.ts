@@ -108,7 +108,23 @@ export interface Situation {
   hasSignal: boolean;
 }
 
-const THREAT_ORDER = ['unknown', 'low', 'medium', 'high', 'critical'];
+/**
+ * Brief 52 §D — the monotonic ranking, with `unclassified` between "no audio" and "low".
+ *
+ * The order is a claim about how much we KNOW, not only about severity:
+ *   unknown      — no audible input at all
+ *   unclassified — audible input we could not read (a missing lexicon, most often)
+ *   low…critical — we read it and judged it
+ *
+ * `unclassified` sits ABOVE unknown because hearing something unreadable is more than hearing
+ * nothing, and BELOW low because one tick we did understand outranks one we did not. Omitting it
+ * was not an option: `indexOf` returns -1 for an unlisted level, which collapsed unclassified
+ * silently into `unknown` — the exact erasure this section exists to stop.
+ */
+const THREAT_ORDER = ['unknown', 'unclassified', 'low', 'medium', 'high', 'critical'];
+/** Index of 'medium' — the point at which the level ALONE constitutes a signal. */
+const MEDIUM_IDX = THREAT_ORDER.indexOf('medium');
+const UNCLASSIFIED_IDX = THREAT_ORDER.indexOf('unclassified');
 
 /** Best-effort IANA time zone for a locale. Defaults to the Japan pilot. */
 function localeToTimeZone(locale: string | null): string {
@@ -233,7 +249,15 @@ function buildSituation(
     categories,
     toneIndicators: [...tone],
     multipleVoicesInferred: tone.has('multi-speaker'),
-    hasSignal: categories.length > 0 || tone.size > 0 || maxThreatIdx > 1,
+    // §C/§D — UNCLASSIFIED IS A SIGNAL. Without it the panel falls through to "No specific
+    // indicators detected yet", which reads as reassurance about audio nobody could read.
+    // (`maxThreatIdx > 1` used to mean medium-and-above; it is named now so inserting a level
+    // into THREAT_ORDER cannot silently change which levels count.)
+    hasSignal:
+      categories.length > 0 ||
+      tone.size > 0 ||
+      maxThreatIdx >= MEDIUM_IDX ||
+      maxThreatIdx === UNCLASSIFIED_IDX,
   };
 }
 
