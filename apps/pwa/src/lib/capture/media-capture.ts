@@ -18,6 +18,15 @@ export interface MediaCaptureOptions {
    *  emitted at `sequence` is the terminal one. Carries WHY, so the export can say so. */
   onTerminalFallback?: (sequence: number, reason: string) => void;
   onError?: (error: unknown) => void;
+  /**
+   * Brief 50 §D — the platform REFUSED a camera track and capture fell back to audio.
+   *
+   * Video is now requested for every source, so an audio-only capture means the device or the OS
+   * declined — never that we chose not to ask. That distinction is invisible in the stored record
+   * (both look like audio chunks), so it is declared here and travels to the coordinator surface,
+   * per the Brief 36 §D rule that a degradation is stated rather than inferred from an absence.
+   */
+  onVideoUnavailable?: (reason: string) => void;
 }
 
 /**
@@ -197,7 +206,10 @@ export class MediaCapture {
           log.error('camera constraint unavailable; relaxing', error);
         }
       }
+      // DECLARED, not just logged. Audio is the floor and it continues; what must not happen is
+      // a silent downgrade that reads later as "no camera was ever wanted".
       log.error('video capture unavailable; falling back to audio-only');
+      this.options.onVideoUnavailable?.('camera unavailable on this device or refused by the platform');
     }
     return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   }

@@ -66,12 +66,13 @@ describe('Brief 50 §A — capture is mode-independent', () => {
     });
   }
 
-  it('capture mode is chosen by activation SOURCE, not by Present mode', () => {
-    // The one legitimate divergence, pinned so it stays legible: covert activation keeps the
-    // camera off. That is a source-keyed decision about what the phone reveals, not a mode-keyed
-    // decision about what the app renders — and §0.1 confirmed video otherwise captures fine.
+  it('capture mode is the SAME for every source — no divergence left to drift', () => {
+    // There used to be one legitimate divergence: covert kept the camera off. It was corrected —
+    // the camera indicator is on the survivor's own phone and betrays nobody, and the video is
+    // for the support contact's dashboard. With that gone, capture has NO mode- or source-keyed
+    // branch at all, which is a stronger version of this file's property than it started with.
     const cfg = stripComments(readFileSync(join(SRC, 'lib/capture/config.ts'), 'utf8'));
-    expect(cfg).toMatch(/captureModeForSource\s*\(\s*source/);
-    expect(cfg).toMatch(/direct-tap/);
+    expect(cfg).toMatch(/return 'audio-video';/);
+    expect(cfg, 'capture mode branches on the source again').not.toMatch(/source\s*===/);
   });
 });

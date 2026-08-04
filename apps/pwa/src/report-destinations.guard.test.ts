@@ -72,8 +72,23 @@ describe('GROUP 1 [A] video capture defaults to the REAR camera', () => {
     expect(CAPTURE).toMatch(/getUserMedia\(\{ audio: true, video: false \}\)/);
   });
 
-  it('the covert path never acquires a camera at all (§0a)', () => {
-    expect(read('./lib/capture/config.ts')).toMatch(/source === 'direct-tap' \? 'audio-video' : 'audio'/);
+  it('EVERY path acquires a camera — covert included (corrects the §0a camera-light reading)', () => {
+    // THIS GUARD ASSERTED THE OPPOSITE UNTIL 2026-08-04, and the rule it protected was wrong.
+    //
+    // Covert capture withheld video "so nothing on the phone betrays that capture is running".
+    // The indicator is on the SURVIVOR'S OWN phone; she triggered the alert and knows capture is
+    // running, so there is nobody it betrays. The video is not for her screen — it is for the
+    // support contact deciding whether to come, and withholding it in the mode built for a phone
+    // in a pocket removed evidence from the situation that most needs it.
+    //
+    // The §0a facade rule is UNCHANGED and is guarded separately below: the Hidden UI shows
+    // nothing — no preview, no indicator, no recording chrome. This asserts what is RECORDED.
+    // What is RENDERED is a different layer and the covert no-regression guards cover it.
+    expect(read('./lib/capture/config.ts')).toMatch(/return 'audio-video';/);
+    expect(
+      read('./lib/capture/config.ts'),
+      'capture mode still branches on the activation source — covert would lose video again',
+    ).not.toMatch(/source === 'direct-tap' \?/);
   });
 
   it('capture is not gated or taxed — no auth, entitlement, or network check before recording', () => {

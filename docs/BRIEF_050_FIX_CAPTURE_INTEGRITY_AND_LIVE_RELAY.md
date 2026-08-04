@@ -39,6 +39,25 @@ answered on captured evidence.
 
 ## CORRECTIONS
 
+**BRIEF 050 §D and the 2026-08-04 posture ruling — BOTH corrected to read:**
+"Capture requests audio AND video for every activation source, Hidden included, unconditionally.
+The camera-light rationale is void: the indicator is on the survivor's own phone, she triggered
+the alert and knows capture is running, and there is nobody it betrays. The video exists for the
+support contact's dashboard, not for her screen. If a platform refuses a camera track, capture
+degrades to audio and the degradation is DECLARED — never decline to request it."
+Path: `apps/pwa/src/lib/capture/config.ts`
+
+*(This supersedes both the original §D reasoning AND the intermediate posture gate — video only
+when the device was face-down — which was a smaller version of the same mistake. The gate added a
+DeviceMotion dependency, an iOS permission prompt that would itself have breached the facade, and
+a state machine, all to withhold evidence from a support contact. Deleted entirely: no
+DeviceMotion, no face-down check, no screen-state check, no audio-only fallback by mode.*
+
+*The FACADE rule is unchanged and absolute. In Hidden the UI shows nothing — no preview, no
+indicator, no recording chrome. `captureModeForSource` chooses what is RECORDED, never what is
+RENDERED; those are different layers and the covert no-regression guards cover the second.
+Verified: the meditation facade renders no capture UI, and its guards pass unchanged.)*
+
 **BRIEF 050 (this brief's own framing) — corrected to read:**
 "Both observed defects are DOWNSTREAM, on the coordinator's playback surface. Capture is not
 mode-asymmetric: it diverges at exactly one line (`captureModeForSource`), keyed on activation

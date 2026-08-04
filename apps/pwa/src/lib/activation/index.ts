@@ -249,6 +249,15 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
     const capture = new MediaCapture({
       mode,
       chunkIntervalMs: CHUNK_INTERVAL_MS,
+      // Brief 50 §D — video is requested for EVERY source now, so audio-only means the platform
+      // refused. Declared to the coordinator surface rather than left to be inferred from an
+      // absence of video chunks, which is what "no camera was ever wanted" also looks like.
+      onVideoUnavailable: (reason) => {
+        // No upload needed to make this honest. Video is now requested for EVERY source, so an
+        // audio-only capture unambiguously means the platform refused — the coordinator surface
+        // states that from the chunk mime types alone, with no client signal to go stale or fail.
+        log.error('video unavailable; capture continues audio-only', reason);
+      },
       onChunk: (chunk) => {
         const seq = sequence;
         sequence += 1;

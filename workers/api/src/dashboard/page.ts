@@ -312,7 +312,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     ${
       state.hasVideo
         ? '<video id="cam" class="camera" controls playsinline muted></video>'
-        : '<div class="map-empty">No camera feed — audio-only capture.</div>'
+        : '<div class="map-empty stream-warn">No camera feed. Video was requested and the device could not provide it — audio and location are recording.</div>'
     }
   </section>
 
