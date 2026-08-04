@@ -29,7 +29,7 @@ function makeEnv(opts: { failAdvance: boolean }): { env: Env } {
   const db = {
     prepare(sql: string) {
       const stmt = {
-        bind: (...args: unknown[]) => ({
+        bind: (..._args: unknown[]) => ({
           async run() {
             // The halt check. This is the statement §A3 is about.
             if (sql.includes('SET cascadeStep')) {
@@ -129,7 +129,7 @@ describe('§A3 — an unreadable claim state SENDS', () => {
       if (!sql.includes('SET cascadeStep')) return s as never;
       return {
         ...s,
-        bind: (...args: unknown[]) => ({
+        bind: (..._args: unknown[]) => ({
           ...(s.bind(...args) as object),
           async run() {
             changes += 1;
