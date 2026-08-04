@@ -2754,8 +2754,11 @@ async function run() {
         process.execPath,
         [new URL('../../../scripts/worker-bundle-hash.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), '--build'],
         { encoding: 'utf8' },
-      ).trim().split('
-').pop().trim();
+      )
+        .trim()
+        .split(/\r?\n/)
+        .pop()
+        .trim();
       writeFileSync(
         new URL('./.acceptance-receipt.json', import.meta.url),
         JSON.stringify({ bundleHash, sha, at: Date.now(), checks: results.length, origin: ORIGIN }, null, 2),

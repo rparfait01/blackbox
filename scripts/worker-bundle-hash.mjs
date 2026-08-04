@@ -45,15 +45,21 @@ if (!existsSync(DIST)) {
 }
 
 /**
- * Hash EVERY emitted file, sorted, with names included.
+ * Hash every emitted CODE file, sorted, with names included — and exclude wrangler's generated
+ * README, which carries a BUILD TIMESTAMP.
  *
- * Not just `index.js`: wrangler emits sourcemaps and, for some configurations, additional
- * modules. A hash over one file would miss a change that lands in another and would report a
- * stale receipt as current — the failure direction that matters, because it silently skips the
- * suite on code nobody tested.
+ * The first version hashed literally every file, reasoning that a change landing in a sourcemap
+ * or an extra module must not be missed. That reasoning is right and is kept. What it missed is
+ * that `dist/README.md` opens with "generated at 2026-08-04T01:00:36.833Z" — so two builds of
+ * byte-identical source produced different hashes, and a receipt could never match anything.
+ * Pulling a clock into an identity makes the identity useless.
+ *
+ * Verified: `index.js` and `index.js.map` are byte-identical across consecutive builds; the
+ * README was the only variance.
  */
+const IGNORED = new Set(['README.md']);
 const files = readdirSync(DIST)
-  .filter((f) => statSync(path.join(DIST, f)).isFile())
+  .filter((f) => statSync(path.join(DIST, f)).isFile() && !IGNORED.has(f))
   .sort();
 
 if (files.length === 0) {
