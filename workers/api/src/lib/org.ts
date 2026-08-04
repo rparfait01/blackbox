@@ -8,6 +8,7 @@
 import { generateReadableCode } from './readable-code';
 
 import type { Env, EnrollmentCodeRow, OrgLicenseRow, OrganizationRow } from '../types';
+import { readConsistent } from './consistent-read';
 
 /**
  * Least-privilege role check. `admin` satisfies any requirement; `coordinator`
@@ -168,12 +169,25 @@ export async function getOrg(env: Env, orgId: string): Promise<OrganizationRow |
 export const MIN_ADMINS = 2;
 
 /** Count an org's ACTIVE admins (org_members role=admin, status=active). */
+/**
+ * READ FROM THE PRIMARY. This count GATES a user-visible refusal, so a stale replica makes the
+ * refusal a lie.
+ *
+ * The failure it fixes: an org adds its second admin, the write commits, the next request counts
+ * admins on a replica that has not caught up, and the org is told "Add a second admin before
+ * enrolling survivors" — immediately after adding one, with nothing they can do about it.
+ *
+ * Surfaced as an intermittent acceptance failure that passed in isolation and failed under load.
+ * The flake was the symptom; the defect was real. Same class as the Brief 37 chain head, and the
+ * same lesson: serializing callers cannot repair an eventually-consistent read.
+ */
 export async function countActiveAdmins(env: Env, orgId: string): Promise<number> {
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM org_members WHERE orgId = ? AND role = 'admin' AND status = 'active'",
-  )
-    .bind(orgId)
-    .first<{ n: number }>();
+  const row = await readConsistent(env, (db) =>
+    db
+      .prepare("SELECT COUNT(*) AS n FROM org_members WHERE orgId = ? AND role = 'admin' AND status = 'active'")
+      .bind(orgId)
+      .first<{ n: number }>(),
+  );
   return Number(row?.n ?? 0);
 }
 
