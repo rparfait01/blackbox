@@ -52,13 +52,40 @@ const VIDEO_BITS_PER_SECOND = 800_000;
 const AUDIO_BITS_PER_SECOND = 64_000;
 
 function pickMimeType(mode: CaptureMode): string {
-  // Prefer MP4/AAC so the recording is decodable in iOS Safari (which cannot
-  // play webm/opus) on the contact dashboard; fall back to webm/opus on browsers
-  // that only record webm (e.g. older Android Chrome), then the browser default.
+  // Prefer MP4/AAC so the recording is decodable in iOS Safari (which cannot play webm/opus) on
+  // the contact dashboard; fall back to webm/opus on browsers that only record webm, then the
+  // browser default.
+  //
+  // ═══ BRIEF 56 — WHY EVERY VIDEO CAPTURE IN PRODUCTION IS VP9/WEBM ══════════════════════════
+  //
+  // The MP4 candidate was `video/mp4;codecs=h264,mp4a.40.2`, and `h264` is not an ISO BMFF codec
+  // identifier — it is the WebRTC-style name. `MediaRecorder.isTypeSupported` does a codec-string
+  // match, so Chromium answers false for that string even on builds that record H.264/MP4
+  // perfectly well, and the ladder fell straight through to WebM/VP9.
+  //
+  // The consequence is not cosmetic. WebKit cannot decode VP9, and does not support the WebM
+  // container at all — so on an iOS coordinator's phone those captures are not merely un-live,
+  // they are UNPLAYABLE, live or on replay. Production holds 83 video chunks and every one of
+  // them is `video/webm; codecs=vp09.00.10.08`. Not one `video/mp4` chunk exists.
+  //
+  // The correct identifiers are `avc1.<profile><constraint><level>`. Baseline 3.0 is first
+  // because it is the most widely decodable, then Main, then the bare container for recorders
+  // that accept no codec parameter. The old string is KEPT at the end of the MP4 group rather
+  // than deleted: Safari has historically accepted it, and this ladder's rule is that
+  // availability outranks quality — a rung that might match somewhere costs nothing below the
+  // rungs that match correctly.
   const candidates =
     mode === 'audio-video'
-      ? ['video/mp4;codecs=h264,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-      : ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/webm'];
+      ? [
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4;codecs=avc1.4D401E,mp4a.40.2',
+          'video/mp4',
+          'video/mp4;codecs=h264,mp4a.40.2',
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm',
+        ]
+      : ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
   for (const type of candidates) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) {
       return type;

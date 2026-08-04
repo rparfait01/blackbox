@@ -120,7 +120,7 @@ export async function listReachableContacts(
 export async function listCascadeContacts(
   env: Env,
   event: { userId: string | null; userHash: string | null },
-): Promise<Array<{ id: string; displayName: string }>> {
+): Promise<Array<{ id: string; displayName: string; isEmergency?: boolean }>> {
   const base = await listReachableContacts(env, event);
   if (!event.userId) {
     return base;
@@ -130,7 +130,15 @@ export async function listCascadeContacts(
   )
     .bind(event.userId)
     .first<{ id: string; displayName: string }>();
-  return emergency ? [...base, { id: emergency.id, displayName: emergency.displayName }] : base;
+  // Brief 56 — THE RUNG IS MARKED, because the dispatcher had no way to know which step it was
+  // firing. `events.emergencyNotifiedAt` was READ by the 90-second feed-loss close and WRITTEN
+  // BY NOTHING — declared in migration 0015, referenced in exactly one query, set never. On
+  // production 0 of 16 events carried a value, so that close had never executed and could not.
+  // A phone seized or smashed fell through to the two-hour orphan timer instead, and the
+  // abnormal-termination declaration and seal enqueue that hang off it never ran.
+  return emergency
+    ? [...base, { id: emergency.id, displayName: emergency.displayName, isEmergency: true }]
+    : base;
 }
 
 /** Get-or-create the contact row for a user (used when a guardian accepts). */

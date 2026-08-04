@@ -205,7 +205,7 @@ async function dispatchStep(
   env: Env,
   eventId: string,
   ctx: ActivationCtx,
-  contact: { id: string; displayName: string },
+  contact: { id: string; displayName: string; isEmergency?: boolean },
   actorHash: string | null,
   step: number,
   via: CascadeDriver,
@@ -214,6 +214,16 @@ async function dispatchStep(
   // cascade schedule is observable independent of per-channel send latency.
   // `via` records WHICH driver fired it (see CascadeDriver).
   await audit(env, eventId, 'cascade_fired', actorHash, { step, via });
+  if (contact.isEmergency) {
+    // Brief 56 — THE WRITE THAT DID NOT EXIST. `closeFeedLostEvents` gates on this column, so
+    // without it the 90-second close for a phone that physically stopped — seized, smashed, out
+    // of battery — was unreachable code. Written the moment the rung fires rather than after the
+    // provider round trip: the fact being recorded is that the last rung was REACHED, and a
+    // delivery failure on it does not make that untrue.
+    await env.DB.prepare('UPDATE events SET emergencyNotifiedAt = ? WHERE id = ? AND emergencyNotifiedAt IS NULL')
+      .bind(Date.now(), eventId)
+      .run();
+  }
   const result = await dispatch(
     env,
     contact.id,

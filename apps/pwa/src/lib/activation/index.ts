@@ -354,19 +354,42 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
     active = session; // `active` now holds the in-page guard; `starting` is released in finally
     ensureVisibilityReacquire();
 
-    // ═══ BRIEF 55 §C — THE EVIDENCE MICROPHONE IS ACQUIRED FIRST. ═══════════════════════════
+    // ═══ BRIEF 55 §C — THE EVIDENCE MICROPHONE ASKS FIRST. ═════════════════════════════════
     //
-    // These two lines used to be the other way around, and the order was load-bearing in the
-    // worst way. `transcription.start()` opens Web Speech's OWN microphone — a second, entirely
-    // independent acquisition — and on iOS Safari holding it is enough to make the subsequent
-    // getUserMedia fail. So the subsystem whose output is a CONVENIENCE was taking the scarce
-    // device resource ahead of the subsystem that is the entire product, on every single
-    // activation.
+    // The standing rule: the subsystem whose output is optional never acquires a scarce device
+    // resource before the subsystem that is the product. `transcription.start()` opens Web
+    // Speech's OWN microphone — a second, entirely independent acquisition — and it used to sit
+    // one line ABOVE capture, so on every activation the transcript was first in the queue for
+    // the device and the recording was second.
     //
-    // A transcript with no recording behind it is a text file. A recording with no transcript is
-    // still evidence. Capture goes first, and if that costs us the transcript on some device,
-    // that is the correct trade rather than an accident of statement order.
-    const captureStarted = await startCaptureWithRetry(capture);
+    // ═══ BRIEF 56 — HOW I BROKE TRANSCRIPTION FIXING THAT, AND WHY THIS SHAPE ═══════════════
+    //
+    // Brief 55 implemented the ordering with `await`: capture was awaited, and transcription
+    // moved below it. That is correct about ORDER and wrong about CONTEXT.
+    //
+    // `SpeechRecognition.start()` requires a live user activation on Chromium. Awaiting
+    // getUserMedia — a permission prompt — spends the tap's gesture, so by the time
+    // transcription ran the activation was gone and Chromium answered `not-allowed`. This file
+    // already carried the warning, about a different call: "before any `await`, so it runs while
+    // the tap's user-gesture context is still valid (Chrome drops the gesture after awaits)". I
+    // moved a call across an await and did not re-read the sentence twenty lines above it.
+    //
+    // Measured on production: transcription was `active` on 4 of 6 events before Brief 55 and
+    // `unavailable` on 2 of 2 after, on the same device, with capture succeeding both times.
+    //
+    // THE FIX IS TO STOP USING `await` AS THE ORDERING MECHANISM. `capture.start()` is called
+    // first and NOT awaited, so its getUserMedia request is issued ahead of everything; then
+    // `transcription.start()` runs on the very next synchronous line, still inside the tap.
+    // Capture still asks first — which is all the rule requires — and both acquisitions happen
+    // while the gesture is alive. The `await` moves to where the RESULT is actually needed.
+    const capturePromise = startCaptureWithRetry(capture);
+
+    // STILL INSIDE THE USER GESTURE. Nothing may be awaited between the line above and this one.
+    // Guarded, because the failure is invisible in code review and silent at runtime — the only
+    // symptom is a transcript that never arrives.
+    transcription.start();
+
+    const captureStarted = await capturePromise;
     if (captureStarted) {
       onRecordingStarted(newSessionId);
       // Tone analysis attaches to the EXISTING capture stream — no second mic.
@@ -389,11 +412,6 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
       log.error('capture did not start; event is running with NO recording', { sessionId: newSessionId });
     }
 
-    // Transcription is started AFTER capture has had its turn at the microphone — see above.
-    // It runs regardless of whether capture succeeded: if the mic was denied to everything, it
-    // will say so, and its report is how the coordinator learns the reason rather than only the
-    // consequence.
-    transcription.start();
 
     // Run the descriptive classifier every ~5s for the entire active session,
     // independent of any UI interaction.

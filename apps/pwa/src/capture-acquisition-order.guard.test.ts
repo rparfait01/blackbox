@@ -39,8 +39,8 @@ describe('§C — capture acquires the microphone first', () => {
     expect(ACTIVATION, 'transcription start call site not found').toMatch(/transcription\.start\(\);/);
   });
 
-  it('capture.start comes BEFORE transcription.start in the activation sequence', () => {
-    const captureAt = ACTIVATION.indexOf('await startCaptureWithRetry(capture)');
+  it('capture ASKS before transcription does', () => {
+    const captureAt = ACTIVATION.indexOf('startCaptureWithRetry(capture)');
     const speechAt = ACTIVATION.indexOf('transcription.start();');
     expect(captureAt).toBeGreaterThan(-1);
     expect(speechAt).toBeGreaterThan(-1);
@@ -48,6 +48,30 @@ describe('§C — capture acquires the microphone first', () => {
       captureAt,
       'Web Speech would take the microphone before the recorder — the order that lost a real capture',
     ).toBeLessThan(speechAt);
+  });
+
+  it('BRIEF 56 — nothing is AWAITED between the two acquisitions', () => {
+    // The regression I shipped in Brief 55. Ordering by `await` is correct about order and wrong
+    // about context: awaiting getUserMedia spends the tap's user activation, and Chromium
+    // requires a live one for SpeechRecognition.start(). Transcription went from active on 4 of 6
+    // production events to unavailable on 2 of 2, with capture succeeding both times.
+    //
+    // `capture.start()` is issued first and NOT awaited; transcription starts on the next
+    // synchronous line; the await moves to where the result is needed. This asserts the window
+    // between them contains no await — the property that is invisible in review and silent at
+    // runtime.
+    const start = ACTIVATION.indexOf('const capturePromise = startCaptureWithRetry(capture)');
+    const speechAt = ACTIVATION.indexOf('transcription.start();');
+    expect(start, 'the capture call was renamed — this guard is asserting over nothing').toBeGreaterThan(-1);
+    expect(
+      ACTIVATION.slice(start, speechAt),
+      'an await between the capture request and transcription.start() spends the user gesture',
+      // Matched with a trailing space rather than a word-boundary escape: written through a shell
+      // heredoc, that escape arrived in this file as a literal backspace byte and lint caught it.
+      // Every real await in this window is followed by whitespace anyway.
+    ).not.toMatch(/await /);
+    // …and the result is still awaited, so a failed capture is still detected and declared.
+    expect(ACTIVATION).toMatch(/const captureStarted = await capturePromise;/);
   });
 
   it('a failed acquisition is RETRIED, because a denial and an unreleased track look identical', () => {

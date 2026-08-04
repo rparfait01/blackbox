@@ -487,3 +487,24 @@ closed normally with no evidence behind it at all.*
 evidence. Order that carries no syntactic weight — nothing looks wrong with the two lines swapped,
 nothing fails to compile, no test notices — is exactly the kind of property that needs a guard
 rather than a comment: `apps/pwa/src/capture-acquisition-order.guard.test.ts`.)*
+
+## A GUARD CANNOT ASSERT A BEHAVIOUR (ratified 2026-08-05)
+
+**"A guard cannot assert a behaviour. A catch that rethrows satisfies a guard asserting a
+try/catch exists while inverting what it guards. Behaviour is proven by a test that fails when the
+fix is reverted."**
+
+*(Origin: Brief 56 §A3. `advanceStep` had to SEND when it could not read whether a coordinator had
+claimed — fail-open on the alert path. A source-reading guard can assert that a `try/catch`
+surrounds the D1 call, and every wrong implementation satisfies that: a catch that rethrows, a
+catch that returns false, a catch that logs and falls through. Each one passes the guard and
+suppresses the dispatch, which is the failure the section exists to prevent.*
+
+*So it is a behavioural test: the D1 stub is made to throw and the test observes that the cascade
+driver survives and the step still goes. Its counterpart — `changes === 0` must still HALT — is
+tested too, because a fix that returned true unconditionally would pass the first test and destroy
+the halt entirely. Both were verified by reverting the fix and watching the test fail.*
+
+*This does not retire guards. It bounds them: guards assert STRUCTURE — what is imported, what is
+called, what is absent. Behaviour under a failure mode is only ever proven by producing the
+failure.)*

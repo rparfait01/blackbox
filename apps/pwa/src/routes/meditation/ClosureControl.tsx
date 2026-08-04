@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 
 import { submitClosureGesture } from '@/lib/closure';
+import {
+  holdTo,
+  idleGesture,
+  interrupt,
+  press,
+  progressOf,
+  release,
+  type GestureState,
+} from '@/lib/closure/gesture';
 
 /**
  * Closure control (Fix Brief 15 §E2) — the gesture that replaces the 3-digit
@@ -22,7 +31,6 @@ import { submitClosureGesture } from '@/lib/closure';
  * signal was sent. The control is NEVER labelled with the duress meaning; that
  * is taught privately at onboarding.
  */
-const HOLD_MS = 3000;
 
 export function ClosureControl({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
   const [mounted, setMounted] = useState(false);
@@ -38,8 +46,11 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   const [pressing, setPressing] = useState(false);
 
   const rafRef = useRef<number | null>(null);
-  const startRef = useRef<number | null>(null);
-  const firedRef = useRef(false);
+  // The whole gesture, as one value. Brief 56 moved the decision into `@/lib/closure/gesture`
+  // so it could be tested at all — inside this component it needed a DOM, a renderer and a
+  // testing-library stack this project does not have, which is why a duress signal that fired on
+  // every one of sixteen production closures was never caught by a test.
+  const gestureRef = useRef<GestureState>(idleGesture());
 
   useEffect(() => {
     if (open) {
@@ -50,7 +61,6 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
       setBusy(false);
       setProgress(0);
       setPressing(false);
-      firedRef.current = false;
       const id = requestAnimationFrame(() => setShown(true));
       return () => cancelAnimationFrame(id);
     }
@@ -74,8 +84,14 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    startRef.current = null;
     setPressing(false);
+  }
+
+  /** Apply whatever the machine decided. `null` means nothing leaves the device. */
+  function applyDecision(decision: ReturnType<typeof release>['decision']): void {
+    if (decision) {
+      void submit(decision.sat);
+    }
   }
 
   // Both gestures route through here and render whatever the ONE closure model
@@ -83,8 +99,9 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   // the model never reads it (decideConsent branches on ENGAGEMENT, not on the gesture)
   // — so at any moment both gestures produce the identical screen. §E2 invariant intact.
   async function submit(sat: boolean): Promise<void> {
-    if (firedRef.current || busy) return;
-    firedRef.current = true;
+    // The gesture machine already guarantees one decision per press; this guards a second press
+    // arriving while the first request is still in flight.
+    if (busy) return;
     setBusy(true);
     const result = await submitClosureGesture(sat, reason.trim());
     setBusy(false);
@@ -103,36 +120,87 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   }
 
   function tick(now: number): void {
-    if (startRef.current === null) return;
-    const elapsed = now - startRef.current;
-    setProgress(Math.min(elapsed / HOLD_MS, 1));
-    if (elapsed >= HOLD_MS) {
+    setProgress(progressOf(gestureRef.current, now));
+    const { state, decision } = holdTo(gestureRef.current, now);
+    gestureRef.current = state;
+    if (decision) {
       stopRaf();
-      void submit(true); // held the full duration → clean
+      applyDecision(decision);
       return;
     }
+    if (state.startedAt === null) return; // interrupted between frames
     rafRef.current = requestAnimationFrame(tick);
   }
 
   function onPointerDown(event: PointerEvent): void {
     event.preventDefault();
     if (busy || awaiting) return;
-    firedRef.current = false;
     setProgress(0);
-    startRef.current = performance.now();
+    gestureRef.current = press(performance.now());
     setPressing(true);
+    // ═══ BRIEF 56 — POINTER CAPTURE, AND WHY THIS ONE LINE WAS MISSING FOR 16 CLOSURES. ═════
+    //
+    // Without capture the element stops receiving pointer events the moment the touch drifts
+    // outside its bounds, and the browser fires `pointerleave` instead. The old code routed
+    // `pointerleave` into the release handler, so a finger that moved during a three-second hold
+    // ended the gesture — and ended it as DURESS.
+    //
+    // This is the same defect Brief 15 found on the covert trigger, on a different control:
+    // "a missing setPointerCapture on the hold". It was fixed there and not looked for here.
+    //
+    // Guarded, because a failure to capture is invisible on a desktop mouse and only appears on
+    // a real finger on a real phone.
+    try {
+      (event.target as Element | null)?.setPointerCapture?.(event.pointerId);
+    } catch {
+      // A browser that refuses capture is not a reason to refuse the gesture. The handlers below
+      // are written so that losing the pointer produces NOTHING rather than a false signal, so
+      // the worst case without capture is that she has to press again.
+    }
     rafRef.current = requestAnimationFrame(tick);
   }
 
+  /**
+   * A DELIBERATE RELEASE. This is the only path that can produce a duress signal.
+   *
+   * ═══ WHAT PRODUCTION ACTUALLY RECORDED ═══════════════════════════════════════════════════
+   *
+   * Sixteen closures. Sixteen `unsat`. Zero `sat`, ever, since the production reset — and one
+   * POST per closure, so nothing was overwriting a good value. `submit(true)` had never once
+   * executed on a real device.
+   *
+   * The cause was not this branch. It was that `pointerleave` and `pointercancel` were wired to
+   * this same handler, and NEITHER OF THEM IS A GESTURE. `pointercancel` is the browser taking
+   * the pointer away — a system gesture, a scroll heuristic, an incoming call. `pointerleave` is
+   * a finger drifting off a control it never left hold of. Both were being recorded as a survivor
+   * signalling that she is being forced, and the coordinator's email path for that is titled
+   * "DO NOT APPROVE".
+   *
+   * The early-release rule itself is unchanged and deliberate: a release before the threshold IS
+   * the duress signal, with no dead zone. That is a safety design decision and it is not mine to
+   * revise — see the report accompanying this change for the one open question about it.
+   */
   function onPointerUp(): void {
-    if (startRef.current === null) return;
-    const elapsed = performance.now() - startRef.current;
+    const { state, decision } = release(gestureRef.current, performance.now());
+    gestureRef.current = state;
     stopRaf();
-    // Released before the threshold and the clean-hold didn't already fire →
-    // this is the duress signal. No dead zone: any early release is UNSAT.
-    if (!firedRef.current && elapsed < HOLD_MS) {
-      void submit(false);
-    }
+    applyDecision(decision);
+  }
+
+  /**
+   * THE GESTURE WAS INTERRUPTED — NOT COMPLETED, AND NOT DELIBERATELY ABORTED.
+   *
+   * Submits NOTHING and leaves the alert exactly as it was, which is the protective direction:
+   * an open alert stays open, and she can press again. The alternative — treating an interruption
+   * as duress — manufactures a coercion report out of a browser event, and repeated duress
+   * escalates the event to TAMPERING, so the false signal compounds.
+   *
+   * `pointerleave` is deliberately NOT wired here or anywhere: with capture set it should not
+   * fire mid-hold, and if it does the gesture is still live and must not be torn down.
+   */
+  function onPointerInterrupted(): void {
+    gestureRef.current = interrupt(gestureRef.current).state;
+    stopRaf();
   }
 
   return (
@@ -195,8 +263,9 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
                 type="button"
                 onPointerDown={onPointerDown}
                 onPointerUp={onPointerUp}
-                onPointerLeave={onPointerUp}
-                onPointerCancel={onPointerUp}
+                // An interruption is not a signal. See onPointerInterrupted.
+                onPointerCancel={onPointerInterrupted}
+                onLostPointerCapture={onPointerInterrupted}
                 disabled={busy}
                 aria-label="Hold to request closure"
                 className="relative flex h-40 w-40 touch-none select-none items-center justify-center rounded-full border border-med-text/30 [-webkit-touch-callout:none] [-webkit-user-select:none]"
