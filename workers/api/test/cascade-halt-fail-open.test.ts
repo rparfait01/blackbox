@@ -129,7 +129,7 @@ describe('§A3 — an unreadable claim state SENDS', () => {
       if (!sql.includes('SET cascadeStep')) return s as never;
       return {
         ...s,
-        bind: (..._args: unknown[]) => ({
+        bind: (...args: unknown[]) => ({
           ...(s.bind(...args) as object),
           async run() {
             changes += 1;
