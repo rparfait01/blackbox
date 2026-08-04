@@ -456,3 +456,16 @@ path drifts from the first, and the drift is invisible until it is a live P0."**
 `requireMagicToken` learned to accept the `bbview` cookie, every route learned it except that one.
 The result was that no coordinator could take coordination and — because `isSupportEngaged()` is
 derived from the claim — every event closed on a single party with dual consent bypassed.)*
+
+## BUILD THE INSTRUMENT BEFORE THE INTERVENTION (ratified 2026-08-04)
+
+**"Build the instrument before the intervention. A count you cannot defend is worse than no count,
+because it gets planned against."**
+
+*(Origin: Brief 54 §0 asked for a per-assertion classification of ~770 guard assertions. Three
+regex passes produced 802, then 38, then 770-with-wrong-classes — each confidently wrong in a
+different direction. The instrument that could answer "does this assertion read source text" was
+the AST helper the brief itself specified, so it was built FIRST and used to measure. The class
+split turned out not to be automatable at all: `/STOP/` and `/return <Navigate/` are both regexes
+over source, and only intent distinguishes copy from render behaviour. Reported as judgment work
+with its cost, rather than as a fourth heuristic dressed as a table.)*

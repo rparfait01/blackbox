@@ -1,0 +1,592 @@
+[
+ {
+  "block": "report-destinations.guard.test.ts :: asks for the rear lens first, and never asks for the front one",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: a missing rear lens DEGRADES, it never fails — some capture beats none",
+  "cls": "BEHAVIOURAL",
+  "n": 4
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the covert path never acquires a camera at all (§0a)",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: capture is not gated or taxed — no auth, entitlement, or network check b",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: there is NO camera-selection UI or indicator anywhere — the survivor doe",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the only thing that ever leaves the device is the two-hash signature req",
+  "cls": "STRUCTURAL",
+  "n": 4
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the document is assembled and produced BY THE DEVICE — never fetched fro",
+  "cls": "STRUCTURAL",
+  "n": 3
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the UI says plainly that it is hers and that its privacy becomes hers",
+  "cls": "PROSE-COPY",
+  "n": 4
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the screen carries the SAME name as the entry that opened it",
+  "cls": "PROSE-COPY",
+  "n": 3
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the payload carries nothing that could link back to her",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: it states its destination and its irreversibility BEFORE she sends",
+  "cls": "PROSE-COPY",
+  "n": 3
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: it is never auto-populated from a capture or an event — that would re-id",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: evidence review has no download, export, or share path",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: what it opens is released when the screen closes — nothing is left resid",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: decrypted evidence does not survive backgrounding or being left untouche",
+  "cls": "BEHAVIOURAL",
+  "n": 4
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: nothing plays at her — opening is deliberate",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: playback starts only from a control she pressed — never from an effect o",
+  "cls": "BEHAVIOURAL",
+  "n": 4
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: access is unlimited — no counter, cap, or cooldown anywhere on the path",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: it points at the official report for the step that DOES produce a file",
+  "cls": "PROSE-COPY",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: (no it)",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: each entry exists with its clear label",
+  "cls": "PROSE-COPY",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: there is no FOURTH report door — her own words live inside the Official ",
+  "cls": "STRUCTURAL",
+  "n": 4
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: Settings offers EXACTLY three report entries",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the unarmed state is not tappable — nothing to press, so nothing to fail",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the overlays themselves also refuse when the flag is off — belt and brac",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: no facade surface names any of the three, or imports their screens",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-destinations.guard.test.ts :: the three screens are reachable ONLY from Settings — no route, no other ",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: deploy:pages runs the guarded script, never a bare wrangler pages deploy",
+  "cls": "CONFIGURAL",
+  "n": 2
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: pins the deploy target to the production branch (no Preview-only path)",
+  "cls": "CONFIGURAL",
+  "n": 3
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: §35 refuses to publish an artifact with no API origin in it",
+  "cls": "CONFIGURAL",
+  "n": 4
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: the production BUILD itself fails without a valid origin — not a warning",
+  "cls": "CONFIGURAL",
+  "n": 7
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: delegates currency to the hardened guard — no soft/inline worker path",
+  "cls": "CONFIGURAL",
+  "n": 3
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: fails loud (non-zero); the worker half is not a warn and not a skip",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: an unreachable/erroring endpoint fails closed, never swallowed to succes",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: verifies BOTH halves against the LIVE endpoints, cache-busted",
+  "cls": "CONFIGURAL",
+  "n": 5
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: prints success ONLY after both halves verify (the exit gate precedes it)",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: emits version.json at build time so the live build is fetchable",
+  "cls": "CONFIGURAL",
+  "n": 2
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: SW claims clients and purges outdated caches on activate",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: checks for a newer build on foreground/resume, not only on an interval",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: applies updates only while dormant and defers during a live alert",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "currency-guards.guard.test.ts :: NEVER renders an update banner/indicator — no tell in Hidden (§0a)",
+  "cls": "STRUCTURAL",
+  "n": 4
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: the coordinator poll has a terminal state and says so",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: the closure notice names the DTG, reusing the ONE formatter",
+  "cls": "PROSE-COPY",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: no unbounded setInterval poll survives anywhere on the page",
+  "cls": "BEHAVIOURAL",
+  "n": 4
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: 30s hidden, 3s visible on the coordinator view",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: visibilitychange polls immediately rather than waiting out the interval",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: exponential backoff 3/6/12/24/48 with a 60s cap",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: the fixed 3s retry is gone",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: there is an attempt ceiling, and giving up is visible",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: never reconnects on a closed event",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: a successful connection resets the ladder",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: stops on closure and slows when hidden",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: the last coordinates are never left looking current",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: backoff is jittered ±25%",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: the ceiling does not claim to protect the quota",
+  "cls": "PROSE-COPY",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: a live event gets generous headroom, and the first poll always passes",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: a closed event answers with an explicit terminal flag",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: the limit of the terminal payload is stated, not implied",
+  "cls": "PROSE-COPY",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: dashboard and notified HTML are served no-store",
+  "cls": "CONFIGURAL",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: records that a service worker is not involved",
+  "cls": "PROSE-COPY",
+  "n": 1
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: reports NOT MEASURED rather than inventing a number",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: alerts at 80%, at error level",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "dashboard-polling.guard.test.ts :: names the consequence rather than treating it as a capacity metric",
+  "cls": "PROSE-COPY",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the screen offers no way to type into or edit the record",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the panel is derived from the record on every render, so there is no edi",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the people fields are hard-coded empty — not merely unpopulated today",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: a signal outside the fixed mapping is dropped rather than bucketed by gu",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the mapping is a fixed table, so the same record always yields the same ",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the geometry module makes no network call at all",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the location panel is drawn as local SVG from the recorded coordinates",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the coordinates are shown, because they — not the drawing — are the reco",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: a travelled path is drawn ONLY when she actually moved beyond GPS noise",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the waveform is computed from the in-memory blob and never stored",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the audio context is always closed, so a review does not hold the audio ",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: a waveform that cannot be produced returns null instead of throwing — au",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: entries are labelled DDMMMYY@HH:MM, replacing the stored identifier",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the raw event id is never shown as the name of a recording",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: newest first is enforced HERE, not merely inherited from the server",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the summary, transcript and location rows ride along with the media",
+  "cls": "BEHAVIOURAL",
+  "n": 4
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: a Worker that predates those collections still yields a playable review",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: it is one column by default and two only when there is room",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the dashboard takes the full width while the list stays a narrow reading",
+  "cls": "BEHAVIOURAL",
+  "n": 1
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the transport targets are real buttons, not hover-only affordances",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: scrubbing works by touch — a pointer handler with touch scrolling disabl",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: an unseekable waveform says so instead of silently absorbing the tap",
+  "cls": "BEHAVIOURAL",
+  "n": 4
+ },
+ {
+  "block": "evidence-dashboard.guard.test.ts :: the duration is requested before playback, so seeking is available witho",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: the labels are display-only — the underlying field names are untouched",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: the identity middleware reads the platform role and an ACTIVE membership",
+  "cls": "STRUCTURAL",
+  "n": 3
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: a session is required before any level logic runs",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: every org-scoped handler takes its org from the session, not a body or p",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: the operator is the only level allowed to name an org",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: names no content table anywhere in the console routes",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: never reads the media bucket for content — only a liveness probe",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: reads events only as COUNTS, never as rows carrying incident detail",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: selects no name, email, phone or account id for an enrollee",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: the RosterRow shape itself admits no identifying field",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: judges readiness by the same deliverability rule the survivor’s own app ",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: mints only through createEnrollmentCode — no second generator",
+  "cls": "STRUCTURAL",
+  "n": 3
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: revocation applies the scope predicate INSIDE the update, not around it",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: seat removal delegates to leaveOrg, so min-2-admins cannot be bypassed",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: destructive actions require an explicit confirm:true",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: every console audit names the acting user — never null, never a literal",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: account deletion uses the CASCADING routine — the one that deletes R2 fi",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "console-boundary.guard.test.ts :: health fails closed: an unreachable PWA is a mismatch, never \"unknown\"",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: the verification page neither uploads nor persists anything",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: there is NO endpoint that accepts a report document — nothing to store i",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: the page states plainly that the file stays on the visitor’s device",
+  "cls": "PROSE-COPY",
+  "n": 2
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: it publishes the key + algorithm so a court can verify without the page",
+  "cls": "PROSE-COPY",
+  "n": 3
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: only the route registration references it — nothing else in the system d",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: the page imports nothing operational — it cannot reach the running syste",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: is loaded lazily, so it is not even in the hot path’s module graph",
+  "cls": "STRUCTURAL",
+  "n": 1
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: /verification 404s unless zero-knowledge custody is armed",
+  "cls": "BEHAVIOURAL",
+  "n": 2
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: every report endpoint 404s while the flag is down",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: no org or admin route can reach a report",
+  "cls": "STRUCTURAL",
+  "n": 2
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: report reads are owner-scoped by construction",
+  "cls": "STRUCTURAL",
+  "n": 3
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: uses the DEDICATED report key, and never the export-manifest key",
+  "cls": "STRUCTURAL",
+  "n": 3
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: the private report key never leaves the Worker",
+  "cls": "STRUCTURAL",
+  "n": 3
+ },
+ {
+  "block": "report-leaf.guard.test.ts :: the sign endpoint accepts hashes only — never report content",
+  "cls": "BEHAVIOURAL",
+  "n": 3
+ }
+]
