@@ -2742,11 +2742,20 @@ async function run() {
       // commit?" but "has the code under test changed since I proved it green?" — and a
       // docs-only commit changes the SHA while changing nothing this suite can observe. That
       // cost 1,481 requests once; it is why the receipt names the artifact.
+      // `--build` is NOT optional here, and leaving it off was a correctness defect rather than
+      // a slow path. Without it this hashed whatever `dist` happened to be lying on disk — which
+      // on its first real use was a build from HOURS earlier, predating the very changes the
+      // suite had just tested. A receipt naming a bundle that was never exercised is worse than
+      // no receipt: the next push skips the suite on the strength of it.
+      //
+      // Check 0 has already proven the DEPLOYED build is this commit, so a fresh local build of
+      // the same commit is a fair identity for what was tested.
       const bundleHash = execFileSync(
         process.execPath,
-        [new URL('../../../scripts/worker-bundle-hash.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')],
+        [new URL('../../../scripts/worker-bundle-hash.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), '--build'],
         { encoding: 'utf8' },
-      ).trim();
+      ).trim().split('
+').pop().trim();
       writeFileSync(
         new URL('./.acceptance-receipt.json', import.meta.url),
         JSON.stringify({ bundleHash, sha, at: Date.now(), checks: results.length, origin: ORIGIN }, null, 2),
