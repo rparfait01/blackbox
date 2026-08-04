@@ -124,7 +124,7 @@ export class TranscriptionService {
     if (!Ctor) {
       // NOT a silent no-op. The browser cannot transcribe; say so, and keep recording.
       log.debug('SpeechRecognition unsupported; transcription disabled');
-      this.report('unavailable', 'This browser cannot transcribe speech. Audio is still recording.');
+      this.report('unavailable', 'This browser cannot transcribe speech. Recording is a separate subsystem and is reported separately.');
       return;
     }
     this.active = true;
@@ -147,11 +147,21 @@ export class TranscriptionService {
           // recognition opens its OWN mic and can lose that race with the recorder. Whatever the
           // cause, the coordinator must not read the result as silence.
           const terminal = event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture';
+          // BRIEF 55 §A1 — THE OLD MESSAGE ASSERTED SOMETHING THIS MODULE CANNOT KNOW.
+          //
+          // Every one of these strings ended "Audio is still recording." On the covert event that
+          // produced Brief 55 that sentence was FALSE and it was stored: the same OS denial that
+          // refused Web Speech a microphone had refused the recorder one, so the field a
+          // coordinator reads for reassurance was written by the subsystem least able to check.
+          //
+          // Transcription has no visibility into the recorder. It reports its OWN state and stops
+          // there; whether audio is being captured is answered by the chunk count, on the server,
+          // where it is observed rather than assumed.
           this.report(
             terminal ? 'unavailable' : 'degraded',
             terminal
-              ? 'Speech transcription could not access the microphone. Audio is still recording.'
-              : `Speech transcription error (${event.error}). Audio is still recording.`,
+              ? 'Speech transcription could not access the microphone. This does not by itself say whether audio is recording — a denial that broad often takes the recorder too.'
+              : `Speech transcription error (${event.error}).`,
           );
         }
       };
@@ -169,7 +179,7 @@ export class TranscriptionService {
       this.recognition = recognition;
     } catch (error) {
       log.error('speech recognition start failed', error);
-      this.report('unavailable', 'Speech transcription could not start. Audio is still recording.');
+      this.report('unavailable', 'Speech transcription could not start. Recording is a separate subsystem and is reported separately.');
       this.active = false;
     }
   }

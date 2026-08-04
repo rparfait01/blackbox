@@ -469,3 +469,21 @@ the AST helper the brief itself specified, so it was built FIRST and used to mea
 split turned out not to be automatable at all: `/STOP/` and `/return <Navigate/` are both regexes
 over source, and only intent distinguishes copy from render behaviour. Reported as judgment work
 with its cost, rather than as a fourth heuristic dressed as a table.)*
+
+## THE PRODUCT TAKES THE SCARCE RESOURCE FIRST (ratified 2026-08-04)
+
+**"The subsystem whose output is optional never acquires a scarce device resource before the
+subsystem that is the product."**
+
+*(Origin: Brief 55 §C. `transcription.start()` sat one line above `capture.start()` in the
+activation sequence. Web Speech opens its OWN microphone — a second, wholly independent
+acquisition — and on iOS Safari holding it is enough to make the following getUserMedia fail. So
+on every activation ever shipped, the transcript was first in the queue for the device and the
+recording was second. A covert event then ran 74 seconds and stored ZERO chunks: the OS refused
+the page a microphone, MediaRecorder was never constructed, and the alert dispatched, cascaded and
+closed normally with no evidence behind it at all.*
+
+*A transcript with no recording behind it is a text file. A recording with no transcript is still
+evidence. Order that carries no syntactic weight — nothing looks wrong with the two lines swapped,
+nothing fails to compile, no test notices — is exactly the kind of property that needs a guard
+rather than a comment: `apps/pwa/src/capture-acquisition-order.guard.test.ts`.)*

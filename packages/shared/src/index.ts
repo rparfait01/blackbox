@@ -7,5 +7,6 @@ export * from './trust-roots';
 export * from './report-verify';
 export * from './time';
 export * from './lifecycle';
+export * from './threat-vocabulary';
 
 export { deviceCanonical } from './device-canonical';

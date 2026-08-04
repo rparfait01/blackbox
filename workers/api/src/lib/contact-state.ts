@@ -8,7 +8,7 @@
  * render of GET /c/:id (the no-JS fallback), so the two never drift.
  */
 
-import { formatDtg } from '@blackbox/shared';
+import { formatDtg, THREAT_ORDER as SHARED_THREAT_ORDER } from '@blackbox/shared';
 import type { Env } from '../types';
 
 const TRAIL_WINDOW_MS = 5 * 60 * 1000; // last 5 minutes of positions
@@ -121,7 +121,10 @@ export interface Situation {
  * was not an option: `indexOf` returns -1 for an unlisted level, which collapsed unclassified
  * silently into `unknown` — the exact erasure this section exists to stop.
  */
-const THREAT_ORDER = ['unknown', 'unclassified', 'low', 'medium', 'high', 'critical'];
+// Brief 55 §D — one vocabulary, defined in @blackbox/shared and read by every surface that
+// renders a classification. It used to be defined here AND again in the review page, and the two
+// copies disagreed about whether `unclassified` exists.
+const THREAT_ORDER = SHARED_THREAT_ORDER;
 /** Index of 'medium' — the point at which the level ALONE constitutes a signal. */
 const MEDIUM_IDX = THREAT_ORDER.indexOf('medium');
 const UNCLASSIFIED_IDX = THREAT_ORDER.indexOf('unclassified');

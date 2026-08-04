@@ -80,6 +80,13 @@ export const ALERT_TYPES = [
   'chain_append_failed',
   'audit_write_failed',
   'delivery_record_failed',
+  // Brief 55 §A2 — AN OPEN EVENT THAT HAS RECEIVED NO CAPTURE AT ALL.
+  //
+  // The condition the product exists to prevent, and it presented as a working alert: dispatched,
+  // cascaded, heartbeating, closing normally, with zero chunks ever stored. Nothing else on this
+  // list describes "the alert worked and the evidence does not exist", which is why it ran for 74
+  // seconds without anyone being told.
+  'event_capturing_nothing',
 ] as const;
 
 export type AlertType = (typeof ALERT_TYPES)[number];

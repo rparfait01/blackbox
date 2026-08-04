@@ -497,8 +497,29 @@ function Dashboard({
                 fallback="Not recorded — the system never names a person."
               />
               <Field label="Tone" items={summary.tone} render={toneLabel} />
-              <Field label="Weapon(s)" items={summary.weapons} />
-              <Field label="Danger(s)" items={summary.dangers} />
+              {/* ═══ BRIEF 55 §D3 — WHAT AN EMPTY FIELD IS ALLOWED TO SAY ══════════════════
+                  These two read "Weapon(s)" and "Danger(s)" with a fallback of "Not recorded.",
+                  and that combination made a specific false statement. A capture whose transcript
+                  contained "I'm gonna cut your throat" rendered `WEAPON(S): Not recorded` — which
+                  a survivor reads as NOTHING LIKE THAT HAPPENED, when what actually happened is
+                  that the detection had no entry for it.
+
+                  "Not recorded" describes the world. "Not established from audio" describes the
+                  instrument, which is the only thing this page has ever been able to speak about.
+                  The field names say REFERENCES and SIGNALS for the same reason: they are claims
+                  about language that was heard, never claims that a weapon was in the room. The
+                  survivor corroborates what was present; the system records only what it heard,
+                  and it must never upgrade an implication into a confirmation. */}
+              <Field
+                label="Weapon references"
+                items={summary.weapons}
+                fallback="Not established from audio — no weapon was referred to in language the detection could read."
+              />
+              <Field
+                label="Danger signals"
+                items={summary.dangers}
+                fallback="Not established from audio — no danger category was detected in what could be read."
+              />
             </dl>
             {summary.recordedNotes.length > 0 ? (
               <div className="mt-3 border-t border-med-text/10 pt-3">
@@ -728,7 +749,17 @@ function Field({
                 className="rounded border border-med-text/20 bg-med-text/5 px-2 py-0.5 text-med-text/80"
               >
                 {render ? render(i.label) : i.label}
-                {i.observations > 1 ? <span className="ml-1 text-med-text/40">×{i.observations}</span> : null}
+                {/* §D2 — the count is how many 5-second classification ticks carried this
+                    category, NOT how many times it was said. Twelve ticks of one latched match
+                    rendered as "×12" reads as twelve incidents, which is the inflation that
+                    turned a single word into twenty-four dangers. The number is still useful —
+                    a category present throughout differs from one that fired once — so it is
+                    kept and LABELLED rather than dropped or left to be misread. */}
+                {i.observations > 1 ? (
+                  <span className="ml-1 text-med-text/40" title="Number of 5-second classification intervals in which this category was present">
+                    · in {i.observations} intervals
+                  </span>
+                ) : null}
               </span>
             ))}
           </span>

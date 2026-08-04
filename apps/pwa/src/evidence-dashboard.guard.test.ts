@@ -88,8 +88,23 @@ describe('[A] nothing on this screen infers, asserts, or names a person', () => 
   });
 
   it('the mapping is a fixed table, so the same record always yields the same panel', () => {
-    expect(SUMMARY).toMatch(/const WEAPON_CATEGORIES = new Set\(/);
-    expect(SUMMARY).toMatch(/const DANGER_CATEGORIES = new Set\(/);
+    // BRIEF 55 §D — the tables moved to @blackbox/shared and this guard follows them there.
+    // It used to assert `const WEAPON_CATEGORIES = new Set(` in THIS file, which would now pass
+    // only if the review page re-declared its own copy — the exact thing §D removed. What the
+    // property was ever about is that the mapping is a FIXED TABLE rather than a heuristic, and
+    // that is still checkable; where it is declared was never the point.
+    expect(SUMMARY).toMatch(/WEAPON_CATEGORIES/);
+    expect(SUMMARY).toMatch(/DANGER_CATEGORIES/);
+    expect(SUMMARY).toMatch(/from '@blackbox\/shared'/);
+  });
+
+  it('§D2 — the panel renders the CATEGORY, never a matched dictionary token', () => {
+    // The defect this replaced: rendering `cat.matches` put the word `don't` on a survivor's
+    // evidence page twenty-four times, from a single occurrence in the transcript, beside a
+    // weapon field reading "Not recorded". A stopword rendered as a danger spends the
+    // credibility of every other field on the page.
+    expect(SUMMARY).toMatch(/bucket\.push\(\{ label: categoryLabel\(cat\.category\)/);
+    expect(SUMMARY, 'the matched-term list must not reach the panel').not.toMatch(/for \(const term of terms\)/);
   });
 });
 

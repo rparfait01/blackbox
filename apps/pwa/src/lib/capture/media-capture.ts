@@ -291,9 +291,32 @@ export class MediaCapture {
       }
       this.videoSink = null;
     }
+    // ═══ BRIEF 55 §C — EVERY TRACK IS STOPPED, AND THE RELEASE IS VERIFIED. ═════════════════
+    //
+    // Dropping the recorder reference does NOT release the device. Only `track.stop()` does, and
+    // only per track — a stream carrying audio and video holds two, and stopping one leaves the
+    // other live. A live device test then triggered a second capture thirteen seconds after
+    // closing the first and was refused both a microphone and a camera.
+    //
+    // So this no longer trusts the loop. It re-reads `readyState` afterwards and says so when a
+    // track is still live, because "we called stop on everything" and "everything is released"
+    // are different statements and only the second one is what the next capture needs. A track
+    // that refuses to end is the signature of a release defect, and it must be distinguishable
+    // in the log from a permission denial — those have opposite fixes.
     if (this.mediaStream) {
-      for (const track of this.mediaStream.getTracks()) {
-        track.stop();
+      const tracks = this.mediaStream.getTracks();
+      for (const track of tracks) {
+        try {
+          track.stop();
+        } catch (error) {
+          log.error('track stop failed', { kind: track.kind, error });
+        }
+      }
+      const stillLive = tracks.filter((t) => t.readyState === 'live');
+      if (stillLive.length > 0) {
+        log.error('RELEASE DEFECT: tracks still live after stop()', {
+          kinds: stillLive.map((t) => t.kind),
+        });
       }
       this.mediaStream = null;
     }

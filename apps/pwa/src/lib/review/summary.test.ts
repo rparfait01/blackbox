@@ -21,12 +21,31 @@ function obs(over: Partial<RecordedObservation> = {}): RecordedObservation {
 }
 
 describe('a field shows only what actually fired', () => {
-  it('a weapon keyword that fired appears verbatim under Weapon(s)', () => {
+  // BRIEF 55 §D2 — THIS TEST USED TO ASSERT THE OPPOSITE, and it was right about the mechanism
+  // and wrong about the goal. It read "a weapon keyword that fired appears VERBATIM under
+  // Weapon(s)" and pinned `['knife']`. Rendering the matched token is what produced
+  // "DANGER(S): don't x12 . dont x12" on a real survivor's evidence page from a single word.
+  // The category is the finding; the token is how the finding was reached.
+  it('a fired weapon category is reported by its published CATEGORY name, not its matched token', () => {
     const panel = buildSummaryPanel([
       obs({ matchedCategories: [{ category: 'weapon', matches: ['knife'], weight: 3 }] }),
     ]);
-    expect(panel.weapons.map((w) => w.label)).toEqual(['knife']);
+    expect(panel.weapons.map((w) => w.label)).toEqual(['Weapon reference']);
     expect(panel.empty).toBe(false);
+  });
+
+  it('a stopword match renders ONE category line, never the token and never once per tick', () => {
+    // The exact shape of the production record that produced "don't x12 . dont x12": one word,
+    // matched against two dictionary entries by apostrophe normalisation, re-recorded by twelve
+    // classification ticks.
+    const twelveTicks = Array.from({ length: 12 }, (_, i) =>
+      obs({ timestamp: 1_000 + i * 5_000, matchedCategories: [{ category: 'restraint', matches: ["don't", 'dont'], weight: 3 }] }),
+    );
+    const panel = buildSummaryPanel(twelveTicks);
+    expect(panel.dangers.map((d) => d.label)).toEqual(['Restraint language']);
+    expect(panel.dangers).toHaveLength(1);
+    // No token from the dictionary reaches the survivor's page.
+    expect(JSON.stringify(panel)).not.toMatch(/don'?t/);
   });
 
   it('no weapon keyword → Weapon(s) is EMPTY, not "none detected"', () => {
@@ -34,8 +53,8 @@ describe('a field shows only what actually fired', () => {
       obs({ matchedCategories: [{ category: 'violence', matches: ['hit'], weight: 2 }] }),
     ]);
     expect(panel.weapons).toEqual([]);
-    // ...and the danger signal that DID fire is still reported.
-    expect(panel.dangers.map((d) => d.label)).toEqual(['hit']);
+    // ...and the danger signal that DID fire is still reported, by category.
+    expect(panel.dangers.map((d) => d.label)).toEqual(['Violence language']);
   });
 
   it('an entirely empty record reports empty rather than inventing a baseline', () => {
@@ -61,9 +80,16 @@ describe('a field shows only what actually fired', () => {
     expect(panel.weapons).toEqual([]);
   });
 
-  it('a fired category with no recorded term still reports the category — presence is never dropped', () => {
+  it('a fired category with no recorded term still reports it — presence is never dropped', () => {
+    // Unchanged in intent: a category that fired is reported whether or not a term came with it.
+    // It simply no longer matters, because the term was never what got rendered.
     const panel = buildSummaryPanel([obs({ matchedCategories: [{ category: 'weapon', matches: [], weight: 3 }] })]);
-    expect(panel.weapons.map((w) => w.label)).toEqual(['weapon']);
+    expect(panel.weapons.map((w) => w.label)).toEqual(['Weapon reference']);
+  });
+
+  it('an unmapped category still renders — under its own key rather than silently vanishing', () => {
+    const panel = buildSummaryPanel([obs({ matchedCategories: [{ category: 'pain', matches: [], weight: 1 }] })]);
+    expect(panel.dangers.map((d) => d.label)).toEqual(['Pain expressed']);
   });
 });
 
@@ -131,14 +157,14 @@ describe('the panel develops with the replay position', () => {
 
   it('only what had been observed by the cutoff is shown', () => {
     const early = buildSummaryPanel(record, 5_000);
-    expect(early.weapons.map((w) => w.label)).toEqual(['knife']);
+    expect(early.weapons.map((w) => w.label)).toEqual(['Weapon reference']);
     expect(early.dangers).toEqual([]);
   });
 
   it('the whole event is shown with no cutoff', () => {
     const all = buildSummaryPanel(record);
-    expect(all.weapons.map((w) => w.label)).toEqual(['knife']);
-    expect(all.dangers.map((d) => d.label)).toEqual(['hit']);
+    expect(all.weapons.map((w) => w.label)).toEqual(['Weapon reference']);
+    expect(all.dangers.map((d) => d.label)).toEqual(['Violence language']);
   });
 });
 
@@ -156,11 +182,14 @@ describe('malformed rows never deny her the panel', () => {
     expect(buildSummaryPanel([broken]).empty).toBe(true);
   });
 
-  it('blank terms and blank tone signals are ignored rather than rendered as empty chips', () => {
+  it('blank tone signals are ignored rather than rendered as empty chips', () => {
+    // §D2 — the matched-term list is no longer rendered at all, so blank/whitespace TERMS can no
+    // longer reach the page by any route. Tone still renders its own recorded strings, so that
+    // half of the original assertion is the half that still has something to protect.
     const panel = buildSummaryPanel([
       obs({ matchedCategories: [{ category: 'weapon', matches: ['  ', 'bat'], weight: 1 }], toneIndicators: ['', 'whisper'] }),
     ]);
-    expect(panel.weapons.map((w) => w.label)).toEqual(['bat']);
+    expect(panel.weapons.map((w) => w.label)).toEqual(['Weapon reference']);
     expect(panel.tone.map((t) => t.label)).toEqual(['whisper']);
   });
 });

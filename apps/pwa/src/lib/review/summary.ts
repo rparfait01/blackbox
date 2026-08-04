@@ -29,6 +29,13 @@
  * renders identical values. Evidence that drifts between viewings is not evidence.
  */
 
+import {
+  categoryLabel,
+  DANGER_CATEGORIES,
+  THREAT_ORDER,
+  WEAPON_CATEGORIES,
+} from '@blackbox/shared';
+
 /** One observation as it was recorded, mirroring the server's ReportClassification. */
 export interface RecordedObservation {
   timestamp: number;
@@ -41,7 +48,7 @@ export interface RecordedObservation {
 
 /** One line in a summary field, with the evidence that put it there. */
 export interface SummaryItem {
-  /** The recorded term, verbatim — never rephrased. */
+  /** The published category name — the same words the coordinator surface uses (§D). */
   label: string;
   /** When it was first observed (UTC ms), so she can see where in the recording it came from. */
   firstAt: number;
@@ -79,17 +86,14 @@ export interface SummaryPanel {
 }
 
 /**
- * Which recorded categories belong to which field. A category NOT listed here is deliberately
- * not shown rather than guessed into a bucket: an unmapped signal would otherwise land in
- * "Dangers" and read as a finding the record never made.
+ * Brief 55 §D — the bucket tables and the threat ranking are IMPORTED, not declared.
  *
- * Mapping is a fixed table, not a heuristic, so the same record always produces the same
- * panel. Categories come from the shipped detection taxonomy (ThreatCategory).
+ * They used to be declared here, and the local `THREAT_ORDER` omitted `unclassified` entirely.
+ * `indexOf` returned -1 for it, so an event whose every observation was unclassified reported NO
+ * threat level at all on the survivor's own review page — while the coordinator dashboard, using
+ * its own complete copy, showed NOT CLASSIFIED. A ranking that silently drops a level is worse
+ * than no ranking.
  */
-const WEAPON_CATEGORIES = new Set(['weapon']);
-const DANGER_CATEGORIES = new Set(['violence', 'restraint', 'pain', 'medical']);
-
-const THREAT_ORDER = ['unknown', 'low', 'medium', 'high', 'critical'];
 
 /** Collect one term per distinct label, keeping the earliest sighting and a count. */
 function collect(entries: Array<{ label: string; at: number }>): SummaryItem[] {
@@ -133,18 +137,31 @@ export function buildSummaryPanel(observations: RecordedObservation[], throughMs
           ? dangerTerms
           : null;
       if (!bucket) continue;
-      // The matched dictionary entries are the evidence; the category name alone would be a
-      // classification of her situation rather than a record of what was heard. If a category
-      // fired with no term recorded, fall back to the category so the signal is not silently
-      // dropped — presence is reported, never invented.
-      const terms = (cat.matches ?? []).filter((m) => typeof m === 'string' && m.trim());
-      if (terms.length === 0) {
-        bucket.push({ label: cat.category, at: o.timestamp });
-        continue;
-      }
-      for (const term of terms) {
-        bucket.push({ label: term.trim(), at: o.timestamp });
-      }
+      // ═══ BRIEF 55 §D2 — THE CATEGORY IS THE FINDING. THE TOKEN IS NOT. ═══════════════════
+      //
+      // This used to push every matched dictionary entry as its own line, on the reasoning that
+      // the terms are the evidence and a category name would be "a classification of her
+      // situation rather than a record of what was heard." A real capture showed what that
+      // produces on a survivor's evidence page:
+      //
+      //     DANGER(S):  don't ×12  ·  dont ×12
+      //
+      // The transcript behind it contained the word `don't` exactly ONCE — in "People don't shut
+      // up I'm gonna cut your throat." Apostrophe normalisation matched that single token against
+      // both the `don't` and `dont` dictionary entries, and twelve classification ticks each
+      // re-recorded the same latched match. One word became twenty-four dangers, and it sat
+      // directly above a WEAPON(S) field reading "Not recorded."
+      //
+      // A stopword rendered as a danger does not merely add noise. It spends the credibility of
+      // every other field on the page, and the fields it discredits are the ones she would take
+      // to a court or a police station.
+      //
+      // So: one line per CATEGORY per observation, labelled with the published category name —
+      // the same words the coordinator dashboard has always used. That is what makes the two
+      // surfaces agree without either of them computing anything, and it removes the stopwords,
+      // the apostrophe double-count and the tick inflation in a single move, because none of
+      // them were ever findings. They were how a finding got made.
+      bucket.push({ label: categoryLabel(cat.category), at: o.timestamp });
     }
 
     for (const tone of o.toneIndicators ?? []) {

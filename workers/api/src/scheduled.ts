@@ -19,7 +19,7 @@ import { runIntegrityScan } from './lib/integrity';
 import { closeFeedLostEvents, closeOrphanedEvents, runEscalation } from './lib/closure-timeout';
 import { sweepExpiredCanaryEvents } from './lib/canary';
 import { alertOnUnsealed, drainSealQueue } from './lib/seal';
-import { drainAlertSummaries } from './lib/operator-alert';
+import { drainAlertSummaries, operatorAlert } from './lib/operator-alert';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -71,6 +71,55 @@ export async function escalateDarkDevices(env: Env): Promise<void> {
   }
 }
 
+/**
+ * Brief 55 §A2 — AN OPEN EVENT THAT HAS RECEIVED NO CAPTURE IS AN ERROR-LEVEL OPERATOR ALERT.
+ *
+ * A live device test produced an event that dispatched, cascaded, heartbeated, took 8 location
+ * fixes and closed cleanly after 74 seconds, having stored ZERO chunks — the OS had refused the
+ * page a microphone. Every existing monitor passed it: it was not dark, not orphaned, not
+ * unsealed, not failing delivery. The one thing wrong with it was the only thing that mattered,
+ * and nothing was watching for it.
+ *
+ * ═══ WHY THE GRACE PERIOD, AND WHY IT IS NOT LONGER ══════════════════════════════════════════
+ *
+ * The first chunk cannot exist at t=0: permission, acquisition, the first recorder timeslice and
+ * the upload all have to happen. Below the threshold "no chunks" means "not yet" and alerting
+ * would be noise that trains an operator to ignore this. Above it, "not yet" has stopped being a
+ * plausible reading.
+ *
+ * 45 seconds is deliberately shorter than any of this file's other thresholds. Every other job
+ * here reports a degraded event; this one reports an event with no evidence behind it at all,
+ * and the window in which that can still be acted on is the window the incident is happening in.
+ *
+ * ═══ THIS ADDS NO LATENCY TO THE ALERT PATH (§E3) ════════════════════════════════════════════
+ *
+ * It runs on the cron, reads its own rows, and touches nothing the trigger, the dispatch or the
+ * capture upload wait on. The alert path never asks this question; this asks it about the alert
+ * path, afterwards, from outside.
+ */
+export const NO_CAPTURE_GRACE_MS = 45_000;
+
+export async function alertOnEventsCapturingNothing(env: Env): Promise<void> {
+  const cutoff = Date.now() - NO_CAPTURE_GRACE_MS;
+  const { results } = await env.DB.prepare(
+    `SELECT e.id, e.createdAt FROM events e
+      WHERE e.status = 'active'
+        AND e.createdAt < ?
+        AND NOT EXISTS (SELECT 1 FROM chunks_index c WHERE c.eventId = e.id)`,
+  )
+    .bind(cutoff)
+    .all<{ id: string; createdAt: number }>();
+  for (const row of results ?? []) {
+    await operatorAlert(
+      env,
+      'event_capturing_nothing',
+      `event ${row.id} has been ACTIVE for ${Math.round((Date.now() - row.createdAt) / 1000)}s and has ` +
+        'stored ZERO capture chunks. The alert dispatched; the evidence does not exist. Most likely the ' +
+        'device was refused microphone access (see Brief 55 §A/§C).',
+    );
+  }
+}
+
 export const scheduled = async (
   _controller: ScheduledController,
   env: Env,
@@ -95,6 +144,9 @@ export const scheduled = async (
       // Brief 20 §2: orphan safeguard — close any active event whose owner is gone or that
       // is open past the absolute safety ceiling, so it cannot outlive the ability to close it.
       await boundedJob('orphan', () => closeOrphanedEvents(env));
+      // Brief 55 §A2 — an active event with no capture at all. Placed BEFORE the integrity and
+      // seal jobs because it is about a live incident rather than a stored one.
+      await boundedJob('no_capture', () => alertOnEventsCapturingNothing(env));
       await boundedJob('integrity', () => runIntegrityScan(env, workerOrigin(env)));
       // Brief 35 §C — TTL backstop for a canary run that died before its explicit purge.
       await boundedJob('canary_ttl', () => sweepExpiredCanaryEvents(env).then(() => undefined));

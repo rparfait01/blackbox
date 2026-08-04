@@ -10,7 +10,7 @@
  * audio + live updates require JS.
  */
 
-import { formatDtg, formatLocalClock } from '@blackbox/shared';
+import { CATEGORY_LABEL, categoryLabel, formatDtg, formatLocalClock } from '@blackbox/shared';
 import type { ContactState } from '../lib/contact-state';
 
 /** Which role-scoped view to render (Fix Brief 3). */
@@ -76,15 +76,23 @@ function transcriptHtml(state: ContactState): string {
     // capture that was never transcribed at all. The device reports which it is; absent that
     // report we say we do not know, rather than guessing in the reassuring direction.
     const t = state.transcription;
+    // Brief 55 §A2 — "Audio is still recording" used to be appended here unconditionally, and on
+    // the covert event that produced this brief it was false: the denial that took transcription
+    // had taken the recorder too. The audio clause is now OBSERVED from the chunk count, so the
+    // two states this panel can be in — transcription failed but capture is fine, versus both
+    // failed — are finally distinguishable to the person reading it.
+    const audioClause = audioReceived(state)
+      ? ' Audio IS recording.'
+      : ' <b class="cap-none">AND NO AUDIO HAS REACHED US EITHER</b> — this device is sending no recording at all.';
     if (t.state === 'unavailable') {
-      return `<div class="muted stream-warn">NOT TRANSCRIBED — this device could not transcribe speech. Audio is still recording${
+      return `<div class="muted stream-warn">NOT TRANSCRIBED — this device could not transcribe speech.${audioClause}${
         t.detail ? ` (${escapeHtml(t.detail)})` : ''
-      }.</div>`;
+      }</div>`;
     }
     if (t.state === 'degraded') {
-      return `<div class="muted stream-warn">TRANSCRIPTION DEGRADED — words may be missing. Audio is still recording${
+      return `<div class="muted stream-warn">TRANSCRIPTION DEGRADED — words may be missing.${audioClause}${
         t.detail ? ` (${escapeHtml(t.detail)})` : ''
-      }.</div>`;
+      }</div>`;
     }
     if (t.state === 'active') {
       return '<div class="muted">Transcribing — nothing heard yet.</div>';
@@ -107,38 +115,78 @@ function clock(ms: number): string {
   return h > 0 ? `${p(h)}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 }
 
-// Published category labels — mirrors the classifier's rule set so the rendered
-// situation is auditable (Fix Brief 5 D2).
-const CATEGORY_LABEL: Record<string, string> = {
-  weapon: 'Weapon reference',
-  violence: 'Violence language',
-  restraint: 'Restraint language',
-  compliance: 'Coercion / compliance',
-  fear: 'Fear expressed',
-  pain: 'Pain expressed',
-  medical: 'Medical distress',
-  disorientation: 'Disorientation',
-  bargaining: 'Bargaining',
-  'profanity-distress': 'Distress profanity',
+// Brief 55 §D — the label map is imported, not declared. It used to be declared HERE and again
+// at the bottom of this same file as `SIT_LBL`, a string inside the client script: two copies of
+// one vocabulary that had to agree and that nothing forced to. The client copy is now generated
+// from this import (see the `SIT_LBL` assignment below), so there is one definition.
+const catLabel = categoryLabel;
+
+/**
+ * Brief 55 §A2 — HAS ANY CHUNK ACTUALLY ARRIVED?
+ *
+ * The single question every capture claim on this page must be gated on, and the one nothing
+ * asked. `latestSequence` is null until a chunk is stored, so this is an OBSERVATION — it cannot
+ * be asserted by a client that is not recording, and it costs nothing to read because the state
+ * builder already computes it.
+ */
+function audioReceived(state: ContactState): boolean {
+  return state.audio.latestSequence != null;
+}
+
+/**
+ * Brief 55 §A2 — the honest statement about capture, for a page that used to print
+ * "Audio + location active" over an event that had never received a single byte.
+ *
+ * A live device test triggered a covert event that ran 74 seconds, uploaded 8 location fixes, and
+ * stored ZERO chunks: the OS had refused the page a microphone. Every capture line on this
+ * dashboard still read as normal, because all of them were reached from `situation.hasSignal` —
+ * derived from CLASSIFICATION rows — and none of them read the chunk count sitting in the same
+ * state object. The server held the disproof and rendered the claim anyway.
+ */
+const CAPTURE_COPY = {
+  received: 'Audio + location active.',
+  activeNone:
+    '<b class="cap-none">NO AUDIO RECEIVED.</b> Location is arriving; no recording has reached us. Treat this as an alert with no capture — do not read silence as calm.',
+  closedNone: '<b class="cap-none">NO AUDIO RECEIVED.</b> This event closed without any recording reaching us.',
 };
-function catLabel(c: string): string {
-  return CATEGORY_LABEL[c] ?? c;
+
+function captureLine(state: ContactState): string {
+  if (audioReceived(state)) {
+    return CAPTURE_COPY.received;
+  }
+  return state.active ? CAPTURE_COPY.activeNone : CAPTURE_COPY.closedNone;
+}
+/**
+ * How each threat level is BADGED — colour class and reader-facing word, in one table.
+ *
+ * Brief 55 §D — this was two implementations, and they disagreed. The server applied Brief 52
+ * §D correctly (UNCLASSIFIED and UNKNOWN never wear the low-threat colour, and they get words
+ * rather than a shouted level). The client poll renderer at the bottom of this file had its own
+ * inline ternary that knew only high/medium/low — so every poll after the first REPAINTED a
+ * correct grey "NOT CLASSIFIED" badge as a green "UNCLASSIFIED" one. A green badge on speech
+ * nobody could read says "we listened and it is fine" when the truth is "we could not read this
+ * at all", and the fix for that shipped in Brief 52 was being undone three seconds later.
+ *
+ * The table is now emitted into the client script verbatim, so there is nothing left to diverge.
+ */
+const THREAT_BADGE: Record<string, { cls: string; label: string }> = {
+  critical: { cls: 'th-high', label: 'CRITICAL' },
+  high: { cls: 'th-high', label: 'HIGH' },
+  medium: { cls: 'th-med', label: 'MEDIUM' },
+  low: { cls: 'th-low', label: 'LOW' },
+  unclassified: { cls: 'th-unclassified', label: 'NOT CLASSIFIED' },
+  unknown: { cls: 'th-unclassified', label: 'NO AUDIO YET' },
+};
+function threatBadge(level: string): { cls: string; label: string } {
+  return THREAT_BADGE[level] ?? { cls: 'th-low', label: level.toUpperCase() };
 }
 function threatClass(level: string): string {
-  // Brief 52 §D — UNCLASSIFIED and UNKNOWN never wear the low-threat colour. A green badge on
-  // speech nobody could read is the blank-summary lie in another form: it says "we listened and
-  // it is fine" when the truth is "we could not read this at all".
-  if (level === 'critical' || level === 'high') return 'th-high';
-  if (level === 'medium') return 'th-med';
-  if (level === 'unclassified' || level === 'unknown') return 'th-unclassified';
-  return 'th-low';
+  return threatBadge(level).cls;
 }
 
 /** The reader-facing word. `unclassified` says what happened; it does not imply a severity. */
 function threatLabel(level: string): string {
-  if (level === 'unclassified') return 'NOT CLASSIFIED';
-  if (level === 'unknown') return 'NO AUDIO YET';
-  return level.toUpperCase();
+  return threatBadge(level).label;
 }
 const TRIGGER_LABEL: Record<string, string> = {
   manual: 'Manual activation',
@@ -181,9 +229,14 @@ function originHtml(state: ContactState): string {
  * (Fix Brief 5 D2/D3). No free-text generation; inferences are marked. Mirrored
  * by the client poll renderer (window.__renderSituation).
  */
-function situationHtml(s: ContactState['situation']): string {
+function situationHtml(state: ContactState): string {
+  const s = state.situation;
+  // Brief 55 §A2 — the capture claim is OBSERVED, not assumed. "No indicators detected yet"
+  // over an event that is receiving nothing is not a quiet room; it is a blind alert, and the
+  // two demand opposite responses from whoever is reading this.
   if (!s.hasSignal) {
-    return '<div class="muted">No specific indicators detected yet. Audio + location active.</div>';
+    const cls = audioReceived(state) ? 'muted' : 'muted cap-warn';
+    return `<div class="${cls}">No specific indicators detected yet. ${captureLine(state)}</div>`;
   }
   const parts: string[] = [];
   parts.push(
@@ -207,6 +260,12 @@ function situationHtml(s: ContactState['situation']): string {
   }
   if (s.multipleVoicesInferred) {
     parts.push('<div class="inferred">Multiple voices detected — inferred, low confidence</div>');
+  }
+  // §A2 — signals and capture are INDEPENDENT. Classification rows come from the transcript, and
+  // a transcript can exist with no recording behind it. Detected facts must never be allowed to
+  // imply that the recording they describe is being retained.
+  if (!audioReceived(state)) {
+    parts.push(`<div class="muted cap-warn">${captureLine(state)}</div>`);
   }
   return parts.join('');
 }
@@ -304,15 +363,21 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 
   <section class="sec sec-situation">
     <div class="label">Situation · Detected facts (latched)</div>
-    <div id="situation">${situationHtml(state.situation)}</div>
+    <div id="situation">${situationHtml(state)}</div>
   </section>
 
   <section class="sec sec-camera">
     <div class="label">Live camera <span class="stream-state" id="camState">—</span></div>
     ${
       state.hasVideo
-        ? '<video id="cam" class="camera" controls playsinline muted></video>'
-        : '<div class="map-empty stream-warn">No camera feed. Video was requested and the device could not provide it — audio and location are recording.</div>'
+        ? '<video id="cam" class="camera" controls playsinline muted></video><div class="muted" id="camNote"></div>'
+        : `<div class="map-empty stream-warn">No camera feed. Video was requested and the device could not provide it — ${
+            // §A2 — the old copy ended "audio and location are recording", asserted unconditionally.
+            // On the covert event that produced this brief it was FALSE: the same denial that took
+            // the camera had taken the microphone, and this line reassured the coordinator about a
+            // recording that did not exist.
+            audioReceived(state) ? 'audio and location are recording.' : 'and NO AUDIO HAS REACHED US EITHER. Location only.'
+          }</div>`
     }
   </section>
 
@@ -330,7 +395,13 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 
   <section class="sec">
     <div class="label">Capture source</div>
-    <div class="muted">${state.hasVideo ? 'Phone microphone &amp; camera' : 'Phone microphone'} · no external hardware paired</div>
+    <div class="muted">${
+      // §A2 — this named the hardware we ASKED for, not the hardware that produced anything.
+      // "Phone microphone" beside a zero-chunk event is a claim about a capture that never was.
+      audioReceived(state)
+        ? `${state.hasVideo ? 'Phone microphone &amp; camera' : 'Phone microphone'} · no external hardware paired`
+        : 'No capture has reached us from this device · nothing received to attribute to a source'
+    }</div>
   </section>
 
   <div class="actions">
@@ -605,6 +676,10 @@ const CSS = `
 .ss-degraded{background:#4a3200;color:#ffc14d}
 .ss-stopped{background:#4a0d0d;color:#ff8080}
 .stream-warn{color:#ffc14d}
+/* Brief 55 §A2 — a capture claim that failed its observation check. Read at a glance, because
+   an alert with no evidence behind it is the condition that must never look ordinary. */
+.cap-warn{color:#ffc14d}
+.cap-none{color:#ff6b6b;letter-spacing:.04em}
 /* Brief 52 §D — unclassified is amber-on-dark: visible, unmistakably NOT the low-threat green. */
 .th-unclassified{background:#4a3200;color:#ffc14d}
 
@@ -796,17 +871,28 @@ const CLIENT_JS = `
   }
   // Latched situation renderer (Fix Brief 5 D2/D3) — assembled detected facts,
   // monotonic threat, inferences marked. Mirrors the server situationHtml().
-  var SIT_LBL={weapon:'Weapon reference',violence:'Violence language',restraint:'Restraint language',compliance:'Coercion / compliance',fear:'Fear expressed',pain:'Pain expressed',medical:'Medical distress',disorientation:'Disorientation',bargaining:'Bargaining','profanity-distress':'Distress profanity'};
+  // Brief 55 §D — EMITTED from the server's own tables, never retyped. Two hand-kept copies of a
+  // vocabulary are two chances to disagree, and they did.
+  var SIT_LBL=${JSON.stringify(CATEGORY_LABEL)};
+  var TH_BADGE=${JSON.stringify(THREAT_BADGE)};
   function sitEsc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function thBadge(l){ return TH_BADGE[l]||{cls:'th-low',label:String(l).toUpperCase()}; }
+  // §A2 — the client asks the same question the server does: has a chunk actually arrived?
+  function capReceived(){ return S.audio && S.audio.latestSequence!=null; }
+  var CAP_COPY=${JSON.stringify(CAPTURE_COPY)};
+  function capLine(){
+    if(capReceived()) return CAP_COPY.received;
+    return active ? CAP_COPY.activeNone : CAP_COPY.closedNone;
+  }
   function applySituation(s){
     var node=el('situation'); if(!node||!s) return;
-    if(!s.hasSignal){ node.innerHTML='<div class="muted">No specific indicators detected yet. Audio + location active.</div>'; return; }
-    var lvl=s.threatLevel||'unknown';
-    var thc=(lvl==='critical'||lvl==='high')?'th-high':(lvl==='medium'?'th-med':'th-low');
-    var html='<div class="th-row"><span class="kv-k">Threat (rule-derived)</span><span class="th-badge '+thc+'">'+sitEsc(lvl.toUpperCase())+'</span></div>';
+    if(!s.hasSignal){ node.innerHTML='<div class="'+(capReceived()?'muted':'muted cap-warn')+'">No specific indicators detected yet. '+capLine()+'</div>'; return; }
+    var b=thBadge(s.threatLevel||'unknown');
+    var html='<div class="th-row"><span class="kv-k">Threat (rule-derived)</span><span class="th-badge '+b.cls+'">'+sitEsc(b.label)+'</span></div>';
     if(s.categories&&s.categories.length){ html+='<div class="facts">'; for(var i=0;i<s.categories.length;i++){ var c=s.categories[i].category; html+='<span class="fact">'+sitEsc(SIT_LBL[c]||c)+'</span>'; } html+='</div>'; }
     if(s.toneIndicators&&s.toneIndicators.length){ html+='<div class="facts">'; for(var j=0;j<s.toneIndicators.length;j++){ html+='<span class="fact fact-tone">'+sitEsc(String(s.toneIndicators[j]).replace(/-/g,' '))+'</span>'; } html+='</div>'; }
     if(s.multipleVoicesInferred){ html+='<div class="inferred">Multiple voices detected — inferred, low confidence</div>'; }
+    if(!capReceived()){ html+='<div class="muted cap-warn">'+capLine()+'</div>'; }
     node.innerHTML=html;
   }
   applyTranscript(S.latestTranscriptFragments);
@@ -939,18 +1025,45 @@ const CLIENT_JS = `
     // duration and a maxed scrubber. Show an honest download-to-play button
     // with NO timeline instead of a false time readout. Each play re-fetches
     // /audio/full so it includes everything captured so far.
-    audio.controls=false;
+    //
+    // BRIEF 55 §B — THIS BRANCH USED TO BE AUDIO-ONLY, AND VIDEO FELL THROUGH IT.
+    //
+    // On the device test the camera panel showed a <video controls> element with no source: a
+    // player reading 00:00 with a dead scrubber, directly under the words "LIVE CAMERA". An empty
+    // transport is not a neutral thing to render — it reads as "nothing happened", which is the
+    // one meaning it must never carry on this page. The audio path had already learned this and
+    // says so in words; video simply had no equivalent, so it said nothing and looked broken.
+    //
+    // Now both media kinds take the same fallback: no timeline, an honest sentence, and a working
+    // play button over everything captured so far.
+    media.controls=false;
+    var isVid=(media===cam);
+    var playLabel=isVid?'▶ Play recording so far (video)':'▶ Play recording so far';
     startBtn.hidden=false;
-    startBtn.textContent='▶ Play recording so far';
+    startBtn.textContent=playLabel;
     startBtn.onclick=function(){
-      if(audio.paused){ audio.src=api('/audio/full'); audio.play(); startBtn.textContent='⏸ Pause'; }
-      else { audio.pause(); startBtn.textContent='▶ Play recording so far'; }
+      if(media.paused){ media.src=api('/audio/full'); media.play(); startBtn.textContent='⏸ Pause'; }
+      else { media.pause(); startBtn.textContent=playLabel; }
     };
-    audio.onended=function(){ startBtn.textContent='▶ Play recording so far'; };
-    note.textContent='Recording · download-to-play (this browser cannot stream live; press play to hear everything captured so far)';
+    media.onended=function(){ startBtn.textContent=playLabel; };
+    setState(mediaStateId,'degraded','NOT LIVE — playback only');
+    // The sentence belongs next to the element it is about. A note under "Audio" explaining the
+    // camera is how an empty video player stays unexplained.
+    var noteText = isVid
+      ? 'Recording · download-to-play. This browser cannot stream live video; press play to see and hear everything captured so far.'
+      : 'Recording · download-to-play (this browser cannot stream live; press play to hear everything captured so far)';
+    var camNote = el('camNote');
+    if(isVid && camNote){ camNote.textContent=noteText; note.textContent='Audio is inside the camera recording above.'; }
+    else { note.textContent=noteText; }
     window.__pumpAudio=function(latest){ if(latest!=null){ knownLatest=latest; } };
   } else {
-    note.textContent='No audio captured yet…';
+    // §A2 — "not yet" and "never" are different claims and only one of them is reassuring.
+    // Nothing has arrived; say that in the badge as well as the note, so a coordinator who
+    // glances at the stream states sees it without reading.
+    setState(mediaStateId,'degraded','NO AUDIO RECEIVED');
+    note.textContent = active
+      ? 'NO AUDIO RECEIVED. Nothing has reached us from this device — do not read this as a quiet room.'
+      : 'NO AUDIO RECEIVED. This event closed without any recording reaching us.';
     window.__pumpAudio=function(latest){
       if(latest!=null && !useMse){ /* first audio arrived; reload page-light */ }
     };

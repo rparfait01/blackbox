@@ -27,6 +27,7 @@ import {
   uploadTranscript,
   uploadTranscriptionState,
 } from '@/lib/upload';
+import { markDegradation } from '@/lib/upload/encryption-state';
 import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 import { fetchEventStatus, startSessionMonitor, stopSessionMonitor } from './session-monitor';
@@ -34,6 +35,42 @@ import { startHeartbeat, stopHeartbeat } from './heartbeat';
 
 /** How often the descriptive classifier runs over the session so far. */
 const CLASSIFY_INTERVAL_MS = 5000;
+
+/**
+ * Brief 55 §C — RETRY ACQUISITION, BECAUSE A DENIAL IS OFTEN A RELEASE THAT HAS NOT LANDED YET.
+ *
+ * The device test triggered a covert event thirteen seconds after closing an overt one, and the
+ * OS refused it a microphone AND a camera. A prior capture that has been told to stop does not
+ * always have its tracks reclaimed by the time the next `getUserMedia` is evaluated, and the
+ * failure is indistinguishable at the call site from a permission denial: both are a rejected
+ * promise.
+ *
+ * So we ask again. A permission denial answers the same way every time and costs three cheap
+ * rejections; a release that was still in flight answers differently the second or third time and
+ * we get the recording. Given those two outcomes, not retrying was only ever a way to lose
+ * evidence quietly.
+ *
+ * NOTHING ON THE ALERT PATH WAITS FOR THIS. Dispatch, cascade and the location tracker have all
+ * already started by the time capture is attempted; this runs beside them. The delays are short
+ * enough to stay inside the first chunk interval and are deliberately not a backoff — this is a
+ * race being re-run, not a loaded server being spared.
+ */
+export const CAPTURE_RETRY_DELAYS_MS = [400, 1200];
+
+async function startCaptureWithRetry(capture: MediaCapture): Promise<boolean> {
+  if (await capture.start()) {
+    return true;
+  }
+  for (const delay of CAPTURE_RETRY_DELAYS_MS) {
+    await new Promise((resolve) => window.setTimeout(resolve, delay));
+    log.error('capture acquisition failed; retrying', { delay });
+    if (await capture.start()) {
+      log.error('capture acquired on retry — the first failure was a release race, not a denial');
+      return true;
+    }
+  }
+  return false;
+}
 
 /** When to freeze the immutable ORIGIN snapshot (Fix Brief 5 D1). */
 const ORIGIN_CAPTURE_MS = 12_000;
@@ -317,11 +354,19 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
     active = session; // `active` now holds the in-page guard; `starting` is released in finally
     ensureVisibilityReacquire();
 
-    // Transcription uses its own audio path (Web Speech); start it regardless of
-    // capture permission.
-    transcription.start();
-
-    const captureStarted = await capture.start();
+    // ═══ BRIEF 55 §C — THE EVIDENCE MICROPHONE IS ACQUIRED FIRST. ═══════════════════════════
+    //
+    // These two lines used to be the other way around, and the order was load-bearing in the
+    // worst way. `transcription.start()` opens Web Speech's OWN microphone — a second, entirely
+    // independent acquisition — and on iOS Safari holding it is enough to make the subsequent
+    // getUserMedia fail. So the subsystem whose output is a CONVENIENCE was taking the scarce
+    // device resource ahead of the subsystem that is the entire product, on every single
+    // activation.
+    //
+    // A transcript with no recording behind it is a text file. A recording with no transcript is
+    // still evidence. Capture goes first, and if that costs us the transcript on some device,
+    // that is the correct trade rather than an accident of statement order.
+    const captureStarted = await startCaptureWithRetry(capture);
     if (captureStarted) {
       onRecordingStarted(newSessionId);
       // Tone analysis attaches to the EXISTING capture stream — no second mic.
@@ -329,7 +374,26 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
         session.tone = new ToneAnalyzer(capture.stream);
         session.tone.start();
       }
+    } else {
+      // ═══ §A2 — THERE USED TO BE NO `ELSE`. ═══════════════════════════════════════════════
+      //
+      // That absence is the whole defect. A covert event ran 74 seconds, dispatched, cascaded,
+      // took 8 location fixes and closed normally having recorded NOTHING, and no line of code
+      // anywhere reacted to `captureStarted === false`. It presented as a working alert.
+      //
+      // Retention is the existing Brief 36 §D axis, and it already reaches BOTH surfaces the way
+      // each is allowed to be reached: plain words in Overt, breathing cadence in Hidden. Nothing
+      // additive is rendered in the facade — this drives a value the covert surface was already
+      // reading, which is exactly why that axis was built as a cadence rather than a banner.
+      markDegradation(newSessionId, 'EVIDENCE_NOT_RETAINED');
+      log.error('capture did not start; event is running with NO recording', { sessionId: newSessionId });
     }
+
+    // Transcription is started AFTER capture has had its turn at the microphone — see above.
+    // It runs regardless of whether capture succeeded: if the mic was denied to everything, it
+    // will say so, and its report is how the coordinator learns the reason rather than only the
+    // consequence.
+    transcription.start();
 
     // Run the descriptive classifier every ~5s for the entire active session,
     // independent of any UI interaction.

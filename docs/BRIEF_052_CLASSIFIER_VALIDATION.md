@@ -116,3 +116,47 @@ of safety about a survivor-facing judgement.
 and independent of any accuracy question, and hold §A/§B until a corpus with real provenance
 exists. Or open the pilot's consented-recording route, which is a consent-design decision rather
 than an engineering one.
+
+---
+
+# ADDENDUM, 04 AUG 26 — THE MOST IMPORTANT CLASSIFIER FINDING TO DATE
+
+**Filed from a live device test. Full audit: `docs/brief52/CATEGORY_AUDIT_FINDING.md`.**
+
+> **An explicit death threat scored `medium`, on the strength of the contraction "don't".**
+
+Production event `febff13d`. Transcript: *"People don't shut up I'm gonna cut your throat | You
+asked for this you would make me do this too | You're so stupid"*. Twelve stored classification
+rows, all identical: `restraint` matching `["don't","dont"]`, level `medium`. **"I'm gonna cut your
+throat" matched nothing at all.**
+
+Two failures produced one plausible-looking answer. A FALSE POSITIVE carried the score — `don't`
+fired `restraint` in a sentence with no restraint in it — while a TOTAL FALSE NEGATIVE swallowed
+the threat to life. Either alone would have been visible. Together they produced a number that
+looks considered and is not connected to the transcript.
+
+**This was NOT fixed by adding a phrase, and that was a ruling, not an oversight:** *"Adding 'cut
+your throat' because it appeared in one test is tuning-to-sample — the exact thing the corpus hold
+exists to prevent. Patch the phrase you saw, miss the ten you didn't."* Brief 55 acceptance 8 was
+descoped on that basis and no dictionary was touched.
+
+The audit that replaced it found the gap is category-shaped, not phrase-shaped:
+
+- `violence` covers BLUNT and BALLISTIC force only. `stab` exists; `cut`, `slit`, `slash` do not.
+- **No body-part noun exists anywhere in either dictionary** (`throat`, `neck`, `face`), so no
+  *verb + body part* construction — how most violent threats are actually phrased — can ever match.
+- **No THREAT / FUTURE-INTENT dimension exists.** Nothing detects *"I'm gonna…"*. This alone would
+  have caught the sentence without any new violence verb.
+- **SEXUAL VIOLENCE is absent entirely** — no category, no word, no phrase, in English or
+  Japanese. For a domestic-violence product this is the largest hole in the taxonomy.
+- `restraint` is misnamed and misbuilt: its words are `stop`, `don't`, `dont`, `release` — ordinary
+  high-frequency English, and the highest-volume false-positive source in the system.
+
+**Consequence for §A/§B:** the corpus hold stands, and it now has a second requirement. **A corpus
+cannot close these gaps.** It measures the accuracy of the taxonomy that exists; six of the eight
+identified gaps are categories that do not exist and therefore have no score to improve. Order is
+now: **taxonomy design → corpus → thresholds.** Tuning weights first would tune a lexicon with a
+hole where sexual violence should be.
+
+One item is separable and needs no corpus: `restraint` firing on `don't`/`dont`/`stop` is a false
+positive by inspection rather than by measurement. It is the one item that does not have to wait.

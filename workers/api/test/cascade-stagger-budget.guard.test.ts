@@ -94,10 +94,12 @@ describe('the in-request stagger stops before its context is reclaimed', () => {
     // (the drain that makes "alerts are rate-limited but never dropped" true). An unbounded job
     // would starve the ones behind it exactly as the original overrun starved the integrity scan
     // and the canary sweep, so a new job has to be added here deliberately rather than drift in.
+    // Brief 55 §A2 added `no_capture` — an active event that has stored zero chunks, i.e. an
+    // alert with no evidence behind it, which no other job on this list was watching for.
     const bounded = (chain.match(/await boundedJob\(/g) ?? []).length;
-    expect(bounded).toBe(11);
+    expect(bounded).toBe(12);
     // Stronger than the count alone: the number of jobs and the number of BOUNDED jobs agree, so
-    // an eleventh job added without a ceiling fails here even if someone updates the number.
+    // a thirteenth job added without a ceiling fails here even if someone updates the number.
     const jobNames = (chain.match(/boundedJob\('/g) ?? []).length;
     expect(jobNames).toBe(bounded);
     // …and nothing in the cron chain is awaited raw alongside them.
