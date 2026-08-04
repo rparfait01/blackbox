@@ -419,3 +419,19 @@ the rule allows one — two of them wasted on a stale-target failure I caused by
 wrong stamp. A 10,437-row production backfill run with neither a row count nor a cost stated
 beforehand. The plan limit whose exhaustion takes the alert path down is the same limit these runs
 draw on, which makes an untracked test budget a life-safety concern rather than a billing one.)*
+
+## CHANNELS ARE ADDITIVE (ratified 2026-08-04)
+
+**"Channels are additive. No delivery channel is ever retired in favour of another. Every channel
+a contact holds is used."**
+
+Multi-channel is the design, not a migration to be completed. Email has no carrier, no A2P
+registration and no delivery gate, which makes it the channel most likely to survive when the
+others fail. A contact reachable on more channels is more likely reached.
+
+*(Origin: the notification brief §1 marked email as RETIRING from the alert path — "flip this to
+false once SMS delivers" — on the grounds that it is a single-vendor cap that had silently failed
+twice. Both facts were true and neither supported removing the channel: the failure was a QUOTA
+failure, and quota is answered by adding a second channel alongside, never by deleting the first.
+Had the flag been flipped when SMS was provisioned, two production contacts holding only an email
+endpoint would have gone dark with nothing in the system saying so.)*

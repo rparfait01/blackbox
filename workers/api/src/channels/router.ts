@@ -82,19 +82,27 @@ export interface DispatchResult {
 export function isChannelDeliverable(env: Env, channel: string): boolean {
   switch (channel) {
     case 'email':
-      // RETIRING (notification brief §1): email is a single-vendor cap (100/day
-      // free tier) that has now silently failed twice, so it is on its way out of
-      // the ALERT path. It stays deliverable ONLY until Twilio is provisioned and
-      // SMS is proven — pulling it first would leave every email-only account
-      // un-notifiable with no way to fix it, which is the outcome §1's own
-      // migration clause forbids. Flip this to `false` once SMS delivers.
-      // (Magic-link mail is a SEPARATE transactional path and is unaffected.)
+      // CHANNELS ARE ADDITIVE. Email is NOT being retired, and the intent that it would be is
+      // struck (correction against the notification brief §1, commit 69b0197).
+      //
+      // The retirement argument was that email is a single-vendor cap that had silently failed
+      // twice. Both facts are true and neither supports removing the channel. Email has no
+      // carrier, no A2P registration and no delivery gate — which makes it the channel most
+      // likely to still work on the night SMS or LINE does not. A contact reachable on more
+      // channels is more likely reached, and that is the whole of the argument.
+      //
+      // The failure this actually pointed at was a QUOTA failure, and quota is answered by a
+      // second channel alongside, never by deleting the first.
       return !!(env.SENDGRID_API_KEY && env.SENDGRID_FROM_EMAIL);
     case 'line':
       return !!env.LINE_CHANNEL_ACCESS_TOKEN;
     case 'sms':
-      // SMS only delivers with a real Twilio config; otherwise it is a stub.
-      // NOT provisioned as of 2026-07-17 — no TWILIO_* secrets exist.
+      // SMS delivers only with a real Twilio config; otherwise it resolves to a stub.
+      //
+      // (A comment here read "NOT provisioned as of 2026-07-17 — no TWILIO_* secrets exist".
+      // That was stale and read as an authoritative statement of provisioning state: all three
+      // TWILIO_* secrets are present in production. The line beside it already reads the
+      // environment, which is the single source of truth; a comment restating it can only rot.)
       return !!twilioConfig(env);
     default:
       // push / telegram / whatsapp are stubs — present in the registry, unbuilt.

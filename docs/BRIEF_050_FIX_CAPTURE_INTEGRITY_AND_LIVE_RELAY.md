@@ -50,6 +50,26 @@ Path: `workers/api/src/dashboard/page.ts`, `apps/pwa/src/lib/transcription/speec
 visible-trigger regressions". §0 disproved that on captured evidence, and Royce re-scoped on it.
 Recorded so the framing is not repeated.)*
 
+**NOTIFICATION BRIEF §1 (no brief document in the corpus; commit 69b0197) — corrected to read:**
+"Channels are additive. Email is NOT retired from the alert path. It has no carrier, no A2P
+registration and no delivery gate, which makes it the channel most likely to survive when the
+others fail."
+Path: `workers/api/src/channels/router.ts`, `workers/api/src/channels/types.ts`
+
+*(The retirement rationale — a single-vendor cap that had failed silently twice — described a
+QUOTA failure. Quota is answered by a second channel alongside, never by deleting the first. Two
+production contacts hold an email endpoint; flipping the flag as instructed would have taken them
+dark.)*
+
+**NOTIFICATION BRIEF (same file, `isChannelDeliverable`) — corrected to read:**
+"Channel deliverability is a property of the environment and is read from it. No comment asserts
+provisioning state."
+Path: `workers/api/src/channels/router.ts`
+
+*(A comment read "NOT provisioned as of 2026-07-17 — no TWILIO_* secrets exist". All three
+TWILIO_* secrets are present in production. The line beside it already read the environment
+correctly; the comment was a second source of truth that could only go stale, and had.)*
+
 **BRIEF 022 / TRIGGER-UNIFY — corrected to read:**
 "Mode is display-only for capture as well as for triggering. One capture core, one transcription
 path, one classification path. Present mode selects what the survivor sees and nothing else. A

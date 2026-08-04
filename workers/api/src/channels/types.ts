@@ -135,8 +135,8 @@ export interface CheckinPayload {
  *
  * 'whatsapp' is the proof of that seam: named and routable, deliberately unbuilt
  * (isChannelDeliverable → false, so it resolves to a stub and cannot be saved on
- * a contact). 'email' is being retired from the ALERT path — see
- * isChannelDeliverable for why it is still live.
+ * a contact). Every BUILT channel stays: channels are additive, and none is ever retired in
+ * favour of another.
  */
 export type ChannelName = 'push' | 'line' | 'telegram' | 'sms' | 'email' | 'whatsapp';
 
