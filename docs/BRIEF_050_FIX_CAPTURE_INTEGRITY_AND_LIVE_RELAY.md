@@ -252,3 +252,68 @@ The brief's original list was stale. Actual state:
 - **`CF_ANALYTICS_TOKEN`** still unset; headroom reads `NOT MEASURED`.
 - **Nothing is armed.** Brief 36 item 12 and Brief 2 Fix A §E3 wait on the device session.
 - **Brief 50 deploy + master push** wait on a fresh session (request ceiling).
+
+---
+
+## RULING — Hidden-mode video (Royce, 2026-08-04) and what the platform allows
+
+**Ruling:** Hidden captures video when the screen is off or the device is face-down; audio-only
+when the screen is on and face-up; re-evaluated continuously; video failure never stops audio; no
+visible facade change; **and if the platform cannot report screen or orientation state reliably
+from a PWA, report that and default to audio-only — do not guess.**
+
+That last clause binds for one of the two gates. Findings:
+
+### "Screen off" — not implementable, and self-defeating. Three independent reasons.
+
+1. **No API distinguishes it.** `document.visibilityState === 'hidden'` conflates screen-locked
+   with app-backgrounded and tab-switched. Gating the camera on it would start recording because
+   the survivor checked a message.
+2. **The app deliberately prevents it.** `acquireWakeLock()` runs on EVERY activation in BOTH
+   modes and holds a screen wake lock for the event's duration. `wake-lock.ts` states why: the
+   lock "only holds while the page is visible and is auto-released when backgrounded", and
+   capture does not survive backgrounding. Screen-off is not a state this app reaches while
+   recording — it is one it actively fights, on purpose.
+3. **It is the state where video cannot record.** When the page is hidden, iOS and Android both
+   stop delivering camera frames. The condition the ruling would switch video ON in is precisely
+   the condition in which no video exists to capture.
+
+### "Face-down" — implementable on Android; not covertly on iOS.
+
+While the screen is on — which, per (2) above, is the whole of an event — the page is visible, JS
+runs, and the camera works. Face-down is readable from DeviceMotion's gravity vector.
+
+| Platform | Signal | Verdict |
+|---|---|---|
+| Android / Chrome | `devicemotion`, no prompt | **Usable** |
+| iOS 13+ / Safari | `DeviceMotionEvent.requestPermission()` from a user gesture, system dialog | **Not usable covertly** — a dialog IS a facade breach |
+
+`posture.ts` therefore never calls `requestPermission()`. A capability obtainable only by breaking
+the covert facade is a capability we do not have. It reports `unknown` on iOS and the gate defaults
+to audio-only, distinguishing "observed face-up" from "cannot observe" — only the first is
+knowledge.
+
+### Net effect
+
+Hidden gains video on Android when the phone is face-down, which is the pocket-and-bag posture the
+ruling targets. Hidden on iOS stays audio-only, and the reason is recorded rather than silently
+absent. Audio remains the floor in every case and nothing here can stop it.
+
+---
+
+## CARRIES FORWARD to BRIEF 51 (device session)
+
+Item 7 — proving the Web Speech microphone contention. Mechanism stated in §0.2 and NOT proven;
+these three steps settle it, and step 3 is the decisive one:
+
+51.1  Trigger VISIBLE on the device and capture the console. `onStatus` now reports the actual
+      `event.error`. `not-allowed`, `audio-capture` or `service-not-allowed` names contention
+      directly; any other error refutes the hypothesis.
+51.2  Same on HIDDEN as the control — audio-only, same code path, transcription known working.
+51.3  **DECISIVE:** force `captureModeForSource` to return `'audio'` for `direct-tap` and trigger
+      Visible again. If transcription now works with the camera off, contention is proven. If it
+      still fails, the cause is elsewhere and the §0.2 hypothesis is wrong.
+
+Plus Brief 50's device-only acceptance items: 2, 3, 4, 5, 6, 7, 8, 9, 11 — every item requiring a
+real device and real captures, including the face-down video transition on Android and the
+facade-byte-identical check across it.
