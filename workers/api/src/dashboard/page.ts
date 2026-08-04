@@ -497,11 +497,29 @@ const NOTIFIED_JS = `
   var tc=document.getElementById('takeCoord');
   if(tc){ tc.onclick=function(){
     tc.disabled=true; tc.textContent='CLAIMING…';
-    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/claim-coordinator'+location.search,{method:'POST'})
-      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok,d:d}; }); }).then(function(res){
-        if(res.ok && res.d && res.d.claimed){ window.location.reload(); }
-        else { tc.disabled=false; tc.textContent='TAKE COORDINATION'; alert('Another responder has already taken coordination.'); }
-      }).catch(function(){ tc.disabled=false; tc.textContent='TAKE COORDINATION'; });
+    // credentials:'include' so the bbview session goes with it. location.search is empty on the
+    // redeemed bare URL and carries the token only on the cookie-blocked fallback — both work,
+    // because the route now resolves through the one shared helper.
+    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/claim-coordinator'+location.search,{method:'POST',credentials:'include'})
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {status:r.status,ok:r.ok,d:d}; }); })
+      .then(function(res){
+        if(res.ok && res.d && res.d.claimed){ window.location.reload(); return; }
+        tc.disabled=false; tc.textContent='TAKE COORDINATION';
+        // SAY WHAT HAPPENED, NOT WHAT WE GUESS HAPPENED.
+        //
+        // This reported EVERY failure as "Another responder has already taken coordination." A
+        // responder told someone else is handling it stands down: they do not retry, they do not
+        // escalate, they wait. That string turned a 401 into a stand-down instruction while no
+        // coordinator existed and nobody could become one.
+        var msg;
+        if(res.status===409){ msg='Another responder has already taken coordination.'; }
+        else if(res.status===401){ msg='This link is not authorised to take coordination. Open the most recent alert message and use the link there.'; }
+        else { msg='Could not take coordination (error '+res.status+'). The alert is still active — try again.'; }
+        alert(msg);
+      }).catch(function(){
+        tc.disabled=false; tc.textContent='TAKE COORDINATION';
+        alert('Could not reach the server. The alert is still active — try again.');
+      });
   };}
 })();
 `;

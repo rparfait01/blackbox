@@ -141,11 +141,11 @@ export interface Vars {
    *  person. Null when the bearer token was used (scripts/CI have no person behind them). */
   operatorUserId?: string | null;
   /** Brief 23: the account's STAFF role in its org, set by requireOrgRole on the
-   *  /v1/org/* portal routes. Absent for individuals and enrolled survivors. */
+   *  /v1/org/ portal routes. Absent for individuals and enrolled survivors. */
   orgRole?: 'admin' | 'coordinator';
   /** Brief 33b: the console level, DERIVED server-side per request from
    *  users.platform_role + the active org_members row. Never sent by the client and
-   *  never read from the token. Set by the /v1/console/* identity middleware. */
+   *  never read from the token. Set by the /v1/console/ identity middleware. */
   consoleLevel?: 'operator' | 'admin' | 'coordinator' | 'unmarked';
   /** Brief 33b: the ONE org a console request may touch. Null for operator (all orgs)
    *  and for unmarked (none) — `consoleLevel` disambiguates which. */

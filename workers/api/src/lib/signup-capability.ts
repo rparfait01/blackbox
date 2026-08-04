@@ -3,7 +3,7 @@
  *
  * WHAT WAS ACTUALLY WRONG, and it was worse than "signup hygiene". `signupId` was the account's
  * permanent `users.id`, returned by `/signup/start` and accepted as authorization by
- * `/signup/finalize`, `/passkey/register/*` and `/recovery/issue`. None of those checked that the
+ * `/signup/finalize`, `/passkey/register/` and `/recovery/issue`. None of those checked that the
  * account was still a draft. Proven on staging before this was written:
  *
  *   POST /v1/auth/signup/finalize {signupId: <any userId>, displayMode: 'direct'}

@@ -784,7 +784,7 @@ app.use('/v1/admin/*', async (c, next) => {
 // Brief 35 §C — the deploy canary's control surface (provision / status / purge).
 //
 // REGISTERED HERE, AFTER THE GATE ABOVE, AND THAT ORDER IS THE AUTHORISATION. Hono runs
-// matching handlers in REGISTRATION order, so a router mounted before the `/v1/admin/*`
+// matching handlers in REGISTRATION order, so a router mounted before the `/v1/admin/` prefix
 // middleware would answer the request itself and the gate would never execute. Mounting
 // it after means every route inside is reached only through ADMIN_TOKEN or an operator
 // session, with no authorisation rule of its own to drift — a second way in is a second
@@ -1522,8 +1522,42 @@ app.post('/v1/webhooks/twilio', handleTwilioWebhook);
 app.post('/v1/activation/webhook', handleActivationWebhook);
 
 // --- Contact magic-link view (no login; the signed token is the auth) ---
+/**
+ * The resolved caller on the /v1/c/ path: which role, and how they proved it.
+ *
+ * Returned rather than reduced to a boolean because some routes need the ROLE — the coordinator
+ * claim must exclude the authority/dispatch path. Before this fix that route read the token and
+ * called `verifyTokenRole` itself, which is how it missed the cookie: a second verification path
+ * drifts from the first, and the drift was invisible until it was a live P0.
+ */
+interface MagicCaller {
+  role: 'guardian' | 'dispatch' | 'notified' | 'coordinator';
+  via: 'cookie' | 'token';
+}
+
+/**
+ * THE shared verification for the /v1/c/ path. Every route on it goes through this — there is no
+ * second path, by construction: `resolveMagicCaller` is the only caller of `verifyTokenRole`
+ * outside the token/cookie EXCHANGE in `GET /c/:id`.
+ */
+async function resolveMagicCaller(c: AppContext): Promise<MagicCaller | null> {
+  const eventId = c.req.param('id') ?? '';
+
+  const viewSession = await getViewSession(c.env, getCookie(c, VIEW_COOKIE) ?? '', eventId);
+  if (viewSession) {
+    return { role: (viewSession.role as MagicCaller['role']) ?? 'guardian', via: 'cookie' };
+  }
+
+  const secret = c.env.MAGIC_LINK_SECRET;
+  if (!secret) return null;
+  const token = c.req.query('t') ?? '';
+  const { verdict, role } = await verifyTokenRole(secret, eventId, token);
+  return verdict === 'ok' ? { role: role as MagicCaller['role'], via: 'token' } : null;
+}
+
 async function requireMagicToken(c: AppContext): Promise<boolean> {
   const eventId = c.req.param('id') ?? '';
+  void eventId;
 
   // ═══ Brief 33 Fix B §A/§E1 — COOKIE FIRST, TOKEN SECOND ═══════════════════════════════════
   //
@@ -1535,18 +1569,10 @@ async function requireMagicToken(c: AppContext): Promise<boolean> {
   // The token path REMAINS, and that is deliberate rather than transitional: §C requires links
   // already in the wild to keep working, and §B requires this to fail open. A coordinator whose
   // cookie was blocked, cleared, or never set still gets in with the tokened URL.
-  const viewSession = await getViewSession(c.env, getCookie(c, VIEW_COOKIE) ?? '', eventId);
-  if (viewSession) return true;
-
-  const secret = c.env.MAGIC_LINK_SECRET;
-  if (!secret) {
-    return false;
-  }
-  const token = c.req.query('t') ?? '';
-  // Accept any valid role token (guardian/coordinator/notified/dispatch) so the
-  // dashboard sub-routes work on both the guardian and authority paths.
-  const { verdict } = await verifyTokenRole(secret, eventId, token);
-  return verdict === 'ok';
+  // Accepts any valid role (guardian/coordinator/notified/dispatch) so the dashboard sub-routes
+  // work on both the guardian and authority paths. Routes needing the ROLE call
+  // `resolveMagicCaller` directly rather than re-verifying.
+  return (await resolveMagicCaller(c)) !== null;
 }
 
 /**
@@ -1752,12 +1778,24 @@ app.post('/v1/c/:id/fresh-link', async (c) => {
 // else is told it is already claimed. This is the ONLY way coordination is taken
 // — never by passively loading the dashboard.
 app.post('/v1/c/:id/claim-coordinator', async (c) => {
-  const secret = c.env.MAGIC_LINK_SECRET;
   const eventId = c.req.param('id');
-  const token = c.req.query('t') ?? '';
-  const verdict = secret ? await verifyTokenRole(secret, eventId, token) : null;
-  // Guardian-path tokens only; the dispatch (authority) path never coordinates.
-  if (!verdict || verdict.verdict !== 'ok' || verdict.role === 'dispatch') {
+
+  // ═══ P0 FIX — THIS ROUTE HAD ITS OWN VERIFICATION AND IT DRIFTED ═══════════════════════════
+  //
+  // It read `c.req.query('t')` and called `verifyTokenRole` directly — the only route on
+  // /v1/c/ path that did not go through the shared helper. When that helper learned to accept the
+  // `bbview` cookie (Brief 33 Fix B), every route learned it except this one.
+  //
+  // The consequence was not subtle. Brief 33 Fix B also redirects the dashboard to a bare URL,
+  // so the page's claim POST carries no token at all: every real claim 401'd, no coordinator
+  // could take coordination, and because `isSupportEngaged()` is derived from the claim, every
+  // event then closed on a single party with dual consent bypassed. Two P0 symptoms, one line.
+  //
+  // The private path is DELETED, not repaired. A route verifies through the shared helper or it
+  // does not verify.
+  const caller = await resolveMagicCaller(c);
+  // Guardian-path callers only; the dispatch (authority) path never coordinates.
+  if (!caller || caller.role === 'dispatch') {
     return c.json({ error: 'unauthorized' }, 401);
   }
   const newKey = randomHex(16);
@@ -2212,7 +2250,7 @@ app.get('/v1/c/:id/location/stream', async (c) => {
   return locationStream(c, c.req.param('id'));
 });
 
-// Numeric chunk-by-sequence — registered AFTER the named /audio/* routes so
+// Numeric chunk-by-sequence — registered AFTER the named /audio/ routes so
 // "latest" / "full" / "stream" are not captured by :sequence.
 app.get('/v1/c/:id/audio/:sequence', async (c) => {
   if (!(await requireMagicToken(c))) {

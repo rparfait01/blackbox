@@ -435,3 +435,24 @@ twice. Both facts were true and neither supported removing the channel: the fail
 failure, and quota is answered by adding a second channel alongside, never by deleting the first.
 Had the flag been flipped when SMS was provisioned, two production contacts holding only an email
 endpoint would have gone dark with nothing in the system saying so.)*
+
+## A CHECK CALLS THE ROUTE THE WAY THE CLIENT DOES (ratified 2026-08-04)
+
+**"An acceptance check calls the route the way the client calls it. A check that supplies
+credentials the real client does not send tests a path no browser takes."**
+
+*(Origin: `claim-coordinator` was called by the suite as
+`POST /v1/c/:id/claim-coordinator?t=<token>` — an explicit token the page never sends. After the
+Brief 33 Fix B redirect the page had no token at all, so every real claim 401'd while the suite
+stayed at 102/102. The check exercised a path no browser takes, so it could not have caught it.)*
+
+## A ROUTE VERIFIES THROUGH THE SHARED HELPER OR IT DOES NOT VERIFY (ratified 2026-08-04)
+
+**"A route verifies through the shared helper or it does not verify. A second private verification
+path drifts from the first, and the drift is invisible until it is a live P0."**
+
+*(Origin: every `/v1/c/:id/*` route authenticates through `requireMagicToken`, except
+`claim-coordinator`, which read `c.req.query('t')` and called `verifyTokenRole` itself. When
+`requireMagicToken` learned to accept the `bbview` cookie, every route learned it except that one.
+The result was that no coordinator could take coordination and — because `isSupportEngaged()` is
+derived from the claim — every event closed on a single party with dual consent bypassed.)*

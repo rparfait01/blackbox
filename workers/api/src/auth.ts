@@ -56,9 +56,9 @@ export const requireSession: MiddlewareHandler<{ Bindings: Env; Variables: Vars 
 };
 
 /**
- * Brief 23 — gate the org portal (/v1/org/*). MUST run after requireSession. Requires
+ * Brief 23 — gate the org portal (the /v1/org/ path). MUST run after requireSession. Requires
  * an ACTIVE org_members (STAFF) row meeting the role, and sets `orgId` + `orgRole`
- * from that membership — server truth, never the client. Every /v1/org/* query then
+ * from that membership — server truth, never the client. Every /v1/org/ query then
  * scopes by `c.get('orgId')`, so a coordinator can only ever reach their OWN org.
  * Least privilege: `admin` satisfies any requirement; `coordinator` satisfies only
  * coordinator-level. A revoked membership loses access immediately (status filter).

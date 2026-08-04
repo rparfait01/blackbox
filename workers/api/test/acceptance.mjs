@@ -289,9 +289,26 @@ async function claimCoordinator(eventId) {
   if (!MAGIC) throw new Error('BBX_MAGIC_LINK_SECRET required for coordinator flows');
   const expiry = Date.now() + 60 * 60 * 1000;
   const token = `${expiry}.${hmacHex(MAGIC, `${eventId}.${expiry}`)}`;
-  const claim = await api('POST', `/v1/c/${eventId}/claim-coordinator?t=${token}`);
-  const cookie = bbcoordFrom(claim.setCookie);
-  if (!claim.data?.claimed || !cookie) throw new Error('claim failed: ' + JSON.stringify(claim.data));
+
+  // ═══ CLAIMS THE WAY THE PAGE DOES ═══════════════════════════════════════════════════════════
+  //
+  // This used to POST `/claim-coordinator?t=<token>` — an explicit token the browser never
+  // sends. After Brief 33 Fix B redirected the dashboard to a bare URL the page had no token at
+  // all, so every real claim 401'd while this suite stayed green: it was exercising a path no
+  // browser takes, which is now a standing constraint.
+  //
+  // So it follows the link, keeps the cookie, and claims with the cookie alone — exactly the
+  // sequence a coordinator's browser performs. Every downstream check inherits that path.
+  const entry = await fetch(`${ORIGIN}/c/${eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+  const viewCookie = (entry.headers.get('set-cookie') ?? '').split(';')[0];
+
+  const claim = await api('POST', `/v1/c/${eventId}/claim-coordinator`, {
+    cookie: viewCookie.startsWith('bbview=') ? viewCookie : undefined,
+  });
+  const coordCookie = bbcoordFrom(claim.setCookie);
+  if (!claim.data?.claimed || !coordCookie) throw new Error('claim failed: ' + JSON.stringify(claim.data));
+  // Both cookies travel together afterwards: bbview authenticates, bbcoord proves coordinator.
+  const cookie = viewCookie.startsWith('bbview=') ? `${coordCookie}; ${viewCookie}` : coordCookie;
   return { token, cookie };
 }
 
@@ -2699,6 +2716,59 @@ async function run() {
     assert(other.status === 401, `a spent link was honoured in another browser: ${other.status}`);
     const body = await other.text();
     assert(/fresh link/i.test(body), 'the spent page is a dead end — no self-service path');
+  });
+
+  await check('96. P0: a coordinator claims THE WAY THE PAGE DOES — cookie only, no token', async () => {
+    // THE CHECK THAT WAS MISSING. The suite claimed with an explicit `?t=` token the page never
+    // sends; after Brief 33 Fix B redirected the dashboard to a bare URL, every real claim 401'd
+    // while this suite stayed at 102/102. A check that supplies credentials the client does not
+    // send tests a path no browser takes.
+    const u = await signup();
+    const ev = await trigger(u.session, 'p0-claim');
+    const token = mintDashboardToken(ev.eventId);
+    if (!token) return;
+
+    // Exactly what a coordinator's browser does: follow the tokened link, keep the cookie.
+    const entry = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    const cookie = (entry.headers.get('set-cookie') ?? '').split(';')[0];
+    assert(cookie.startsWith('bbview='), `no view cookie issued: ${cookie}`);
+
+    // The page's own claim POST: NO token in the URL, cookie only.
+    const claim = await fetch(`${ORIGIN}/v1/c/${ev.eventId}/claim-coordinator`, {
+      method: 'POST',
+      headers: { cookie },
+    });
+    const body = await claim.json().catch(() => ({}));
+    assert(claim.status === 200, `tokenless claim was refused ${claim.status} — no coordinator can respond`);
+    assert(body.claimed === true, `claim did not take: ${JSON.stringify(body)}`);
+  });
+
+  await check('97. P0: dual consent HOLDS after a real claim — close_solo must not fire', async () => {
+    // The second symptom, which was a CONSEQUENCE of the first: isSupportEngaged() reads the
+    // claim, so an unclaimable event looked solo and closed on one party. Brief 53 §A was never
+    // wrong; it was correct about an event that genuinely had nobody engaged. This proves the
+    // repair restores dual consent rather than weakening the solo path.
+    const u = await signup();
+    const ev = await trigger(u.session, 'p0-dual');
+    const token = mintDashboardToken(ev.eventId);
+    if (!token) return;
+
+    const entry = await fetch(`${ORIGIN}/c/${ev.eventId}?t=${encodeURIComponent(token)}`, { redirect: 'manual' });
+    const cookie = (entry.headers.get('set-cookie') ?? '').split(';')[0];
+    const claim = await fetch(`${ORIGIN}/v1/c/${ev.eventId}/claim-coordinator`, { method: 'POST', headers: { cookie } });
+    assert(claim.status === 200, `claim failed: ${claim.status}`);
+
+    // Survivor's own gesture. With a coordinator engaged this must NOT close the event.
+    const closed = await signed('POST', `/v1/events/${ev.eventId}/closure-request`, ev.hmacSecret, ev.eventId, {
+      status: 'sat',
+      reasonSecured: 'acceptance: dual consent',
+    });
+    assert(closed.status === 200, `closure-request errored: ${closed.status}`);
+    assert(
+      closed.data?.closed !== true,
+      `DUAL CONSENT BYPASSED — the event closed on one party with a coordinator engaged: ${JSON.stringify(closed.data)}`,
+    );
+    assert(closed.data?.awaitingCoordinator === true, `not awaiting the coordinator: ${JSON.stringify(closed.data)}`);
   });
 
   // ---- cleanup ----

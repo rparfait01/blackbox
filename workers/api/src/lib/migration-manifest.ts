@@ -2,7 +2,7 @@
  * The migration set THIS build of the Worker was written against (Brief 33c §3 — deploy
  * / migration state, live vs pending).
  *
- * The Worker cannot enumerate migrations/*.sql at runtime: those files are never bundled,
+ * The Worker cannot enumerate the migrations directory at runtime: those files are never bundled,
  * and there is no filesystem in the Workers runtime. So the health panel compares what the
  * DATABASE reports applied (d1_migrations) against this list, and anything in the list the
  * database has not applied is PENDING — which is precisely the state that has bitten this
