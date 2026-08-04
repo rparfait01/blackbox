@@ -21,6 +21,7 @@ import { audit } from './audit';
 import { getContactForEvent, listCascadeContacts, listReachableContacts } from './contacts';
 import { regionToEmergency } from './contact-state';
 import { mintMagicToken, MAGIC_LINK_TTL_MS } from './magic-link';
+import { operatorAlert } from './operator-alert';
 
 /** Mark when the current coordinator magic-link was (re)minted (UTC ms), so the
  *  reissue cron can detect an expired link on an unresolved event. */
@@ -74,12 +75,43 @@ async function cascadeIntervalMs(env: Env, userId: string | null): Promise<numbe
  * that is how the cascade HALTS.
  */
 async function advanceStep(env: Env, eventId: string, fromStep: number): Promise<boolean> {
-  const r = await env.DB.prepare(
-    "UPDATE events SET cascadeStep = ? WHERE id = ? AND cascadeStep = ? AND status = 'active' AND coordinatorClaimedAt IS NULL",
-  )
-    .bind(fromStep + 1, eventId, fromStep)
-    .run();
-  return r.meta.changes === 1;
+  try {
+    const r = await env.DB.prepare(
+      "UPDATE events SET cascadeStep = ? WHERE id = ? AND cascadeStep = ? AND status = 'active' AND coordinatorClaimedAt IS NULL",
+    )
+      .bind(fromStep + 1, eventId, fromStep)
+      .run();
+    return r.meta.changes === 1;
+  } catch (error) {
+    // ═══ BRIEF 56 §A3 — A FAILED HALT-CHECK NEVER SUPPRESSES A DISPATCH. ═══════════════════
+    //
+    // This used to let the error propagate, which killed the caller's loop and every step
+    // behind it. That is fail-CLOSED on the alert path: when D1 is unreachable we cannot read
+    // whether a coordinator claimed, and the old behaviour resolved that unknown by silently
+    // notifying nobody — for the rest of the cascade, not just this step.
+    //
+    // The asymmetry is the whole argument. Over-notifying is a contact who did not need to
+    // hear; under-notifying is a survivor nobody reached. So an unreadable answer sends.
+    //
+    // WHAT THIS COSTS, STATED: this UPDATE is also the atomic per-step claim that stops the
+    // stagger, the DO alarm and the cron from double-notifying. Failing open here gives up
+    // that guarantee for the duration of a D1 outage, so a contact may be messaged twice. That
+    // is the trade §A3 specifies, taken deliberately and in the direction the brief names.
+    //
+    // ONLY A THROW takes this path. `changes === 0` is a real answer — claimed, closed, or
+    // already advanced by another driver — and still halts.
+    await audit(env, eventId, 'cascade_halt_check_failed_open', null, {
+      step: fromStep,
+      detail: String(error).slice(0, 160),
+    }).catch(() => undefined);
+    await operatorAlert(
+      env,
+      'cascade_halt_check_unreadable',
+      `event ${eventId} step ${fromStep}: could not read claim state (${String(error).slice(0, 120)}). ` +
+        'The step was DISPATCHED anyway per Brief 56 §A3 — a contact may be notified twice.',
+    ).catch(() => undefined);
+    return true;
+  }
 }
 
 interface ActivationCtx {

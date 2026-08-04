@@ -194,6 +194,32 @@ const TRIGGER_LABEL: Record<string, string> = {
   tamper: 'Tamper',
 };
 
+/**
+ * Brief 56 §A2 — WHO ELSE ALREADY KNOWS.
+ *
+ * The cascade halts the moment a coordinator claims, and it always has. What no surface said is
+ * where in the chain the halt landed. A live device test made the cost obvious: claim latency
+ * from the first notification is 6.6–13.9s and the second contact is dispatched at T+10s, so
+ * whether one contact or two had been reached was decided by a coin flip that nobody could see
+ * afterwards. Both the coordinator and the survivor have a direct interest in the answer.
+ *
+ * Reads `cascadeStepAtClaim`, captured in the same atomic UPDATE as the claim itself.
+ */
+function cascadeReachHtml(state: ContactState): string {
+  const { dispatched, total, notifiedBeforeClaim } = state.cascade;
+  if (total === 0) {
+    return '';
+  }
+  if (notifiedBeforeClaim == null) {
+    return `<div class="muted">${dispatched} of ${total} contacts notified. No one has taken coordination yet — the cascade is still running.</div>`;
+  }
+  const extra = dispatched > notifiedBeforeClaim ? ` (${dispatched} in total; the rest could not be halted — see the operator log.)` : '';
+  return `<div class="muted"><b>${notifiedBeforeClaim} of ${total}</b> contacts were notified before you took coordination. The remaining ${Math.max(
+    0,
+    total - notifiedBeforeClaim,
+  )} were not contacted.${extra}</div>`;
+}
+
 /** Frozen ORIGIN block — the immutable initial-contact anchor (Fix Brief 5 D1). */
 function originHtml(state: ContactState): string {
   const o = state.origin;
@@ -364,6 +390,11 @@ export function renderDashboardPage(opts: DashboardOpts): string {
   <section class="sec sec-situation">
     <div class="label">Situation · Detected facts (latched)</div>
     <div id="situation">${situationHtml(state)}</div>
+  </section>
+
+  <section class="sec">
+    <div class="label">Who else was notified</div>
+    <div id="cascadeReach">${cascadeReachHtml(state)}</div>
   </section>
 
   <section class="sec sec-camera">

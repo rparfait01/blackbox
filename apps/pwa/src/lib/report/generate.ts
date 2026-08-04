@@ -48,6 +48,14 @@ export interface ReportEventSummary {
    *  selects it); declared here so the evidence label can render in HER local time rather
    *  than the reviewing device's — the two differ the moment she travels. */
   tzOffsetMinutes: number | null;
+  /** Brief 56 §B2 — recorded segments this entry holds. The deletion flow names what is being
+   *  destroyed rather than counting events; "delete 12 recordings" without saying which twelve,
+   *  or how much is in each, is the shape the brief forbids. */
+  segments?: number;
+  /** Brief 56 §B4 — the capture was destroyed on the owner's consent. The ENTRY REMAINS in her
+   *  list, marked; only the media is gone. Removing the row would erase her own record that
+   *  something happened, which is a second deletion she never asked for. */
+  capturePurged?: boolean;
 }
 
 /** Everything that can go wrong, named — so the UI can say something true rather than

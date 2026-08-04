@@ -76,4 +76,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0061_org_custody',
   '0062_coordinator_view_sessions',
   '0063_transcription_state',
+  '0064_cascade_step_at_claim',
 ];

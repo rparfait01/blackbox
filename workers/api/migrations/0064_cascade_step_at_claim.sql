@@ -1,0 +1,15 @@
+-- Brief 56 §A2 — HOW MANY CONTACTS WERE REACHED BEFORE A COORDINATOR TOOK THIS.
+--
+-- The cascade halts on claim and always has. What nobody could see is where in the chain the
+-- halt landed: a coordinator who claims at T+8s stops the chain after one contact, and one who
+-- claims at T+12s stops it after two, and both surfaces rendered those identically. A survivor
+-- reading her own closure report could not tell how far word of the incident had travelled, and
+-- the coordinator could not tell who else already knows.
+--
+-- Recorded at CLAIM TIME, in the same atomic UPDATE that records the claim, so it is the value
+-- the halt actually acted on rather than one reconstructed later from audit rows that the Brief
+-- 36 §11 truncation proved can go missing.
+--
+-- NULL means no coordinator has claimed this event. That is distinct from 0, which means one
+-- claimed before any contact was dispatched at all.
+ALTER TABLE events ADD COLUMN cascadeStepAtClaim INTEGER;

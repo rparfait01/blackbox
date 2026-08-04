@@ -9,6 +9,7 @@
  */
 
 import { formatDtg, THREAT_ORDER as SHARED_THREAT_ORDER } from '@blackbox/shared';
+import { listCascadeContacts } from './contacts';
 import type { Env } from '../types';
 
 const TRAIL_WINDOW_MS = 5 * 60 * 1000; // last 5 minutes of positions
@@ -66,6 +67,19 @@ export interface ContactState {
   origin: OriginSnapshot | null;
   /** Latched, monotonic situation summary assembled from detected facts. D2/D3. */
   situation: Situation;
+  /**
+   * Brief 56 §A2 — HOW FAR WORD OF THIS INCIDENT TRAVELLED BEFORE SOMEONE TOOK IT.
+   *
+   * The cascade halts on claim and always has, but where in the chain the halt landed was
+   * invisible on every surface. A coordinator claiming at T+8s stops it after one contact; at
+   * T+12s, after two. Both rendered identically, so neither the coordinator nor the survivor
+   * could tell who else already knows — which is a question both of them actually have.
+   *
+   * `notifiedBeforeClaim` is null when nobody has claimed. `dispatched` keeps counting after a
+   * claim only in the fail-open case (§A3), so the two can differ and are reported separately
+   * rather than one being derived from the other.
+   */
+  cascade: { dispatched: number; total: number; notifiedBeforeClaim: number | null };
   /** Closure request the coordinator reviews (Brief 9 Phase D). */
   closure: {
     requested: boolean;
@@ -278,7 +292,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT userId, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt, transcriptionState, transcriptionDetail FROM events WHERE id = ?',
+    'SELECT userId, userHash, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt, transcriptionState, transcriptionDetail, cascadeStep, cascadeStepAtClaim FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -291,6 +305,9 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       lastHeartbeatAt: number | null;
       lostAt: number | null;
       escalatedAt: number | null;
+      userHash: string | null;
+      cascadeStep: number | null;
+      cascadeStepAtClaim: number | null;
       closeRequestStatus: string | null;
       tamperingAt: number | null;
       escalationTier: string | null;
@@ -394,8 +411,18 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       }
     : null;
 
+  // §A2 — the denominator is the SAME list the cascade actually walks, read through the same
+  // helper the dispatcher uses. Deriving it from a second query would let the two drift, and a
+  // count that disagrees with what was dispatched is worse than no count.
+  const cascadeContacts = await listCascadeContacts(env, { userId: event.userId, userHash: event.userHash });
+
   const active = event.status === 'active';
   return {
+    cascade: {
+      dispatched: event.cascadeStep ?? 0,
+      total: cascadeContacts.length,
+      notifiedBeforeClaim: event.cascadeStepAtClaim,
+    },
     active,
     status: event.status,
     startedAt: event.createdAt,

@@ -17,6 +17,12 @@ import type { Env } from '../types';
 
 export interface ReportEventRow {
   eventId: string;
+  /** Brief 56 §B2 — how many recorded segments this event holds, so the flow can name what
+   *  is being destroyed instead of a bare count of events. */
+  segments?: number;
+  /** Brief 56 §B4 — the capture was already destroyed on the owner's consent. The entry stays
+   *  in her list; only the media is gone. */
+  capturePurged?: boolean;
   createdAt: number;
   closedAt: number | null;
   status: string;
@@ -51,11 +57,23 @@ const EVENT_COLUMNS =
  */
 export async function listOwnEvents(env: Env, userId: string, limit = 50): Promise<ReportEventRow[]> {
   const { results } = await env.DB.prepare(
-    `SELECT ${EVENT_COLUMNS} FROM events WHERE userId = ? AND isTest = 0 ORDER BY createdAt DESC LIMIT ?`,
+    // Brief 56 §B — two columns the deletion flow cannot work without, both derived here rather
+    // than in a second round of per-event requests:
+    //
+    //   segments      — what she is actually choosing to destroy. "Delete 12 recordings" without
+    //                   saying which twelve, or how much is in each, is the shape §B2 forbids.
+    //   capturePurged — §B4. After a deletion the ENTRY REMAINS, marked. Removing the row would
+    //                   erase her own record that something happened, which is a second deletion
+    //                   she did not ask for. Read from the audit row the purge writes, so the
+    //                   marker and the verdict (`PURGED_BY_CONSENT`) always agree.
+    `SELECT ${EVENT_COLUMNS},
+       (SELECT COUNT(*) FROM chunks_index c WHERE c.eventId = events.id) AS segments,
+       (SELECT COUNT(*) FROM audit_log a WHERE a.eventId = events.id AND a.action = 'chunks.purged_owner_consent') > 0 AS capturePurged
+     FROM events WHERE userId = ? AND isTest = 0 ORDER BY createdAt DESC LIMIT ?`,
   )
     .bind(userId, limit)
     .all<ReportEventRow>();
-  return results ?? [];
+  return (results ?? []).map((r) => ({ ...r, capturePurged: Number(r.capturePurged) === 1 }));
 }
 
 async function getOwnEvent(env: Env, userId: string, eventId: string): Promise<ReportEventRow | null> {

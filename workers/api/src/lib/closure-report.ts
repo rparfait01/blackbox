@@ -34,6 +34,22 @@ export interface ClosureReport {
     locationFixes: number;
     integrityHead: string | null;
   };
+  /**
+   * Brief 56 §A2 — HOW FAR WORD OF THIS INCIDENT TRAVELLED.
+   *
+   * The cascade halts the moment a coordinator claims. Where in the chain that halt landed was
+   * recorded nowhere a survivor could read, and it is a question she has: who else knows. A live
+   * device test measured claim latency at 6.6-13.9s against a second contact dispatched at T+10s,
+   * so whether one person or two heard about her incident was decided inside a few hundred
+   * milliseconds — and then never written down.
+   *
+   * `notifiedBeforeClaim` is null when nobody ever claimed, which is a different fact from zero.
+   */
+  cascade: {
+    contactsNotified: number;
+    contactsTotal: number;
+    notifiedBeforeClaim: number | null;
+  };
 }
 
 /** Assemble + persist the write-once closure report. Idempotent per event. */
@@ -73,6 +89,11 @@ export async function buildClosureReport(
   const disp = disposition(event.closeRequestStatus, event.tamperingAt, event.feedLostAt);
   const report: ClosureReport = {
     version: 'blackbox-closure-1',
+    cascade: {
+      contactsNotified: state?.cascade.dispatched ?? 0,
+      contactsTotal: state?.cascade.total ?? 0,
+      notifiedBeforeClaim: state?.cascade.notifiedBeforeClaim ?? null,
+    },
     eventId,
     generatedAt: now,
     generatedDtg: formatDtg(now),

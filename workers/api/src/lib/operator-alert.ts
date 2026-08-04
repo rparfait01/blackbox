@@ -87,6 +87,10 @@ export const ALERT_TYPES = [
   // list describes "the alert worked and the evidence does not exist", which is why it ran for 74
   // seconds without anyone being told.
   'event_capturing_nothing',
+  // Brief 56 §A3 — the cascade could not read whether a coordinator had claimed, and DISPATCHED
+  // rather than suppress. Error level because it means D1 was unreachable on the alert path and
+  // the per-step double-notify guarantee was surrendered for the duration.
+  'cascade_halt_check_unreadable',
 ] as const;
 
 export type AlertType = (typeof ALERT_TYPES)[number];

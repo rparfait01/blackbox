@@ -1803,8 +1803,12 @@ app.post('/v1/c/:id/claim-coordinator', async (c) => {
   // solo survivor closed it a moment earlier, the claim matches zero rows and is
   // reported already-claimed/closed — no window where a solo close and a claim both
   // succeed on the same event.
+  // Brief 56 §A2 — `cascadeStepAtClaim = cascadeStep` is captured in THIS statement, not read
+  // before or after it. The claim and the halt are the same atomic write, so the step count
+  // recorded here is exactly the one the halt acted on; a separate read could observe a different
+  // value if a cascade step landed in between, and would then misreport how far word had spread.
   const claim = await c.env.DB.prepare(
-    "UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ? WHERE id = ? AND coordinatorClaimedAt IS NULL AND status = 'active'",
+    "UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ?, cascadeStepAtClaim = cascadeStep WHERE id = ? AND coordinatorClaimedAt IS NULL AND status = 'active'",
   )
     .bind(Date.now(), newKey, eventId)
     .run();

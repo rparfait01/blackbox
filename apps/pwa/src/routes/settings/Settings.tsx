@@ -20,6 +20,7 @@ import { ContactTabs } from './ContactTabs';
 import { AnonymousTally } from './AnonymousTally';
 import { CertifiedReport } from './CertifiedReport';
 import { EvidenceReview } from './EvidenceReview';
+import { DeleteRecordings } from './DeleteRecordings';
 
 interface MeData {
   user: { name: string | null; email: string | null; phone: string | null; displayMode: string | null; regionId: string | null; nationality: string | null; hasDuressCode: boolean; entitlement?: string; entitlementSource?: string | null };
@@ -76,6 +77,7 @@ export function Settings(): JSX.Element {
   // Evidence review: her own captures, decrypted and played on this device. Same gate as
   // the official report (both need sealed custody), same honest state when it is off.
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // Brief 33b — THE DOOR to the console. `null` until the server answers, and null is
   // rendered as "no door": this fails CLOSED, so a slow or failed request shows nothing
   // rather than a link that would only 403.
@@ -485,6 +487,21 @@ export function Settings(): JSX.Element {
           ) : (
             <NotYet>Available when secure storage is enabled</NotYet>
           )}
+
+          {/* Brief 56 §B — DELETION IS HERS, and it belongs beside the review rather than buried
+              under an account-management heading. She reaches it from the same place she looks at
+              her own recordings, because deciding to destroy one usually follows looking at it.
+
+              Deliberately NOT gated on `envelopeEncryptionEnabled`. Review needs the envelope key
+              to open the bytes; deleting them does not, and gating deletion behind a feature flag
+              would mean a survivor who needs recordings off her phone could be told to come back
+              later. Availability of destruction is a safety property, not a feature. */}
+          <button
+            onClick={() => setDeleteOpen(true)}
+            className="mt-2.5 w-full rounded-full border border-med-text/20 py-3 text-sm text-med-text/60"
+          >
+            Delete my recordings
+          </button>
         </Group>
 
         {/* Brief 26 read side — her own captures, opened on her device with her key. No
@@ -540,6 +557,7 @@ export function Settings(): JSX.Element {
       {tallyOpen ? <AnonymousTally onClose={() => setTallyOpen(false)} /> : null}
       {reportOpen ? <CertifiedReport onClose={() => setReportOpen(false)} /> : null}
       {reviewOpen ? <EvidenceReview onClose={() => setReviewOpen(false)} /> : null}
+      {deleteOpen ? <DeleteRecordings onClose={() => setDeleteOpen(false)} /> : null}
     </main>
   );
 }
