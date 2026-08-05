@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 // @ts-expect-error -- .mjs deploy script, no type declarations
-import { HEADROOM, headroomVerdict } from '../../../scripts/headroom.mjs';
+import { FREE_TIER_FLOOR, HEADROOM, headroomVerdict } from '../../../scripts/headroom.mjs';
 
 /**
  * BRIEF 33 FIX C — AN UNMEASURED METRIC IS NOT A MEASUREMENT.
@@ -63,6 +63,35 @@ describe('the bootstrap escape is explicit and loud', () => {
         HEADROOM.REFUSE,
       );
     }
+  });
+});
+
+describe('measured count, unknown ceiling — the fourth state', () => {
+  // Removing the fictional 100,000 denominator made usedFraction null, and the refuse-on-
+  // unmeasured rule read that as "we know nothing" and blocked EVERY deploy. It is not the same
+  // thing: the count is real, only the config value is missing. The gate caught this collision
+  // between two of my own changes before a human did.
+  it('proceeds below the smallest plan that exists — there is provably room on any plan', () => {
+    const v = headroomVerdict({ configured: true, limit: null, used: 1_616, usedFraction: null }, 0.9, {});
+    expect(v.state).toBe(HEADROOM.OK);
+    expect(v.message).toMatch(/UNKNOWN PLAN/);
+  });
+
+  it('REFUSES once the count passes that floor — beyond it we genuinely cannot say', () => {
+    const v = headroomVerdict(
+      { configured: true, limit: null, used: FREE_TIER_FLOOR, usedFraction: null },
+      0.9,
+      {},
+    );
+    expect(v.state).toBe(HEADROOM.REFUSE);
+    expect(v.message).toMatch(/PLAN_DAILY_REQUESTS is not set/);
+  });
+
+  it('is NOT the unmeasured state — a real count is not the same as no token', () => {
+    const known = headroomVerdict({ configured: true, limit: null, used: 10, usedFraction: null }, 0.9, {});
+    const blind = headroomVerdict({ configured: false }, 0.9, {});
+    expect(known.state).toBe(HEADROOM.OK);
+    expect(blind.state).toBe(HEADROOM.REFUSE);
   });
 });
 

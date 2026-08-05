@@ -17,6 +17,9 @@
 /** Refuse to begin a deploy at or above this fraction of the plan limit. */
 export const HEADROOM_REFUSE_ABOVE = 0.9;
 
+/** The smallest Workers daily limit that exists. Below this, no plan can be exhausted. */
+export const FREE_TIER_FLOOR = 100_000;
+
 /** States a headroom read can be in. NOT_MEASURED is honest; it is never treated as room. */
 export const HEADROOM = {
   OK: 'OK',
@@ -67,6 +70,38 @@ export function headroomVerdict(requests, threshold = HEADROOM_REFUSE_ABOVE, env
   if (!requests || !requests.configured) {
     return unmeasured('no analytics token configured — see Brief 33 Fix A §F');
   }
+  // ═══ MEASURED COUNT, UNKNOWN CEILING — A FOURTH STATE, NOT THE SECOND. ═════════════════════
+  //
+  // Removing the fictional 100,000 denominator made `usedFraction` null, and the unmeasured rule
+  // above read that as "we know nothing" and refused every deploy. It is not the same thing: the
+  // COUNT is real and displayed; what is missing is a config value.
+  //
+  // Refusing here would block all deploys until someone types a number, which protects nothing —
+  // this account demonstrably serves a million requests a day. But proceeding with no ceiling at
+  // all is the blind-default this brief exists to remove.
+  //
+  // So it proceeds against the SMALLEST PLAN THAT EXISTS. Below that floor no plan of any tier
+  // could be exhausted, so there is provably room whatever the real limit turns out to be. Above
+  // it, we genuinely do not know, and it refuses.
+  if (requests.limit == null && typeof requests.used === 'number') {
+    if (requests.used >= FREE_TIER_FLOOR * HEADROOM_REFUSE_ABOVE) {
+      return {
+        state: HEADROOM.REFUSE,
+        message: [
+          '',
+          `✗ DEPLOY REFUSED: ${requests.used.toLocaleString()} requests today and PLAN_DAILY_REQUESTS is not set.`,
+          `  Past ${Math.round(FREE_TIER_FLOOR * HEADROOM_REFUSE_ABOVE).toLocaleString()} we cannot say there is room without knowing the plan.`,
+          '',
+          '  Set PLAN_DAILY_REQUESTS to this account’s real daily limit.',
+        ].join(String.fromCharCode(10)),
+      };
+    }
+    return {
+      state: HEADROOM.OK,
+      message: `headroom: ${requests.used.toLocaleString()} today · UNKNOWN PLAN — under the ${FREE_TIER_FLOOR.toLocaleString()} floor, so there is room on any plan`,
+    };
+  }
+
   const used = requests.usedFraction;
   if (used == null) {
     return unmeasured('analytics returned no count');
