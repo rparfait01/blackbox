@@ -78,3 +78,11 @@ workers/*_files/
 .latency/
 .facade/
 workers/api/test/.acceptance-receipt.json
+
+# Cloudflare analytics token (Brief 57). A live credential handed over as a file — it was in the
+# working tree UNIGNORED and untracked, which is one `git add -A` from being in history forever.
+# Broad patterns, because the next one will not be named exactly this.
+analytics_token*
+*analytics_token*
+*_token.txt
+*.token
