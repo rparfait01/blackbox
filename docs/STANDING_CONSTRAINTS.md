@@ -580,3 +580,16 @@ sweep would have deleted it, because a connected pairing is expired too.*
 
 *The test enumerates the evidence tables and fails if any cleanup statement names one. Sweep the
 ABILITY to use. Keep the record.)*
+
+
+## WHEN CLASSIFYING DATA, THE DEFAULT IS RECORD (ratified 2026-08-05)
+
+**"When classifying data as credential or record, the default is RECORD. Both errors are not
+equal: keeping a dead credential costs a row, deleting a record destroys proof that cannot be
+recreated. Twice this week the line was drawn toward deletion — enrollment codes, then
+line_pairings, where a connected pairing is expired by construction and the sweep would have
+destroyed the record of who connected a LINE contact and when."**
+
+*Enforced, not merely written: `purgeExpiredCredentials` carries a JUSTIFICATIONS table, one entry
+per swept table, and a guard fails any sweep that adds a table without a written reason why it is
+a credential and not a record.*

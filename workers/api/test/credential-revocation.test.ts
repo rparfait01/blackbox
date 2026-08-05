@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   REPLAY_SAFE,
+  SWEEP_JUSTIFICATIONS,
   SPENT_CREDENTIAL_RETENTION_MS,
   purgeExpiredCredentials,
   revokeEventCredentials,
@@ -158,6 +159,45 @@ describe('the purge only names credential stores', () => {
     } as unknown as Env;
     const counts = await purgeExpiredCredentials(env, 1_800_000_000_000);
     expect(Object.values(counts).every((v) => v === -1)).toBe(true);
+  });
+});
+
+describe('a table cannot be swept without a written justification', () => {
+  it('EVERY table the purge names has an entry saying why it is a credential', async () => {
+    // The enforcement half of the standing rule. Twice in one week the credential/record line was
+    // drawn toward deletion, both times plausibly, both times by me. A table can no longer be
+    // added to a sweep on someone's judgement in the moment — it has to be argued in writing, and
+    // this fails the moment a DELETE names a table with no entry.
+    const { env, sql } = recordingEnv();
+    await purgeExpiredCredentials(env, 1_800_000_000_000);
+    const swept = sql
+      .filter((q) => q.startsWith('DELETE FROM '))
+      .map((q) => q.slice('DELETE FROM '.length).split(/\s/)[0]);
+    expect(swept.length).toBeGreaterThan(0);
+    for (const table of swept) {
+      expect(
+        SWEEP_JUSTIFICATIONS[table],
+        `${table} is swept with no written justification for why it is a credential and not a record`,
+      ).toBeTruthy();
+    }
+  });
+
+  it('a justification is an argument, not a label', () => {
+    // A one-word entry would satisfy the check above and defeat its purpose.
+    for (const [table, why] of Object.entries(SWEEP_JUSTIFICATIONS)) {
+      expect(why.length, `${table}'s justification is too short to be an argument`).toBeGreaterThan(80);
+    }
+  });
+
+  it('no justification exists for a table that is not swept — the list stays honest', async () => {
+    const { env, sql } = recordingEnv();
+    await purgeExpiredCredentials(env, 1_800_000_000_000);
+    const swept = new Set(
+      sql.filter((q) => q.startsWith('DELETE FROM ')).map((q) => q.slice('DELETE FROM '.length).split(/\s/)[0]),
+    );
+    for (const table of Object.keys(SWEEP_JUSTIFICATIONS)) {
+      expect(swept.has(table), `${table} has a justification but is not swept — stale entry`).toBe(true);
+    }
   });
 });
 

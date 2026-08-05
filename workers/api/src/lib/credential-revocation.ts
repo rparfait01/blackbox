@@ -151,6 +151,40 @@ export const REPLAY_SAFE = SPENT_CREDENTIAL_RETENTION_MS > CAPABILITY_TTL_MS * 2
  * `closure_reports`, `chunks_index`, `integrity_records` and `events` appear nowhere in this
  * function and must never be added to it.
  */
+/**
+ * ═══ EVERY SWEPT TABLE STATES WHY IT IS A CREDENTIAL AND NOT A RECORD. ═══════════════════════
+ *
+ * The standing rule: when classifying data, the DEFAULT IS RECORD. The two errors are not equal —
+ * keeping a dead credential costs a row; deleting a record destroys proof that cannot be
+ * recreated. That line was drawn toward deletion twice in one week (enrollment codes, then
+ * connected LINE pairings), both times by me, both times plausibly.
+ *
+ * So a table cannot be swept on someone's judgement in the moment. It has to be argued here, in
+ * writing, and the guard fails a sweep that names a table with no entry in this table.
+ */
+export const SWEEP_JUSTIFICATIONS: Record<string, string> = {
+  otp_codes:
+    'A one-time login code. After expiry it authorises nothing and proves nothing: the LOGIN it ' +
+    'authorised is recorded in audit_log, which is the record. This row is the key, not the door.',
+  password_resets:
+    'A reset token. Same shape: the reset itself is audited; this row only lets someone perform ' +
+    'one, and after expiry it cannot.',
+  webauthn_challenges:
+    'A nonce held for the duration of one WebAuthn ceremony. It has no meaning outside that ' +
+    'exchange and identifies nobody afterwards — the CREDENTIAL it registered lives in ' +
+    'webauthn_credentials, which is never swept.',
+  account_magic_links:
+    'A sign-in link. The sign-in is audited; the link is the mechanism. Expired, it is inert.',
+  consumed_capabilities:
+    'REPLAY PREVENTION, and the one row here that is a live safety control rather than a ' +
+    'leftover. Safe to delete ONLY after the capability could no longer be replayed anyway — ' +
+    'see REPLAY_SAFE, which asserts the retention outlives CAPABILITY_TTL_MS.',
+  line_pairings:
+    'ONLY rows that were never connected. An unscanned nonce is a credential that expired unused. ' +
+    'A CONNECTED pairing is a RECORD — proof of who connected a LINE contact and when — and is ' +
+    'excluded by the WHERE clause. The first version of this sweep did not make that distinction.',
+};
+
 export async function purgeExpiredCredentials(env: Env, now = Date.now()): Promise<Record<string, number>> {
   const cutoff = now - SPENT_CREDENTIAL_RETENTION_MS;
   const counts: Record<string, number> = {};
