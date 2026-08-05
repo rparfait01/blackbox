@@ -20,6 +20,7 @@
  */
 
 import { audit } from './audit';
+import { revokeEventCredentials } from './credential-revocation';
 import { broadcastEventChange } from '../event-channel';
 import { buildClosureReport } from './closure-report';
 import { renotifyContactsNoGuardian } from './notify';
@@ -140,6 +141,8 @@ export async function closeFeedLostEvents(env: Env): Promise<void> {
     await env.DB.prepare('UPDATE events SET status = ?, closedAt = ?, closedBy = ?, feedLostAt = ? WHERE id = ?')
       .bind('closed', now, 'feed_lost', now, row.id)
       .run();
+    // Brief 57 — credential dies with the event.
+    await revokeEventCredentials(env, row.id);
     // Brief 38 §D — the SERVER declares this, because the device is the thing that stopped.
     // A sustained feed loss is precisely the abnormal termination this product exists for: a
     // phone seized, destroyed, or out of battery cannot report its own ending.
@@ -240,6 +243,8 @@ export async function closeOrphanedEvents(env: Env): Promise<void> {
     )
       .bind('closed', now, 'orphan_auto_close', now, 'system', FEED_LOST_NOTE, row.id, 'active')
       .run();
+    // Brief 57 — credential dies with the event.
+    await revokeEventCredentials(env, row.id);
     // §D — same reasoning: an orphaned event never received a normal stop, so it is ABNORMAL
     // unless a terminal marker already made it COMPLETE (the call is idempotent and only
     // moves a capture out of IN_PROGRESS).

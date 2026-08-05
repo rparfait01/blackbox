@@ -35,6 +35,7 @@
  */
 
 import { audit } from './audit';
+import { revokeEventCredentials } from './credential-revocation';
 import { buildClosureReport } from './closure-report';
 import { broadcastEventChange } from '../event-channel';
 import { enqueueSeal } from './seal';
@@ -160,6 +161,10 @@ async function performClose(
     .bind(now, closedBy, now, closedBy, eventId)
     .run();
   if (res.meta.changes !== 1) return false;
+  // Brief 57 — the coordinator credential dies with the event. Immediately, so the dashboard's
+  // NEXT poll gets the terminal envelope and stops without anyone reloading anything. Never
+  // throws; the cron sweep is the backstop if this call is ever missed or added late.
+  await revokeEventCredentials(env, eventId);
   // Brief 40 §F1/§F2 — a normal close is a terminal state, so it seals. This is ONE non-
   // throwing INSERT and nothing downstream waits on it: closure is the survivor's exit from
   // a live alert, and no archival step may stand between her and it, delay it, or fail it.

@@ -543,7 +543,8 @@ async function resolveSingleActive(
   // disposition shape as the operator force-close / 0017 dedupe.
   for (const row of rows.slice(1)) {
     await c.env.DB.prepare(
-      'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ?, reasonSecured = ? WHERE id = ? AND status = ?',
+      // Brief 57 — revocation follows this write; see revokeEventCredentials.
+    'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ?, reasonSecured = ? WHERE id = ? AND status = ?',
     )
       .bind(
         'closed',
@@ -1400,6 +1401,7 @@ app.post('/v1/admin/events/:id/force-close', async (c) => {
   }
   const now = Date.now();
   await c.env.DB.prepare(
+    // Brief 57 — revocation follows this write; see revokeEventCredentials.
     'UPDATE events SET status = ?, closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ?, reasonSecured = ? WHERE id = ? AND status = ?',
   )
     .bind('closed', now, 'operator_force_close', now, 'operator', reason, eventId, 'active')
@@ -1544,15 +1546,35 @@ async function resolveMagicCaller(c: AppContext): Promise<MagicCaller | null> {
   const eventId = c.req.param('id') ?? '';
 
   const viewSession = await getViewSession(c.env, getCookie(c, VIEW_COOKIE) ?? '', eventId);
-  if (viewSession) {
-    return { role: (viewSession.role as MagicCaller['role']) ?? 'guardian', via: 'cookie' };
-  }
+  const caller: MagicCaller | null = viewSession
+    ? { role: (viewSession.role as MagicCaller['role']) ?? 'guardian', via: 'cookie' }
+    : await (async (): Promise<MagicCaller | null> => {
+        const secret = c.env.MAGIC_LINK_SECRET;
+        if (!secret) return null;
+        const token = c.req.query('t') ?? '';
+        const { verdict, role } = await verifyTokenRole(secret, eventId, token);
+        return verdict === 'ok' ? { role: role as MagicCaller['role'], via: 'token' } : null;
+      })();
+  if (!caller) return null;
 
-  const secret = c.env.MAGIC_LINK_SECRET;
-  if (!secret) return null;
-  const token = c.req.query('t') ?? '';
-  const { verdict, role } = await verifyTokenRole(secret, eventId, token);
-  return verdict === 'ok' ? { role: role as MagicCaller['role'], via: 'token' } : null;
+  // ═══ BRIEF 57 — THE CREDENTIAL DIES WITH THE EVENT. ═══════════════════════════════════════
+  //
+  // Magic tokens are stateless HMACs, so before this there was nothing to delete and no way to
+  // end one early: a closed event's dashboard link kept working until its own expiry, and its
+  // view-session cookie kept working for as long as the row survived. A coordinator credential
+  // exists for the duration of a live event and not one second longer.
+  //
+  // `dispatch` SURVIVES, deliberately. That token is not a coordinator session — it is minted by
+  // a coordinator to hand evidence to authorities, who may open it hours after the alert ends.
+  // Revoking it at closure would destroy an evidence handoff at the moment it matters, which the
+  // rule's own "critical to evidence" clause excludes.
+  if (caller.role !== 'dispatch') {
+    const ev = await c.env.DB.prepare('SELECT credentialsRevokedAt FROM events WHERE id = ?')
+      .bind(eventId)
+      .first<{ credentialsRevokedAt: number | null }>();
+    if (ev?.credentialsRevokedAt != null) return null;
+  }
+  return caller;
 }
 
 async function requireMagicToken(c: AppContext): Promise<boolean> {

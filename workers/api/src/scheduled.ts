@@ -20,6 +20,7 @@ import { closeFeedLostEvents, closeOrphanedEvents, runEscalation } from './lib/c
 import { sweepExpiredCanaryEvents } from './lib/canary';
 import { alertOnUnsealed, drainSealQueue } from './lib/seal';
 import { drainAlertSummaries, operatorAlert } from './lib/operator-alert';
+import { purgeExpiredCredentials, sweepClosedEventCredentials } from './lib/credential-revocation';
 import type { Env } from './types';
 
 /** A heartbeat is "stale" after this long without a ping (heartbeat is every 10s). */
@@ -147,6 +148,12 @@ export const scheduled = async (
       // Brief 55 §A2 — an active event with no capture at all. Placed BEFORE the integrity and
       // seal jobs because it is about a live incident rather than a stored one.
       await boundedJob('no_capture', () => alertOnEventsCapturingNothing(env));
+      // Brief 57 — a credential outliving its event. The backstop for the five terminal writers
+      // that call revokeEventCredentials directly, and the ONLY thing that would catch a sixth.
+      await boundedJob('revoke_closed', () => sweepClosedEventCredentials(env).then(() => undefined));
+      // Brief 57 — spent and expired single-use credentials. A sweep, not a one-off: if anything
+      // re-creates them, this finds them on the next tick.
+      await boundedJob('purge_credentials', () => purgeExpiredCredentials(env).then(() => undefined));
       await boundedJob('integrity', () => runIntegrityScan(env, workerOrigin(env)));
       // Brief 35 §C — TTL backstop for a canary run that died before its explicit purge.
       await boundedJob('canary_ttl', () => sweepExpiredCanaryEvents(env).then(() => undefined));
