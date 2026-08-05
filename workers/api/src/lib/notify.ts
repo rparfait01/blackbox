@@ -215,6 +215,20 @@ async function dispatchStep(
   // `via` records WHICH driver fired it (see CascadeDriver).
   await audit(env, eventId, 'cascade_fired', actorHash, { step, via });
   if (contact.isEmergency) {
+    // ═══ DELIBERATELY DORMANT — DO NOT REMOVE AS DEAD CODE. ═══════════════════════════════════
+    //
+    // On production this write has never fired and, as things stand, cannot: no account has an
+    // `emergency`-role contact, so the rung it marks does not exist yet. A future reader will
+    // find a column nothing reads and a write nothing triggers, and will be right about the
+    // facts and wrong about the conclusion.
+    //
+    // It is the TERMINAL RUNG's hook. The terminal rung is a real voice call to 110/911 with a
+    // dispatcher on the line — see docs/BRIEF_056_TERMINAL_RUNG_REPORT.md — and it is blocked on
+    // a licensing question, not an engineering one. Ruled 2026-08-05: this stays, dormant, until
+    // that rung is built. It is NOT to be repurposed into a 90-second feed-loss close; the
+    // terminal rung is a CALL, not a closure, and the two must not be conflated because one of
+    // them happens to be convenient.
+    //
     // Brief 56 — THE WRITE THAT DID NOT EXIST. `closeFeedLostEvents` gates on this column, so
     // without it the 90-second close for a phone that physically stopped — seized, smashed, out
     // of battery — was unreachable code. Written the moment the rung fires rather than after the

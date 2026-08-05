@@ -161,6 +161,30 @@ describe('the purge only names credential stores', () => {
   });
 });
 
+describe('a connected pairing is a RECORD, not a spent credential', () => {
+  it('the sweep only removes pairings that were never connected', async () => {
+    // A connected pairing is expired too — expiresAt was stamped when the nonce was minted. The
+    // first version of this sweep deleted those, destroying the record of who connected a LINE
+    // contact and when: the same shape as an enrollment redemption. Delivery was never at risk
+    // (the live address lives in contact_endpoints), but the enrollment record was.
+    const { env, sql } = recordingEnv();
+    await purgeExpiredCredentials(env, 1_800_000_000_000);
+    const stmt = sql.find((q) => q.includes('DELETE FROM line_pairings'));
+    expect(stmt).toBeDefined();
+    expect(stmt, 'a connected pairing would be deleted').toContain("status != 'connected'");
+    expect(stmt).toContain('connectedAt IS NULL');
+  });
+
+  it('enrollment_codes is never named by any cleanup statement', async () => {
+    // A record, permanently. Its USABILITY is swept at redemption instead — see below.
+    const { env, sql } = recordingEnv();
+    await purgeExpiredCredentials(env, 1_800_000_000_000);
+    await sweepClosedEventCredentials(env);
+    await revokeEventCredentials(env, 'e');
+    expect(sql.some((q) => /(DELETE FROM|UPDATE)\s+enrollment_codes/.test(q))).toBe(false);
+  });
+});
+
 describe('consumed_capabilities is replay prevention, not a leftover', () => {
   it('retention outlives the capability by a wide margin', () => {
     // Deleting a consumed jti while its capability is still signature-valid re-opens Brief 30

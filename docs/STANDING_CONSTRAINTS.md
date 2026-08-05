@@ -557,3 +557,26 @@ correct refusals, zero effect, for weeks.*
 *The kill that worked was not a better status. It was finding the one thing the deployed client
 already honours — `terminal: true` on a 200 — and delivering the stop in that dialect. The client
 in the field is the one that has to act; a status is a proposal, not an outcome.)*
+
+
+## DELETING A CREDENTIAL VERSUS DELETING A RECORD (ratified 2026-08-05)
+
+**"Deleting a credential removes the ability to open a door. Deleting a record removes the proof
+there was a room."**
+
+*(Origin: Brief 57. A coordinator credential exists for the duration of a live event and not one
+second longer — so view sessions and magic tokens die the moment an event reaches any terminal
+state. But the custody chain, the audit rows, the delivery records, the closure report and the
+event itself are permanent at any age, because they are the evidence of what happened and who was
+reached.*
+
+*The line is not obvious from the table alone, and getting it wrong is silent in both directions.
+`enrollment_codes` LOOKS like spent credentials and is a RECORD: a redemption row is the only
+evidence of who was enrolled and by whom, which is exactly what an institutional audit asks for.
+Its usability is swept at redemption instead — an atomic claim guarded on `revoked = 0 AND
+usedCount < maxUses AND expiresAt > now` — so the code cannot authorise anything while its row
+survives forever. A connected `line_pairings` row is the same shape and the first version of that
+sweep would have deleted it, because a connected pairing is expired too.*
+
+*The test enumerates the evidence tables and fails if any cleanup statement names one. Sweep the
+ABILITY to use. Keep the record.)*

@@ -133,6 +133,19 @@ export const REPLAY_SAFE = SPENT_CREDENTIAL_RETENTION_MS > CAPABILITY_TTL_MS * 2
 /**
  * Purge credential-shaped rows that can no longer authorise anything.
  *
+ * ═══ WHAT IS NOT HERE, AND WHY ═══════════════════════════════════════════════════════════════
+ *
+ * `enrollment_codes` is a RECORD and is never deleted, at any age. A redemption row is the only
+ * evidence of who was enrolled and by whom, which is precisely what an institutional audit asks
+ * for. Its USABILITY is already swept and always was: `claimEnrollmentCode` advances usedCount in
+ * one atomic statement guarded by `revoked = 0 AND usedCount < maxUses AND (expiresAt IS NULL OR
+ * expiresAt > now)`, so a spent or expired code cannot authorise anything while its row survives
+ * forever. That is the correct shape for every row in this file's blast radius, and the reason
+ * this one is excluded rather than tuned.
+ *
+ * `integrity_idempotency` is not here either. It is chain-append deduplication, and a wrong
+ * age-out double-appends a chain entry — a custody defect far worse than the rows it would save.
+ *
  * EVERY table here is a CREDENTIAL store. None of them is a record of what happened — that
  * distinction is the whole design, and it is why `audit_log`, `delivery_records`,
  * `closure_reports`, `chunks_index`, `integrity_records` and `events` appear nowhere in this
@@ -157,6 +170,21 @@ export async function purgeExpiredCredentials(env: Env, now = Date.now()): Promi
   await run('webauthn_challenges', 'DELETE FROM webauthn_challenges WHERE createdAt < ?', cutoff);
   await run('account_magic_links', 'DELETE FROM account_magic_links WHERE expiresAt < ?', cutoff);
   await run('consumed_capabilities', 'DELETE FROM consumed_capabilities WHERE consumedAt < ?', cutoff);
-  await run('line_pairings', 'DELETE FROM line_pairings WHERE expiresAt IS NOT NULL AND expiresAt < ?', cutoff);
+  // ═══ A CONNECTED PAIRING IS A RECORD. ONLY AN UNUSED ONE IS A CREDENTIAL. ═════════════════
+  //
+  // CORRECTION to what this function shipped as. It deleted every expired row, and a CONNECTED
+  // pairing is expired too — `expiresAt` was stamped when the nonce was minted and is long past
+  // by the time anyone scans it. So the sweep would have destroyed the record of who connected a
+  // LINE contact and when, which is the same shape as an enrollment redemption: proof of who was
+  // enrolled and by whom. Delivery itself was never at risk — `redeemPairing` writes the live
+  // address into `contact_endpoints` via upsertSlot — but the enrollment record was.
+  //
+  // So only pairings that were NEVER connected are swept: an unscanned nonce is a credential that
+  // can no longer authorise anything, and nothing else.
+  await run(
+    'line_pairings',
+    "DELETE FROM line_pairings WHERE status != 'connected' AND connectedAt IS NULL AND expiresAt IS NOT NULL AND expiresAt < ?",
+    cutoff,
+  );
   return counts;
 }
