@@ -34,6 +34,7 @@
     "workers/api/test/dashboard-polling.guard.test.ts",
     "workers/api/test/enrollment.test.ts",
     "workers/api/test/entitlement-gate.guard.test.ts",
+    "workers/api/test/guard-conversion-report.guard.test.ts",
     "workers/api/test/intake-severance.test.ts",
     "workers/api/test/operator-identity.guard.test.ts",
     "workers/api/test/org-registration.test.ts",

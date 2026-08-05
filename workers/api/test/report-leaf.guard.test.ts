@@ -14,6 +14,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error -- .mjs guard helper, no type declarations
+import { callsTo } from '../../../test-utils/guard-ast.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..', 'src');
@@ -37,10 +39,22 @@ function allSources(): string[] {
 
 describe('§3 [A] the verifier never stores the uploaded document', () => {
   it('the verification page neither uploads nor persists anything', () => {
+    // ═══ BRIEF 54 §A — STRUCTURAL, VIA THE AST. ══════════════════════════════════════════════
+    //
+    // This asserted the ABSENCE of nine strings. Every one of them appears legitimately in a
+    // comment explaining why the page does not do it — so the guard's continued passing depended
+    // on nobody documenting the property it protects. That is a guard that punishes explanation.
+    //
+    // The call graph does not have that problem: a mention is not a call.
+    const calls = callsTo(join(SRC, 'lib', 'verification-page.ts'));
+    for (const forbidden of ['fetch', 'XMLHttpRequest', 'FormData', 'sendBeacon']) {
+      expect([...calls].some((n) => String(n) === forbidden || String(n).endsWith('.' + forbidden)),
+        `the verification page calls ${forbidden} — it must be a leaf`).toBe(false);
+    }
+    // Storage is reached by property ACCESS as well as by call, so the identifiers are still
+    // checked as text — but only the ones that cannot appear as a call, and the reason is stated
+    // rather than left as an unexplained belt-and-braces line.
     const page = read('lib/verification-page.ts');
-    // No network call out of the page, and no upload endpoint to send a document to.
-    expect(page).not.toMatch(/fetch\(|XMLHttpRequest|navigator\.sendBeacon|FormData/);
-    // No persistence of any kind.
     expect(page).not.toMatch(/localStorage|sessionStorage|indexedDB|env\.DB|env\.MEDIA|env\.VAULT|INSERT INTO/);
   });
 

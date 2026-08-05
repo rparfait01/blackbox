@@ -15,6 +15,8 @@ import {
   rosterVisibility,
 } from '../src/lib/console-scope';
 import { MIGRATIONS_AT_BUILD } from '../src/lib/migration-manifest';
+// @ts-expect-error -- .mjs guard helper, no type declarations
+import { callsTo, requireSubject } from '../../../test-utils/guard-ast.mjs';
 
 /**
  * Brief 33b/33c — the console boundary, pinned.
@@ -28,8 +30,35 @@ import { MIGRATIONS_AT_BUILD } from '../src/lib/migration-manifest';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..', 'src');
-const routes = readFileSync(join(SRC, 'routes', 'console.ts'), 'utf8');
-const scope = readFileSync(join(SRC, 'lib', 'console-scope.ts'), 'utf8');
+const ROUTES_PATH = join(SRC, 'routes', 'console.ts');
+const SCOPE_PATH = join(SRC, 'lib', 'console-scope.ts');
+const routes = readFileSync(ROUTES_PATH, 'utf8');
+const scope = readFileSync(SCOPE_PATH, 'utf8');
+
+/**
+ * ═══ BRIEF 54 §A — THE STRUCTURAL MODEL. ═════════════════════════════════════════════════════
+ *
+ * §0 measured this file as S:28 of 36 — the highest structural share in the estate — and named it
+ * the file to convert first. What follows is the pattern the rest of the STRUCTURAL conversions
+ * copy.
+ *
+ * WHAT CHANGED. Assertions about what the console CALLS, IMPORTS and QUERIES now go through the
+ * AST rather than a regex over source text. The difference is not neatness:
+ *
+ *   * A renamed function is a NAMED failure ("SUBJECT NOT FOUND"), not a silent pass. `requireSubject`
+ *     makes "I found no violations" and "I found nothing at all" different results, which is the
+ *     defect that let a comment-glob delete 10KB from a stripped view and a guard still report green.
+ *   * `createEnrollmentCode(` in a comment or a string is not a call. The regex could not tell.
+ *   * A negative assertion — "this file never calls randomHex" — becomes true about the CALL GRAPH
+ *     rather than about the absence of nine characters.
+ *
+ * WHAT DELIBERATELY DID NOT CHANGE. SQL literals stay as text assertions, and that is correct
+ * rather than lazy: the SQL is a string to the TypeScript parser, so the AST can only hand back
+ * the same characters. Where the property IS the exact statement — the scope predicate inside the
+ * UPDATE, the aggregate-only reads of `events` — text is the honest tool and pretending otherwise
+ * would be conversion theatre.
+ */
+const routeCalls = callsTo(ROUTES_PATH);
 
 // =====================================================================
 // The pure rules
@@ -202,7 +231,7 @@ describe('scope is resolved server-side, per request, and never from the client'
   it('the identity middleware reads the platform role and an ACTIVE membership from D1', () => {
     expect(routes).toMatch(/SELECT platform_role, name, email FROM users WHERE id = \?/);
     expect(routes).toMatch(/FROM org_members WHERE userId = \? AND status = 'active'/);
-    expect(routes).toMatch(/deriveConsoleLevel\(/);
+    expect(routeCalls.has('deriveConsoleLevel'), 'the console derives its level elsewhere').toBe(true);
   });
 
   it('a session is required before any level logic runs', () => {
@@ -271,7 +300,13 @@ describe('[A] no level — operator included — can read incident CONTENT', () 
 
   it('never reads the media bucket for content — only a liveness probe', () => {
     // A single list({limit:1}) health probe is the ONLY MEDIA access. No get(), no body.
-    expect(routes).not.toMatch(/MEDIA\.get\(/);
+    // A property-access call, resolved from the AST: `MEDIA.get` in a comment is not a call.
+    // `callsTo` keys a property call by its full expression text, so the binding is reached as
+    // `c.env.MEDIA.list`. Matching on the SUFFIX keeps this true however the env is destructured.
+    const mediaCalls = [...routeCalls].filter((n) => String(n).includes('MEDIA.'));
+    expect(mediaCalls.some((n) => String(n).endsWith('MEDIA.get')), 'the console reads media content').toBe(false);
+    expect(mediaCalls.some((n) => String(n).endsWith('MEDIA.list')), 'the liveness probe is gone').toBe(true);
+    // The SHAPE of the probe stays text — {limit:1} is what makes it a probe and not a listing.
     expect(routes).toMatch(/MEDIA\.list\(\{ limit: 1 \}\)/);
   });
 
@@ -303,16 +338,26 @@ describe('the roster is READINESS ONLY — no identity of any kind', () => {
   });
 
   it('judges readiness by the same deliverability rule the survivor’s own app uses', () => {
-    expect(routes).toMatch(/isChannelDeliverable\(env, r\.channel\)/);
-    expect(routes).toMatch(/consentGateEnforced\(env\)/);
-    expect(routes).toMatch(/hasReachableRecipient\(/);
+    // AST: these are CALLS in the console's own call graph, not nine characters that happen to
+    // appear. A mention in a comment explaining why we use them would satisfy the old regex.
+    expect(routeCalls.has('isChannelDeliverable')).toBe(true);
+    expect(routeCalls.has('consentGateEnforced')).toBe(true);
+    expect(routeCalls.has('hasReachableRecipient')).toBe(true);
   });
 });
 
 describe('[A] code operations reuse the unified table and the one minter', () => {
   it('mints only through createEnrollmentCode — no second generator', () => {
-    expect(routes).toMatch(/createEnrollmentCode\(/);
-    expect(routes).not.toMatch(/generateReadableCode|randomHex|Math\.random/);
+    // The subject is named first: if the minter is renamed this fails as SUBJECT NOT FOUND
+    // rather than passing over a file that now mints its own codes.
+    requireSubject(routeCalls.has('createEnrollmentCode') || null, "a call to createEnrollmentCode in console.ts");
+    // A SECOND generator is a call-graph fact. The old regex also matched the word inside a
+    // comment, so 'we deliberately do not use randomHex here' would have failed it.
+    for (const forbidden of ['generateReadableCode', 'randomHex']) {
+      expect(routeCalls.has(forbidden), `console mints its own codes via ${forbidden}`).toBe(false);
+    }
+    expect(routeCalls.has('Math.random'), 'console mints its own codes via Math.random').toBe(false);
+    // SQL stays text: it is a string literal, and the property IS the statement.
     expect(routes).not.toMatch(/INSERT INTO enrollment_codes/);
   });
 
@@ -323,9 +368,9 @@ describe('[A] code operations reuse the unified table and the one minter', () =>
   });
 
   it('seat removal delegates to leaveOrg, so min-2-admins cannot be bypassed', () => {
-    expect(routes).toMatch(/leaveOrg\(c\.env, targetId\)/);
+    expect(routeCalls.has('leaveOrg'), 'seat removal no longer delegates to leaveOrg').toBe(true);
     // Demotion is the same danger as removal and runs the same guard.
-    expect(routes).toMatch(/adminRemovalBlocked\(c\.env, orgId\)/);
+    expect(routeCalls.has('adminRemovalBlocked')).toBe(true);
   });
 });
 
