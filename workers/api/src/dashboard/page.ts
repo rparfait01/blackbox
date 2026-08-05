@@ -426,7 +426,7 @@ export function renderDashboardPage(opts: DashboardOpts): string {
 
   <section class="sec">
     <div class="label">Capture source</div>
-    <div class="muted">${
+    <div class="muted sec-source">${
       // §A2 — this named the hardware we ASKED for, not the hardware that produced anything.
       // "Phone microphone" beside a zero-chunk event is a claim about a capture that never was.
       audioReceived(state)
@@ -936,6 +936,17 @@ const CLIENT_JS = `
   // §A2 — the client asks the same question the server does: has a chunk actually arrived?
   function capReceived(){ return S.audio && S.audio.latestSequence!=null; }
   var CAP_COPY=${JSON.stringify(CAPTURE_COPY)};
+  /** The capture-source line is a claim about hardware that produced something. Re-rendered
+   *  with everything else, because "Phone microphone" beside a zero-chunk event is the same
+   *  false claim in a quieter place. */
+  function applyCaptureSource(){
+    var n=document.querySelector('.sec-source');
+    if(!n) return;
+    n.innerHTML = capReceived()
+      ? ((S.hasVideo?'Phone microphone &amp; camera':'Phone microphone')+' · no external hardware paired')
+      : 'No capture has reached us from this device · nothing received to attribute to a source';
+  }
+
   function capLine(){
     if(capReceived()) return CAP_COPY.received;
     return active ? CAP_COPY.activeNone : CAP_COPY.closedNone;
@@ -1016,8 +1027,60 @@ const CLIENT_JS = `
   }
 
   // ---- media: ONE MSE path, driven by what was ACTUALLY stored ----
+  //
+  // ═══ THIS BLOCK USED TO RUN EXACTLY ONCE, AT PAGE LOAD, AND NEVER AGAIN. ═══════════════════
+  //
+  // That single fact produced three separate device-test findings:
+  //
+  //   * "NO AUDIO RECEIVED" beside a LIVE TRANSCRIPT of real speech. The transcript is
+  //     re-rendered every poll; the audio claim was computed once from the load-time snapshot
+  //     and never recomputed. Both were on screen together, and only one of them was current.
+  //   * The camera panel appearing in one mode and not the other. It never branched on mode at
+  //     all — it branched on WHEN the coordinator opened the page. Opened at T+0, before the
+  //     first chunk landed, hasVideo was false and stayed false forever. Opened a minute later,
+  //     it was true. Same capture, opposite panels.
+  //   * A large empty black area: a <video controls> element rendered with NO src, because the
+  //     media pipeline had decided at load time that there was nothing to play and had no way
+  //     to change its mind.
+  //
+  // The capture itself was fine in all three. Every one of them was this page believing a
+  // snapshot. So the media state is now READ FROM THE POLL like everything else, and the
+  // pipeline initialises on the first chunk that actually arrives rather than on what happened
+  // to exist when the page was opened.
   var audio=el('audio'), note=el('audioNote'), startBtn=el('audioStart'), cam=el('cam');
   var knownLatest=S.audio.latestSequence, mime=S.audio.mimeType;
+  var mediaReady=false;
+
+  /**
+   * Put the <video> element in the camera panel when the server first reports video.
+   *
+   * The panel is server-rendered from hasVideo at load. When that was false and a video chunk
+   * later arrives, the element the pipeline needs does not exist, so it is created here rather
+   * than leaving a permanent "No camera feed" over a camera that is plainly working.
+   */
+  function ensureCameraEl(){
+    var sec=document.querySelector('.sec-camera'); if(!sec) return;
+    if(!el('cam')){
+      var lbl=sec.querySelector('.label');
+      sec.innerHTML='';
+      if(lbl) sec.appendChild(lbl);
+      var v=document.createElement('video');
+      v.id='cam'; v.className='camera'; v.setAttribute('playsinline',''); v.muted=true; v.controls=true;
+      sec.appendChild(v);
+      var n=document.createElement('div'); n.className='muted'; n.id='camNote'; sec.appendChild(n);
+    }
+    cam=el('cam');
+  }
+
+  /** The camera panel when the server says there is no video. Re-rendered, not frozen. */
+  function cameraAbsent(){
+    var sec=document.querySelector('.sec-camera'); if(!sec) return;
+    if(el('cam')) return; // video already mounted — never tear a live element down
+    var body=sec.querySelector('.map-empty');
+    if(body){ body.innerHTML='No camera feed. Video was requested and the device could not provide it — '+(capReceived()?'audio and location are recording.':'and <b class="cap-none">NO AUDIO HAS REACHED US EITHER</b> — location only.'); }
+  }
+
+  function initMedia(){
 
   // THE CODEC IS DERIVED, NEVER GUESSED.
   //
@@ -1120,10 +1183,25 @@ const CLIENT_JS = `
     note.textContent = active
       ? 'NO AUDIO RECEIVED. Nothing has reached us from this device — do not read this as a quiet room.'
       : 'NO AUDIO RECEIVED. This event closed without any recording reaching us.';
-    window.__pumpAudio=function(latest){
-      if(latest!=null && !useMse){ /* first audio arrived; reload page-light */ }
-    };
+    window.__pumpAudio=function(latest){ if(latest!=null){ knownLatest=latest; } };
   }
+  }
+
+  /**
+   * Bring the media pipeline up the moment the server reports a chunk — not before, and not
+   * only at page load. Idempotent: it runs once, on the first poll that reports media.
+   */
+  function applyMedia(st){
+    if(st && st.audio){ S.audio=st.audio; }
+    if(st && typeof st.hasVideo==='boolean'){ S.hasVideo=st.hasVideo; }
+    if(mediaReady){ if(window.__pumpAudio) window.__pumpAudio(S.audio?S.audio.latestSequence:null); return; }
+    if(!S.audio || S.audio.latestSequence==null){ cameraAbsent(); return; }
+    mediaReady=true;
+    knownLatest=S.audio.latestSequence; mime=S.audio.mimeType;
+    if(S.hasVideo){ ensureCameraEl(); }
+    initMedia();
+  }
+  applyMedia(S);
 
   // ---- session-ended handling ----
   function applyStatus(st){
@@ -1239,7 +1317,8 @@ const CLIENT_JS = `
       applyTranscript(st.latestTranscriptFragments);
       applySituation(st.situation);
       applyClosure(st.closure);
-      if(st.audio){ if(window.__pumpAudio) window.__pumpAudio(st.audio.latestSequence); }
+      applyMedia(st);
+      applyCaptureSource();
       applyStatus(st);
       // §E2 — the server can declare the view terminal explicitly, not only by active:false.
       // A client that understands this stops for any terminal reason the server names,

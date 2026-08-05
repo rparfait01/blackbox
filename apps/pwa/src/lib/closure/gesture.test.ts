@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HOLD_MS, holdTo, idleGesture, interrupt, press, progressOf, release } from './gesture';
+import { HOLD_MS, TAP_MS, holdTo, idleGesture, interrupt, press, progressOf, release } from './gesture';
 
 /**
  * BRIEF 56 — WHAT MAY AND MAY NOT PRODUCE A DURESS SIGNAL.
@@ -53,8 +53,28 @@ describe('the two real gestures still mean what they mean', () => {
     expect(decision).toEqual({ submit: true, sat: false });
   });
 
-  it('one millisecond under the threshold is still duress — there is no dead zone', () => {
+  it('one millisecond under the hold threshold is still duress', () => {
     expect(release(press(T0), T0 + HOLD_MS - 1).decision).toEqual({ submit: true, sat: false });
+  });
+
+  it('A TAP PRODUCES NOTHING — the branch whose absence made duress the default', () => {
+    // Eighteen production closures, eighteen duress reports, zero clean ones. The rule said any
+    // release before 3s was duress with no dead zone, so touching the button at all reported
+    // coercion. There was no neutral interaction with that control.
+    expect(release(press(T0), T0 + 80).decision, 'a tap reported duress').toBeNull();
+    expect(release(press(T0), T0 + TAP_MS - 1).decision).toBeNull();
+  });
+
+  it('the duress signal still exists, immediately above the tap threshold', () => {
+    // The floor is on INTENT, not a grace period: a deliberate press-and-release is unchanged.
+    expect(release(press(T0), T0 + TAP_MS).decision).toEqual({ submit: true, sat: false });
+    expect(release(press(T0), T0 + 1200).decision).toEqual({ submit: true, sat: false });
+  });
+
+  it('a tap leaves no half-state — the next press is a clean start', () => {
+    const after = release(press(T0), T0 + 100).state;
+    expect(after.fired, 'a tap must not consume the gesture').toBe(false);
+    expect(release(press(T0 + 500), T0 + 2000).decision).toEqual({ submit: true, sat: false });
   });
 });
 
