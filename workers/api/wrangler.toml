@@ -205,15 +205,6 @@ class_name = "IntegrityChain"
 # below it goes to a stream nothing retains. That combination is the entire reason a runaway
 # client took a week to find. One write per request, no payload, queryable by the same GraphQL
 # token that reads workersInvocationsAdaptive.
-# BLOCKED ON AN ACCOUNT TOGGLE, NOT ON CODE. Deploying with this binding fails:
-#   "You need to enable Analytics Engine" [code: 10089]
-#   https://dash.cloudflare.com/b9fd147917b3e7c4171046cca59c1131/workers/analytics-engine
-#
-# Uncomment the moment it is enabled. The Worker already writes to it — `recordRequest` is wired
-# into the request middleware and the binding is OPTIONAL by type, so the code ships inert and
-# starts recording the instant this block is live. It is commented rather than deleted so the
-# next person finds the reason rather than the absence.
-#
-# [[analytics_engine_datasets]]
-# binding = "REQUEST_TELEMETRY"
-# dataset = "blackbox_requests"
+[[analytics_engine_datasets]]
+binding = "REQUEST_TELEMETRY"
+dataset = "blackbox_requests"
