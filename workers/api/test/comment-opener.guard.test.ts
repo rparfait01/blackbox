@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
+/** The character itself, never written literally in this file — see the test below. */
+const BACKTICK = String.fromCharCode(96);
+const BACKTICK_G = new RegExp(BACKTICK, 'g');
+
 /**
  * NO COMMENT CONTAINS A PHANTOM BLOCK-COMMENT OPENER.
  *
@@ -64,6 +68,46 @@ describe('comments do not open phantom block comments', () => {
         'opener — it will delete code up to the next "*/" from the stripped view, and a guard ' +
         'asserting on that code will either fail mysteriously or pass over nothing. Write the ' +
         'path without the glob.',
+    ).toEqual([]);
+  });
+
+  it('no comment inside a TEMPLATE LITERAL contains a backtick', () => {
+    // ═══ THE SECOND MEMBER OF THIS CLASS, AND IT BIT FOUR TIMES IN ONE SESSION. ═════════════
+    //
+    // `dashboard/page.ts` holds its entire browser client inside a TS template literal. A comment
+    // written in there in the ordinary house style — naming an identifier in backticks — puts a
+    // backtick into the literal and TERMINATES IT. The failure is a wall of TS1005 "',' expected"
+    // pointing at a prose line, which reads as a mangled file rather than a punctuation mark.
+    //
+    // Same class as the block-comment opener above: a character that is inert in a comment
+    // everywhere else, and structural in this one context. The existing guard covered "/*" and
+    // not this, so it was rediscovered by hand four separate times.
+    const offenders: string[] = [];
+    for (const file of files) {
+      const raw = prose(file) as string;
+      const lines = raw.split(String.fromCharCode(10));
+      let inTemplate = false;
+      lines.forEach((line, i) => {
+        const trimmed = line.trim();
+        const isComment = trimmed.startsWith('//') || trimmed.startsWith('*');
+        if (isComment) {
+          if (inTemplate && line.includes(BACKTICK)) {
+            offenders.push(`${file.replace(SRC, 'src')}:${i + 1}  ${trimmed.slice(0, 80)}`);
+          }
+          return; // a comment cannot open or close a literal
+        }
+        // Count backticks OUTSIDE comments to track whether we are inside a template literal.
+        // Crude on purpose: an odd count on a line flips the state, which is exactly how the
+        // TypeScript parser sees it, and matching the parser is the whole point.
+        const ticks = (line.match(BACKTICK_G) ?? []).length;
+        if (ticks % 2 === 1) inTemplate = !inTemplate;
+      });
+    }
+    expect(
+      offenders,
+      'A comment INSIDE a template literal contains a backtick, which closes the literal. The ' +
+        'symptom is a run of TS1005 errors pointing at prose. Name the identifier without ' +
+        'backticks in these files.',
     ).toEqual([]);
   });
 });
