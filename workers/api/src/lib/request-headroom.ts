@@ -31,7 +31,8 @@ export const HEADROOM_ALERT_AT = 0.8;
 export interface RequestHeadroom {
   configured: boolean;
   summary: string;
-  limit: number;
+  /** Null when PLAN_DAILY_REQUESTS is unset — there is no denominator to report against. */
+  limit: number | null;
   used: number | null;
   remaining: number | null;
   usedFraction: number | null;
@@ -40,9 +41,23 @@ export interface RequestHeadroom {
   note: string;
 }
 
-function planLimit(env: Env): number {
+/**
+ * The plan's daily request limit — or null when nobody has told us what it is.
+ *
+ * ═══ WHY THIS RETURNS NULL INSTEAD OF A DEFAULT ══════════════════════════════════════════════
+ *
+ * It used to fall back to 100,000, the free-tier figure. This account served 1,067,622 requests
+ * in a single day with zero errors, which the free tier cannot do — so the denominator was
+ * fiction, and every percentage computed from it was fiction with a number attached. "1% of the
+ * plan limit" against a limit that does not apply is worse than saying nothing, because it is
+ * the figure an operator checks before assuming they have room.
+ *
+ * An unmeasured metric is not a measurement, and a measurement against an invented denominator
+ * is not one either.
+ */
+function planLimit(env: Env): number | null {
   const raw = Number(env.PLAN_DAILY_REQUESTS ?? '');
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_DAILY_LIMIT;
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
 /**
@@ -94,6 +109,20 @@ export async function requestHeadroom(env: Env): Promise<RequestHeadroom> {
       // Named plainly, because the absence of this measurement is what let a quota breach be
       // mistaken for a platform incident for a month.
       note: 'Set CF_ANALYTICS_TOKEN and CF_ACCOUNT_ID (Analytics:Read) to report headroom. Until then the alert path can cross its request limit unobserved.',
+    };
+  }
+  if (limit == null) {
+    // MEASURED, but against nothing. The count is real and is reported; the percentage is not
+    // computed, because a fraction of an unknown denominator is a number that reads as knowledge.
+    return {
+      configured: true,
+      summary: `REQUESTS: ${used.toLocaleString()} today · UNKNOWN PLAN — no limit to measure against`,
+      limit: null,
+      used,
+      remaining: null,
+      usedFraction: null,
+      alerting: false,
+      note: 'Set PLAN_DAILY_REQUESTS to the real daily limit for this account. The 100,000 default was REMOVED: it is the free-tier figure, and this account has served over a million requests in a day, so every percentage computed from it was fiction.',
     };
   }
   const fraction = used / limit;

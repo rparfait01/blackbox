@@ -93,10 +93,20 @@ describe('§C the socket reconnect is bounded — the P0', () => {
     expect(page).toMatch(/pollStopped=true;[\s\S]{0,200}closeSocket\(\);/);
   });
 
-  it('a successful connection resets the ladder', () => {
+  it('a successful connection resets the CONSECUTIVE ladder', () => {
     // Otherwise a long-lived tab that reconnects once an hour would eventually exhaust its
     // attempts and give up on a socket that works.
-    expect(page).toMatch(/ws\.onopen=function\(\)\{ wsAttempts=0; \}/);
+    expect(page).toMatch(/ws\.onopen=function\(\)\{ wsAttempts=0;/);
+  });
+
+  it('…but a LIFETIME budget still bounds it — resettable is not bounded', () => {
+    // The gap this closes: a socket that opens and then closes immediately resets wsAttempts on
+    // every open, so WS_MAX_ATTEMPTS can never accumulate and the reconnect loop runs forever at
+    // the backoff floor. Bounded per burst, unbounded per session. The same shape as the chunk
+    // pump, two orders of magnitude slower — which is why it survived three audits.
+    expect(page).toMatch(/var WS_LIFETIME_MAX=\d+, wsLifetime=0;/);
+    expect(page).toMatch(/wsLifetime\+\+; if\(wsLifetime>=WS_LIFETIME_MAX\)\{ wsGiveUp\(\); \}/);
+    expect(page, 'the SSE streams need the same budget').toMatch(/lifetime>=WS_LIFETIME_MAX/);
   });
 });
 

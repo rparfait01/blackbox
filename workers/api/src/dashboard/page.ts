@@ -397,6 +397,15 @@ export function renderDashboardPage(opts: DashboardOpts): string {
     <div id="cascadeReach">${cascadeReachHtml(state)}</div>
   </section>
 
+  <!-- Brief 58 §7 — MEDIA CAPABILITY PROBE, rendered only with ?diag=1.
+       iOS Safari has no console without a Mac, so the only way to learn what a coordinator's
+       actual iPhone supports is to have the page say it on screen. This decides LL-HLS vs
+       ManagedMediaSource on evidence instead of on what the documentation claims. -->
+  <section class="sec sec-diag" id="diagPanel" hidden>
+    <div class="label">Media capability probe</div>
+    <div class="diag" id="diagOut">…</div>
+  </section>
+
   <section class="sec sec-camera">
     <div class="label">Live camera <span class="stream-state" id="camState">—</span></div>
     ${
@@ -732,6 +741,7 @@ const CSS = `
 .ss-degraded{background:#4a3200;color:#ffc14d}
 .ss-stopped{background:#4a0d0d;color:#ff8080}
 .stream-warn{color:#ffc14d}
+.diag{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;color:#cfcfcf;white-space:pre-wrap;word-break:break-word}
 /* Brief 55 §A2 — a capture claim that failed its observation check. Read at a glance, because
    an alert with no evidence behind it is the condition that must never look ordinary. */
 .cap-warn{color:#ffc14d}
@@ -1026,6 +1036,37 @@ const CLIENT_JS = `
     n.textContent=text; n.className='stream-state ss-'+kind;
   }
 
+  // ---- ?diag=1 — what THIS browser can actually do ----------------------------------------
+  //
+  // Reported on screen rather than to a console, because the device that matters is an iPhone
+  // and iOS Safari has no console without a Mac attached. Answers three questions that decide
+  // the live-video transport: is classic MSE exposed, is ManagedMediaSource available (iOS
+  // 17.1+), and can this browser decode what we actually record.
+  if(/[?&]diag=1/.test(location.search)){
+    var dp=el('diagPanel'), dout=el('diagOut');
+    if(dp&&dout){
+      dp.hidden=false;
+      var v=document.createElement('video');
+      var probes=[
+        'MediaSource:          '+(typeof window.MediaSource),
+        'ManagedMediaSource:   '+(typeof window.ManagedMediaSource),
+        'MSE isTypeSupported:  '+(window.MediaSource&&window.MediaSource.isTypeSupported
+            ? String(window.MediaSource.isTypeSupported('video/mp4; codecs="avc1.42000a,mp4a.40.2"')) : 'n/a'),
+        'stored mimeType:      '+((S.audio&&S.audio.mimeType)||'none yet'),
+        '',
+        'canPlayType:',
+        '  mp4 avc1.42000a:    "'+v.canPlayType('video/mp4; codecs="avc1.42000a,mp4a.40.2"')+'"',
+        '  mp4 (bare):         "'+v.canPlayType('video/mp4')+'"',
+        '  HLS m3u8:           "'+v.canPlayType('application/vnd.apple.mpegurl')+'"',
+        '  webm vp9:           "'+v.canPlayType('video/webm; codecs="vp9,opus"')+'"',
+        '',
+        'UA: '+navigator.userAgent
+      ];
+      dout.textContent=probes.join('
+');
+    }
+  }
+
   // ---- media: ONE MSE path, driven by what was ACTUALLY stored ----
   //
   // ═══ THIS BLOCK USED TO RUN EXACTLY ONCE, AT PAGE LOAD, AND NEVER AGAIN. ═══════════════════
@@ -1123,15 +1164,65 @@ const CLIENT_JS = `
       catchUp();
     }
     function catchUp(){ try{ if(media.buffered.length){ var end=media.buffered.end(media.buffered.length-1); if(end-media.currentTime>6){ media.currentTime=end-2; } } }catch(e){} }
+    // ═══ THE LOOP THAT SPENT A MILLION REQUESTS IN A DAY. ═══════════════════════════════════
+    //
+    // This was:
+    //
+    //     if(buf){ ...; nextSeq++; pump(); }
+    //     pumpFetch();                          // <- unconditional, no delay
+    //
+    // On ANY non-OK response buf is null, so nextSeq does not advance and pumpFetch recurses
+    // IMMEDIATELY. Not on a timer — the only thing bounding it is network round-trip time. At
+    // ~55ms to the edge that is roughly 18 requests per second, per tab, forever.
+    //
+    // Measured on production: 66,500 requests/hour, flat, for eight hours; 1,038,439 in a single
+    // day. It left NO trace anywhere — this route rejects before any write, and a 401 is not a
+    // script error, so the analytics showed status:success with zero errors and zero
+    // subrequests. That combination is why it read as a healthy batch job and took a week to find.
+    //
+    // Any of these wedges it permanently: a transient sequence gap while chunks upload out of
+    // order under retry, the magic token expiring at one hour, or a 404 after media is purged.
+    //
+    // Three things now, on every path: a stop condition evaluated on EVERY outcome, a delay, and
+    // an attempt ceiling. A sequence that does not advance is not a reason to ask again at once.
+    var CHUNK_TERMINAL={401:1,403:1,404:1,410:1};
+    var chunkFails=0, CHUNK_MAX_FAILS=6, CHUNK_BACKOFF=[1000,2000,4000,8000,16000,30000];
+    var chunkStopped=false, chunkTimer=null;
+
+    function chunkStop(msg){
+      if(chunkStopped) return;
+      chunkStopped=true;
+      if(chunkTimer!==null){ clearTimeout(chunkTimer); chunkTimer=null; }
+      setState(mediaStateId,'stopped','STOPPED — '+msg);
+      note.textContent='Live stream stopped: '+msg+'. Reload to reconnect.';
+    }
+
+    function chunkRetryLater(){
+      if(chunkStopped) return;
+      chunkFails++;
+      if(chunkFails>=CHUNK_MAX_FAILS){ chunkStop('the recording could not be read'); return; }
+      var d=CHUNK_BACKOFF[Math.min(chunkFails-1, CHUNK_BACKOFF.length-1)];
+      d=Math.round(d*(0.75+Math.random()*0.5));
+      setState(mediaStateId,'degraded','DEGRADED — retrying');
+      if(chunkTimer!==null){ clearTimeout(chunkTimer); }
+      chunkTimer=setTimeout(function(){ chunkTimer=null; pumpFetch(); }, d);
+    }
+
     function pumpFetch(){
-      if(fetching) return;
+      if(chunkStopped || fetching) return;
       if(knownLatest==null || nextSeq>knownLatest){ return; }
       fetching=true;
-      fetch(api('/audio/'+nextSeq)).then(function(r){ return r.ok?r.arrayBuffer():null; }).then(function(buf){
+      fetch(api('/audio/'+nextSeq)).then(function(r){
+        if(CHUNK_TERMINAL[r.status]){ fetching=false; chunkStop('this session has expired'); return null; }
+        if(!r.ok){ fetching=false; chunkRetryLater(); return null; }
+        return r.arrayBuffer();
+      }).then(function(buf){
+        if(!buf){ return; }              // handled above — NEVER fall through to a bare recursion
         fetching=false;
-        if(buf){ queue.push(new Uint8Array(buf)); nextSeq++; pump(); }
-        pumpFetch();
-      }).catch(function(){ fetching=false; setState(mediaStateId,'degraded','DEGRADED — fetch failed'); });
+        chunkFails=0;                    // a real chunk resets the ladder
+        queue.push(new Uint8Array(buf)); nextSeq++; pump();
+        pumpFetch();                     // only ever after PROGRESS
+      }).catch(function(){ fetching=false; chunkRetryLater(); });
     }
     window.__pumpAudio=function(latest){ if(latest!=null){ knownLatest=latest; } pumpFetch(); };
     tryAutoplay();
@@ -1349,6 +1440,11 @@ const CLIENT_JS = `
   // says so. The 3s poll above remains the correctness guarantee, so giving up on the
   // socket costs latency, never correctness.
   var WS_BACKOFF_MS=[3000,6000,12000,24000,48000], WS_CAP_MS=60000, WS_MAX_ATTEMPTS=8;
+  // A LIFETIME budget, separate from the consecutive-failure ladder. A connection that succeeds
+  // resets WS_MAX_ATTEMPTS, so on its own that ceiling can never be reached by a socket that
+  // opens and closes repeatedly — the loop is bounded per burst and unbounded over a session.
+  // Generous, because a coordinator watching a long incident legitimately reconnects.
+  var WS_LIFETIME_MAX=200, wsLifetime=0;
   var wsAttempts=0, wsTimer=null, wsSock=null, wsGaveUp=false;
 
   function closeSocket(){
@@ -1371,9 +1467,14 @@ const CLIENT_JS = `
     if(wsAttempts>=WS_MAX_ATTEMPTS){ wsGiveUp(); return; }
     try{
       var wsUrl=base.replace(/^http/,'ws')+'/v1/c/'+CFG.eventId+'/subscribe'+q;
+      if(wsLifetime>=WS_LIFETIME_MAX){ wsGiveUp(); return; }
       var ws=new WebSocket(wsUrl);
       wsSock=ws;
-      ws.onopen=function(){ wsAttempts=0; }; // a real connection resets the ladder
+      // A real connection resets the CONSECUTIVE ladder — but not the lifetime budget. Without
+      // that second counter a socket that opens and closes immediately reconnects forever at the
+      // backoff floor, because the ceiling can never accumulate. Bounded but resettable is not
+      // bounded.
+      ws.onopen=function(){ wsAttempts=0; wsLifetime++; if(wsLifetime>=WS_LIFETIME_MAX){ wsGiveUp(); } };
       ws.onmessage=function(e){ try{ var d=JSON.parse(e.data); if(d.type==='changed'){ poll(); } }catch(x){} };
       ws.onclose=function(){
         wsSock=null;
@@ -1407,13 +1508,16 @@ const CLIENT_JS = `
   // do not retry in lockstep against a Worker that is still recovering. And it never reconnects
   // to a closed event.
   function sseWithBackoff(path, stateId, onData){
-    var attempts=0, src=null, timer=null;
+    var attempts=0, src=null, timer=null, lifetime=0;
     function open(){
       if(pollStopped){ setState(stateId,'stopped','STOPPED — event closed'); return; }
       if(attempts>=WS_MAX_ATTEMPTS){ setState(stateId,'stopped','STOPPED — using poll only'); return; }
+      if(lifetime>=WS_LIFETIME_MAX){ setState(stateId,'stopped','STOPPED — using poll only'); return; }
       try{
         src=new EventSource(api(path));
-        src.onopen=function(){ attempts=0; setState(stateId,'live','LIVE'); };
+        // Same reasoning as the socket: a stream that opens and closes immediately would
+        // otherwise reconnect forever, because attempts resets on every successful open.
+        src.onopen=function(){ attempts=0; lifetime++; setState(stateId,'live','LIVE'); };
         src.onmessage=function(e){ try{ onData(JSON.parse(e.data)); }catch(x){} };
         src.onerror=function(){
           try{ src.close(); }catch(x){}

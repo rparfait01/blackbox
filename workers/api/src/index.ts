@@ -55,6 +55,7 @@ import { hasDeliverableRecipient } from './lib/roles';
 import {
   reissueLinkForEvent, advanceEventCascade, notifyActivation, notifyEscalation } from './lib/notify';
 import { purgeOrphanedMedia } from './lib/media-purge';
+import { recordRequest, routeTemplate } from './lib/route-telemetry';
 import { createEnrollmentCode } from './lib/org';
 import { buildClosureReport, getClosureReport } from './lib/closure-report';
 import { mintMagicToken, mintRoleToken, verifyTokenRole } from './lib/magic-link';
@@ -309,6 +310,16 @@ app.use('*', async (c, next) => {
   const requestId = crypto.randomUUID();
   const start = Date.now();
   await next();
+  // Brief 58 — the same facts, to a store that RETAINS them. The console.log below goes to a
+  // stream nothing keeps, which is why a million requests against one route left no trace and
+  // took a week to attribute. Route template only: no token, no event id, no user, no body.
+  recordRequest(
+    c.env,
+    routeTemplate(new URL(c.req.url).pathname),
+    c.res.status,
+    c.req.method,
+    Date.now() - start,
+  );
   console.log(
     JSON.stringify({
       requestId,

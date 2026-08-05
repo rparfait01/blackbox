@@ -93,8 +93,31 @@ async function assertHeadroomOrRefuse(apiOrigin) {
     }
   })();
   if (!token) {
-    console.log('    headroom: SKIPPED (no admin credential to query it)');
-    return;
+    // ═══ THE THIRD OUTCOME, WHICH SILENTLY PROCEEDED. ═══════════════════════════════════════
+    //
+    // Making NOT_MEASURED refuse closed one door and left this one open: with no admin
+    // credential this returned BEFORE headroomVerdict was ever called, printed a line that reads
+    // like housekeeping, and deployed. A gate with three outcomes where one of them quietly
+    // proceeds is not a gate — it is a gate and a bypass, and the bypass is the default on any
+    // machine that happens not to have the file.
+    //
+    // Same escape hatch as the unmeasured case, because it is the same decision: proceed without
+    // knowing, on purpose, and say so.
+    if (process.env.BBX_ALLOW_UNMEASURED_HEADROOM === '1') {
+      console.log('    headroom: NOT MEASURED (no admin credential) — PROCEEDING because BBX_ALLOW_UNMEASURED_HEADROOM=1. You are deploying blind.');
+      return;
+    }
+    console.error(
+      [
+        '',
+        '✗ DEPLOY REFUSED: no admin credential, so request headroom could not be measured.',
+        '  A gate that cannot see the limit is not a gate.',
+        '',
+        '  Fix it: put the admin token in workers/admin_token.txt (gitignored).',
+        '  Or, to deploy blind on purpose: BBX_ALLOW_UNMEASURED_HEADROOM=1 pnpm deploy',
+      ].join(String.fromCharCode(10)),
+    );
+    process.exit(1);
   }
   const verdict = headroomVerdict(await readHeadroom(apiOrigin, token));
   if (verdict.state === HEADROOM.REFUSE) {

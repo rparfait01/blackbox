@@ -1,6 +1,11 @@
 import type { D1Database, DurableObjectNamespace, R2Bucket } from '@cloudflare/workers-types';
 
 export interface Env {
+  /**
+   * Brief 58 — per-route request telemetry. OPTIONAL: a deployment without the binding still
+   * serves every request. Telemetry that can take the alert path down is worse than no telemetry.
+   */
+  REQUEST_TELEMETRY?: { writeDataPoint: (event: { blobs?: string[]; doubles?: number[]; indexes?: string[] }) => void };
   DB: D1Database;
   MEDIA: R2Bucket;
   /** Durable Object namespace firing each contact-cascade step at its exact window

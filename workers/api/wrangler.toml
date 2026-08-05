@@ -197,3 +197,14 @@ class_name = "EventChannel"
 [[env.staging.durable_objects.bindings]]
 name = "INTEGRITY_DO"
 class_name = "IntegrityChain"
+
+# Brief 58 — PER-ROUTE REQUEST TELEMETRY.
+#
+# A million requests in one day left NO trace anywhere: the Workers analytics dataset has no path
+# dimension, the route that served them rejected before any write, and the structured console.log
+# below it goes to a stream nothing retains. That combination is the entire reason a runaway
+# client took a week to find. One write per request, no payload, queryable by the same GraphQL
+# token that reads workersInvocationsAdaptive.
+[[analytics_engine_datasets]]
+binding = "REQUEST_TELEMETRY"
+dataset = "blackbox_requests"

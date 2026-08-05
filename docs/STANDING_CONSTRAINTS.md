@@ -593,3 +593,36 @@ destroyed the record of who connected a LINE contact and when."**
 *Enforced, not merely written: `purgeExpiredCredentials` carries a JUSTIFICATIONS table, one entry
 per swept table, and a guard fails any sweep that adds a table without a written reason why it is
 a credential and not a record.*
+
+## EVERY CLIENT-SIDE LOOP DECLARES THREE THINGS (ratified 2026-08-05)
+
+**"Every client-side loop declares three things: a stop condition evaluated on every outcome, a
+delay, and an attempt ceiling. A recursion that fires again immediately on failure is bounded only
+by network latency — roughly 18 requests per second, per tab, indefinitely. Four instances in one
+file."**
+
+*(Origin: Brief 58. `pumpFetch` in the coordinator dashboard did
+`if(buf){ nextSeq++; } pumpFetch();` — advancing only on success and recursing unconditionally. On
+any non-OK response it asked again with NO delay, bounded solely by round-trip time. Measured:
+66,500 requests/hour, flat, for eight hours; 1,038,439 in one day.*
+
+*Four instances in `page.ts` alone, found across three separate audits: Brief 33 Fix A fixed the
+bare `setInterval`; Fix C fixed the `/state` poll and the SSE reconnect; this was sitting between
+them the whole time. A fifth shape was found in the same sweep — the WebSocket and SSE ladders
+reset their attempt counter on a successful open, so a connection that opens and closes
+immediately can never accumulate toward its ceiling. Bounded per burst is not bounded; they now
+carry a lifetime budget as well.)*
+
+## status:success IS NOT HTTP 200 (ratified 2026-08-05)
+
+**"status:success in Cloudflare analytics means the Worker ran and returned. It does not mean
+HTTP 200. A 401 is a successful invocation."**
+
+*(Origin: Brief 58. I read "zero errors" in `workersInvocationsAdaptive` as "every request
+returned 200", and reasoned from there to "what route serves an unauthenticated caller at 18
+requests a second?" — a question with no answer, which sent the investigation toward batch jobs
+and self-fetches. The route in question was returning 401 to every single one of those requests.*
+
+*The number that DID settle it was `subrequests`: a Worker self-fetching 66,000 times an hour
+produces 66,000 subrequests, and it produced zero. That refuted the batch-job hypothesis in one
+figure and pointed straight back at an external client.)*
