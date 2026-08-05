@@ -541,3 +541,19 @@ found by a human noticing a bill, not by the control built to notice it.*
 `BBX_ALLOW_UNMEASURED_HEADROOM=1` — awkward to type, impossible to set by accident, and it
 announces in the output that the deploy is proceeding blind. Proceeding without a measurement is
 now a decision somebody made rather than the default nobody saw.)*
+
+## A REFUSAL THE CLIENT IGNORES IS NOT A REFUSAL (ratified 2026-08-05)
+
+**"A refusal the client ignores is not a refusal. A control that returns a status the deployed
+client does not honour has no effect, however correct it is server-side. Verify what the client
+does with your refusal, not that you sent one."**
+
+*(Origin: Brief 33 Fix C. TWO independent mitigations for runaway polling existed and neither had
+ever fired. The Brief 33 Fix A runaway-poll ceiling answered 429. An expired magic token answered
+401. Both are unimpeachable server-side, and the shipped dashboard does `r.ok ? r.json() : null`
+and reschedules on null — so it read both as "no data, try again" and polled on forever. Two
+correct refusals, zero effect, for weeks.*
+
+*The kill that worked was not a better status. It was finding the one thing the deployed client
+already honours — `terminal: true` on a 200 — and delivering the stop in that dialect. The client
+in the field is the one that has to act; a status is a proposal, not an outcome.)*
