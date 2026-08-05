@@ -2035,7 +2035,29 @@ app.post('/v1/c/:id/custody/:custodyId/ack', async (c) => {
 
 app.get('/v1/c/:id/state', async (c) => {
   if (!(await requireMagicToken(c))) {
-    return c.json({ error: 'unauthorized' }, 401);
+    // ═══ BRIEF 33 FIX C — A REFUSAL THE DEPLOYED CLIENT CAN ACTUALLY HEAR. ═══════════════════
+    //
+    // This returned 401, and the shipped dashboard does `r.ok ? r.json() : null` and then
+    // reschedules on null. So the ONE instruction that stops it — `terminal: true` — was
+    // unreachable for exactly the callers who most needed to stop: tabs whose one-hour magic
+    // token had expired. They polled every 3 seconds, indefinitely, invisibly.
+    //
+    // 200 with a terminal envelope is the only status the client in the field honours. It is
+    // not an authorization decision — nothing about the event is disclosed, and the body is a
+    // constant. It is a STOP INSTRUCTION delivered in the only dialect the caller speaks.
+    //
+    // The bounded client shipped alongside this stops on 401 directly, so this exists for the
+    // pages already open on devices nobody can reach. It stays after they are gone: a status a
+    // client ignores is not a refusal, whatever the number says.
+    return c.json(
+      {
+        terminal: true,
+        reason: 'session_expired',
+        active: false,
+        message: 'This session has expired. Reload to reconnect.',
+      },
+      200,
+    );
   }
   const eventId = c.req.param('id');
   const state = await getContactState(c.env, eventId);
@@ -2050,7 +2072,18 @@ app.get('/v1/c/:id/state', async (c) => {
   // The limit is generous — a live coordinator polling at 3s uses half of it — because
   // throttling someone watching a live alert would be a worse failure than the one being
   // fixed. The first poll for a token always passes.
-  const ceiling = checkPollCeiling(c.req.query('t') ?? '', eventId, state.active);
+  // Brief 33 Fix C — KEYED ON THE CALLER THAT ACTUALLY EXISTS.
+  //
+  // This read `?t=`, and Brief 33 Fix B moved the coordinator's credential out of the query
+  // string into the `bbview` cookie precisely so it would stop appearing in URLs. Every
+  // cookie-borne tab therefore keyed on the EMPTY STRING and shared one bucket per event — so
+  // one runaway tab throttled every other viewer of the same event, and a single viewer could
+  // never be identified. A rate limit that cannot tell two callers apart is not a rate limit.
+  const ceiling = checkPollCeiling(
+    getCookie(c, VIEW_COOKIE) ?? c.req.query('t') ?? '',
+    eventId,
+    state.active,
+  );
   if (!ceiling.allowed) {
     return c.json(
       {
@@ -2061,7 +2094,10 @@ app.get('/v1/c/:id/state', async (c) => {
         closedDtg: state.closedDtg,
         message: 'This view is polling too fast and has been stopped. Reload for current state.',
       },
-      429,
+      // Brief 33 Fix C — 200, for the same reason as the expiry branch above. This was 429, and
+      // 429 is not ok, and not-ok reschedules. The runaway-loop ceiling could therefore never
+      // stop a runaway loop: the mitigation was delivered in a dialect the client does not read.
+      200,
     );
   }
 

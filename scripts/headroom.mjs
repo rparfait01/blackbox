@@ -27,21 +27,49 @@ export const HEADROOM = {
 /**
  * Decide from an already-fetched readiness `requests` block.
  *
- * NOT_MEASURED does NOT refuse. That is a deliberate call and worth stating: an unconfigured
- * analytics token would otherwise block every deploy, including the deploy that ships the fix
- * for it. What it must never do is report as room — hence a distinct state rather than a
- * cheerful default, and a message that says plainly that nothing was measured.
+ * ═══ NOT_MEASURED NOW REFUSES. IT USED TO PROCEED. ═══════════════════════════════════════════
+ *
+ * The original reasoning was that an unconfigured analytics token would block every deploy
+ * including the one that ships the fix for it, so NOT_MEASURED was made a distinct state that
+ * did not refuse. That reasoning was wrong in the direction that costs the most.
+ *
+ * What actually happened: CF_ANALYTICS_TOKEN was never set, so EVERY deploy for a week printed
+ * "NOT MEASURED" and proceeded. The account reached 80% of its daily request cap without one
+ * gate objecting, and the overage was found by a human noticing a bill — not by the control
+ * built to notice it. A gate that cannot see the limit is not a gate; it is a log line.
+ *
+ * An unmeasured metric is not a measurement. The bootstrap problem is real and is solved by
+ * BBX_ALLOW_UNMEASURED_HEADROOM=1, which is deliberately awkward, must be typed by a person, and
+ * announces itself in the output — so proceeding blind is a decision somebody made rather than
+ * the default nobody noticed.
  */
-export function headroomVerdict(requests, threshold = HEADROOM_REFUSE_ABOVE) {
+export function headroomVerdict(requests, threshold = HEADROOM_REFUSE_ABOVE, env = process.env) {
+  const override = env?.BBX_ALLOW_UNMEASURED_HEADROOM === '1';
+  const unmeasured = (why) =>
+    override
+      ? {
+          state: HEADROOM.NOT_MEASURED,
+          message: `headroom: NOT MEASURED (${why}) — PROCEEDING because BBX_ALLOW_UNMEASURED_HEADROOM=1. You are deploying blind.`,
+        }
+      : {
+          state: HEADROOM.REFUSE,
+          message: [
+            '',
+            `✗ DEPLOY REFUSED: request headroom could not be measured (${why}).`,
+            '  A gate that cannot see the limit is not a gate. Every deploy for a week proceeded',
+            '  on this state while the account climbed to 80% of its daily cap.',
+            '',
+            '  Fix it: set CF_ANALYTICS_TOKEN (Account Analytics:Read) and CF_ACCOUNT_ID.',
+            '  Or, to deploy blind on purpose: BBX_ALLOW_UNMEASURED_HEADROOM=1 pnpm deploy',
+          ].join('\n'),
+        };
+
   if (!requests || !requests.configured) {
-    return {
-      state: HEADROOM.NOT_MEASURED,
-      message: 'headroom: NOT MEASURED (no analytics token configured — see Brief 33 Fix A §F)',
-    };
+    return unmeasured('no analytics token configured — see Brief 33 Fix A §F');
   }
   const used = requests.usedFraction;
   if (used == null) {
-    return { state: HEADROOM.NOT_MEASURED, message: 'headroom: NOT MEASURED (analytics returned no count)' };
+    return unmeasured('analytics returned no count');
   }
   if (used >= threshold) {
     return {

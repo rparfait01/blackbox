@@ -20,6 +20,9 @@ interface StartResponse {
 
 type Phase = 'idle' | 'starting' | 'waiting' | 'connected' | 'expired' | 'error';
 
+/** Consecutive transient failures before the pairing screen gives up and says so. */
+const MAX_POLL_FAILS = 8;
+
 export function LineConnect({
   slot,
   contactName,
@@ -33,6 +36,9 @@ export function LineConnect({
   const [pairing, setPairing] = useState<StartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  /** §Fix C — consecutive transient failures. A loop without one of these runs forever. */
+  const failsRef = useRef(0);
+
 
   const stopPolling = (): void => {
     if (pollRef.current !== null) {
@@ -60,14 +66,39 @@ export function LineConnect({
     setPhase('waiting');
     const nonce = res.data.nonce;
     stopPolling();
+    failsRef.current = 0;
     pollRef.current = window.setInterval(() => void poll(nonce), 2500);
   }
 
+  /**
+   * BRIEF 33 FIX C — THE THIRD INSTANCE OF THE SAME SHAPE.
+   *
+   * This read `if (!res.ok || !res.data) return; // transient; keep polling` — a stop condition
+   * reachable only on the success branch, exactly like the coordinator dashboard's 3s poll and
+   * the notified view's 5s poll. A 401 (session expired), a 404 (nonce gone) or a 5xx left a
+   * 2.5-second interval running with no counter and no ceiling: 34,560 requests a day from a
+   * screen somebody opened and walked away from, with nothing on screen changing to say so.
+   *
+   * The pairing nonce also EXPIRES, so this loop is guaranteed to reach a terminal answer
+   * eventually — which makes polling past it pure waste.
+   */
   async function poll(nonce: string): Promise<void> {
     const res = await api<{ status: Phase }>(`/v1/me/line-pairing/status?nonce=${encodeURIComponent(nonce)}`);
-    if (!res.ok || !res.data) {
-      return; // transient; keep polling
+    if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 410) {
+      stopPolling();
+      setPhase('expired');
+      return;
     }
+    if (!res.ok || !res.data) {
+      failsRef.current += 1;
+      if (failsRef.current >= MAX_POLL_FAILS) {
+        stopPolling();
+        setPhase('error');
+        setError('Lost contact with the server. Close this and try again.');
+      }
+      return; // transient, and now counted
+    }
+    failsRef.current = 0;
     if (res.data.status === 'connected') {
       stopPolling();
       setPhase('connected');

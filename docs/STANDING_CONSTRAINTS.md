@@ -508,3 +508,36 @@ the halt entirely. Both were verified by reverting the fix and watching the test
 *This does not retire guards. It bounds them: guards assert STRUCTURE — what is imported, what is
 called, what is absent. Behaviour under a failure mode is only ever proven by producing the
 failure.)*
+
+## A STOP CONDITION IS EVALUATED ON EVERY OUTCOME (ratified 2026-08-05)
+
+**"A loop's stop condition is evaluated on every outcome, including failure. A stop condition
+reachable only on the success path means a failing loop runs forever, and it fails silently
+because nothing on screen changes."**
+
+*(Origin: Brief 33 Fix C. The coordinator dashboard polled `/state` every 3 seconds and did
+`r.ok ? r.json() : null`, then rescheduled on null. The one instruction that stops it —
+`terminal: true` — was reachable only through a parsed 200 body. Magic tokens live one hour, so
+every dashboard tab left open flipped to 401 and then polled 28,800 times a day, invisibly,
+forever. The notified view had the identical defect at 5s, and the LINE pairing screen a third
+copy at 2.5s with the comment "transient; keep polling".*
+
+*Two mitigations already existed and both were delivered in a dialect the client could not read:
+the runaway-poll ceiling answered 429 and the expired session answered 401, and the loop treated
+both as "no data, try again". A refusal a client ignores is not a refusal, whatever the status
+number says.)*
+
+## AN UNMEASURED METRIC IS NOT A MEASUREMENT (ratified 2026-08-05)
+
+**"An unmeasured metric is not a measurement."**
+
+*(Origin: `headroomVerdict` returned NOT_MEASURED and did not refuse, reasoning that an
+unconfigured analytics token would otherwise block the deploy that ships the fix for it.
+CF_ANALYTICS_TOKEN was never set, so every deploy for a week printed "headroom: NOT MEASURED" and
+proceeded, and the account reached 80% of its daily request cap without one gate objecting. It was
+found by a human noticing a bill, not by the control built to notice it.*
+
+*NOT_MEASURED now REFUSES. The bootstrap problem is real and is answered by
+`BBX_ALLOW_UNMEASURED_HEADROOM=1` — awkward to type, impossible to set by accident, and it
+announces in the output that the deploy is proceeding blind. Proceeding without a measurement is
+now a decision somebody made rather than the default nobody saw.)*

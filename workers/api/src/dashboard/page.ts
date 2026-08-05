@@ -581,14 +581,39 @@ const NOTIFIED_JS = `
       n.hidden=false;
     }
   }
+  // Brief 33 Fix C — the SAME defect as the coordinator view, at 5s instead of 3s: 17,280
+  // requests a day per tab, for a view that shows one pair of coordinates. Treated identically
+  // here rather than judged less important, because "less important" is how the second copy of
+  // a bug survives the fix to the first. It survived once already.
+  var TERMINAL_STATUS={401:1,403:1,404:1,410:1};
+  var fails=0, MAX_FAILS=8, BACKOFF=[5000,10000,20000,40000,60000];
+  function failed(){
+    fails++;
+    if(fails>=MAX_FAILS){ expire(); return; }
+    if(timer!==null){ clearTimeout(timer); }
+    var d=BACKOFF[Math.min(fails, BACKOFF.length-1)];
+    timer=setTimeout(function(){ poll(); }, Math.round(d*(0.75+Math.random()*0.5)));
+  }
+  function expire(){
+    if(stopped) return;
+    stopped=true;
+    if(timer!==null){ clearTimeout(timer); timer=null; }
+    var n=document.getElementById('notifiedEnded');
+    if(n){ n.textContent='This session has expired. Reload to reconnect.'; n.hidden=false; }
+  }
   function poll(){
     if(stopped) return;
-    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){return r.ok?r.json():null;}).then(function(st){
-      if(!st){ schedule(); return; }
+    fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){
+      if(TERMINAL_STATUS[r.status]){ expire(); return null; }
+      if(!r.ok){ failed(); return null; }
+      return r.json().catch(function(){ failed(); return null; });
+    }).then(function(st){
+      if(!st){ return; }
+      fails=0;
       if(st.location){ var c=document.getElementById('coords'); if(c){ c.textContent=st.location.lat.toFixed(4)+'°, '+st.location.lon.toFixed(4)+'°'; } }
       if(st.terminal===true||st.active===false){ stop(st); return; }
       schedule();
-    }).catch(function(){ schedule(); });
+    }).catch(function(){ failed(); });
   }
   poll();
   document.addEventListener('visibilitychange', function(){
@@ -1158,10 +1183,56 @@ const CLIENT_JS = `
     }
   }
 
+  // ═══ BRIEF 33 FIX C — THE STOP CONDITION IS EVALUATED ON EVERY OUTCOME. ══════════════════
+  //
+  // This loop's stop was reachable ONLY on the success branch: r.ok ? r.json() : null, and a
+  // null result rescheduled unconditionally. Any 401, 403, 404, 429 or 5xx therefore re-armed a 3
+  // second timer forever, and nothing on screen changed — so a tab whose one-hour magic token
+  // expired polled 28,800 times a day, invisibly, on a device nobody could reach.
+  //
+  // Terminal statuses stop for good. Transient ones back off, and then also stop. A poll that
+  // cannot determine the event's state STOPS — it never assumes the event is still live,
+  // because "I could not tell" and "it is still running" are different facts and only one of
+  // them is safe to act on.
+  var TERMINAL_STATUS={401:1,403:1,404:1,410:1};
+  var pollFails=0;
+  var POLL_MAX_FAILS=8;
+  var POLL_BACKOFF_MS=[3000,6000,12000,24000,48000];
+  var POLL_CAP_MS=60000;
+
+  function pollFailureDelay(){
+    var d=POLL_BACKOFF_MS[Math.min(pollFails, POLL_BACKOFF_MS.length-1)];
+    if(d>POLL_CAP_MS) d=POLL_CAP_MS;
+    return Math.round(d*(0.75+Math.random()*0.5));
+  }
+
+  /** A failure of any kind. Counts, backs off, and STOPS at the ceiling. */
+  function pollFailed(){
+    pollFails++;
+    if(pollFails>=POLL_MAX_FAILS){ stopExpired(); return; }
+    if(pollTimer!==null){ clearTimeout(pollTimer); }
+    pollTimer=setTimeout(function(){ poll(); }, pollFailureDelay());
+  }
+
+  /** Terminal: stop permanently and say the one true thing we know. */
+  function stopExpired(){
+    if(pollStopped) return;
+    pollStopped=true;
+    if(pollTimer!==null){ clearTimeout(pollTimer); pollTimer=null; }
+    closeSocket();
+    var b=el('endedBanner');
+    if(b){ b.textContent='This session has expired. Reload to reconnect.'; b.hidden=false; }
+  }
+
   function poll(){
     if(pollStopped) return;
-    fetch(api('/state')).then(function(r){ return r.ok?r.json():null; }).then(function(st){
-      if(!st){ schedulePoll(); return; }
+    fetch(api('/state')).then(function(r){
+      if(TERMINAL_STATUS[r.status]){ stopExpired(); return null; }
+      if(!r.ok){ pollFailed(); return null; }
+      return r.json().catch(function(){ pollFailed(); return null; });
+    }).then(function(st){
+      if(!st){ return; }
+      pollFails=0;
       S.closure=st.closure; S.active=st.active; // keep S fresh for the closure control
       durationMs=st.durationMs; baseNow=Date.now();
       if(st.location){ lastLoc=st.location; lastTrail=st.trail; applyLocation(st.location, st.trail); }
@@ -1175,7 +1246,7 @@ const CLIENT_JS = `
       // including one added later, without needing its own copy of the rules.
       if(st.terminal===true||st.active===false){ stopPolling(st); return; }
       schedulePoll();
-    }).catch(function(){ schedulePoll(); });
+    }).catch(function(){ pollFailed(); });
   }
   poll();
 
