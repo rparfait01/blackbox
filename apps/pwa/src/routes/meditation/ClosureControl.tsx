@@ -381,6 +381,33 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
               <p className="mt-5 max-w-xs text-center text-[11px] leading-relaxed text-med-text/40">
                 Press and hold until the ring completes to request closure.
               </p>
+
+              {/* ═══ FIX A (Brief 56) — ONE TAP ENDS THE ALERT, FROM THE FIRST SCREEN. ══════
+                  Brief 15 §E2 replaced the closure pin with a press-and-hold, and made that ONE
+                  gesture carry two payloads at once: the request, and whether she is under
+                  duress. Hold = request + clean; release early = request + duress. There was
+                  never a way to make a tap a clean request, so every ordinary interaction read
+                  as coercion — 18 closures out of 18.
+
+                  Brief 56 added a 350ms floor to stop that, which made the most natural
+                  interaction do NOTHING instead. And the escape route added afterwards was
+                  rendered only on the `awaiting` screen — reachable only by succeeding at the
+                  gesture that was broken. The way out was behind the door that was stuck.
+
+                  This does not touch §E2's gesture or its duress semantics. It puts the direct
+                  close on the FIRST screen, where one tap reaches it. The hold above remains the
+                  dual-consent request; this is the Brief 59 escape, which needs no confirmer. */}
+              <button
+                type="button"
+                onClick={() => void endDirectly()}
+                className="mt-8 w-full rounded-full border border-status-armed/60 bg-status-armed/10 py-3 text-[13px] text-med-text"
+              >
+                End the alert now
+              </button>
+              <p className="mt-2 max-w-xs text-center text-[11px] leading-relaxed text-med-text/40">
+                Ends it immediately without waiting for anyone. Your contacts are told you ended
+                it yourself.
+              </p>
               {/* The ANSWER to a press, distinct from the standing instruction above it. The first
                   version of this swapped one 11px grey sentence for a nearly identical one, which
                   is indistinguishable from nothing happening — which is what she reported. */}

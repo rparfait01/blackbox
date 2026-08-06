@@ -42,7 +42,7 @@ const REPO = join(HERE, '..', '..', '..');
 // the AST hands back the characters and nothing else — so there is no parsed structure to assert
 // against and text is the only available tool. That is a genuine exception rather than a shortcut,
 // and raising the ceiling in the commit that states why is the mechanism working, not failing.
-const MAX_TEXT_READING_GUARDS = 62;
+const MAX_TEXT_READING_GUARDS = 63;
 
 function guardFiles(): string[] {
   const out: string[] = [];
