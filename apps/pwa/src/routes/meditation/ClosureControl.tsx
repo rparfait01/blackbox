@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react';
 
 import { submitClosureGesture } from '@/lib/closure';
 import {
+  TAP_MS,
   holdTo,
   idleGesture,
   interrupt,
@@ -44,6 +45,8 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [pressing, setPressing] = useState(false);
+  /** A one-line nudge when a press was too short to be a gesture. Never says why. */
+  const [hint, setHint] = useState<string | null>(null);
 
   const rafRef = useRef<number | null>(null);
   // The whole gesture, as one value. Brief 56 moved the decision into `@/lib/closure/gesture`
@@ -134,7 +137,17 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
 
   function onPointerDown(event: PointerEvent): void {
     event.preventDefault();
-    if (busy || awaiting) return;
+    // ═══ P0 — `awaiting` USED TO BLOCK THIS, AND IT TRAPPED HER IN HER OWN ALERT. ════════════
+    //
+    // Measured on a live incident: she requested closure at 88s, the sheet went to `awaiting`,
+    // and from that moment EVERY press — tap or hold — was ignored. Then at 307s the server's
+    // escalation cleared her assent so she "must request a SECOND time" (closure-timeout.ts, its
+    // own words) — and her control had already locked itself. The design said ask again; the UI
+    // made it impossible. The event was still open eleven minutes later.
+    //
+    // Only `busy` blocks now: that is one request genuinely in flight, and it clears in
+    // milliseconds. Waiting for a coordinator is not a reason to stop listening to her.
+    if (busy) return;
     setProgress(0);
     gestureRef.current = press(performance.now());
     setPressing(true);
@@ -181,9 +194,25 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
    * revise — see the report accompanying this change for the one open question about it.
    */
   function onPointerUp(): void {
+    const held = gestureRef.current.startedAt === null ? 0 : performance.now() - gestureRef.current.startedAt;
     const { state, decision } = release(gestureRef.current, performance.now());
     gestureRef.current = state;
     stopRaf();
+    // ═══ A SWALLOWED TAP MUST NOT BE SILENT. ════════════════════════════════════════════════
+    //
+    // Brief 56 added a 350ms floor so an accidental brush could not report duress — correct, and
+    // it fixed 18-for-18. What it did not add was any way to TELL. A survivor tapping "end alert"
+    // got nothing at all: no movement, no message, a control that looks broken at the moment she
+    // most needs to believe it works. She reported it as being unable to close her own alert, and
+    // she was right.
+    //
+    // The hint says only what to do. It says nothing about what an early release means, so the
+    // §E2 anti-coercion property is untouched — a tap and an interrupted hold look identical.
+    if (!decision && held > 0 && held < TAP_MS) {
+      setHint('Press and hold until the ring completes.');
+      window.setTimeout(() => setHint(null), 4000);
+      return;
+    }
     applyDecision(decision);
   }
 
@@ -233,6 +262,15 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
         ) : awaiting ? (
           // IDENTICAL for sat and unsat — do not branch this view on the gesture. Only
           // reached when a support party is ACTUALLY engaged, so the copy is now true.
+          //
+          // ═══ THE CONTROL STAYS ON SCREEN. ═══════════════════════════════════════════════
+          //
+          // This view used to REPLACE the hold control, so once she had asked once there was no
+          // button left to press. Combined with the server clearing her assent at the 180s
+          // escalation — so that she "must request a SECOND time" — she was locked out of ending
+          // her own alert while the event stayed open. Eleven minutes, on a live incident.
+          //
+          // Waiting is not a terminal state. She can always ask again.
           <div className="flex min-h-[20rem] flex-col items-center justify-center text-center">
             <p className="animate-breath-label motion-reduce:animate-none font-serif text-xl font-light tracking-[0.1em] text-med-text/80">
               Closure requested — awaiting confirmation…
@@ -240,6 +278,28 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
             <p className="mt-4 max-w-xs text-xs leading-relaxed text-med-text/45">
               Your support contact will confirm. This may take a few minutes.
             </p>
+            <div className="mt-8 flex flex-col items-center">
+              <button
+                type="button"
+                onPointerDown={onPointerDown}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerInterrupted}
+                onLostPointerCapture={onPointerInterrupted}
+                disabled={busy}
+                aria-label="Hold to request closure again"
+                className="relative flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-med-text/30 [-webkit-touch-callout:none] [-webkit-user-select:none]"
+              >
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 rounded-full border-2 border-med-text/70"
+                  style={{ clipPath: `inset(${(1 - progress) * 100}% 0 0 0)`, opacity: pressing ? 1 : 0 }}
+                />
+                <span className="select-none font-serif text-sm font-light tracking-[0.14em] text-med-text/80">
+                  {busy ? '…' : 'Ask again'}
+                </span>
+              </button>
+              {hint ? <p className="mt-3 max-w-xs text-[11px] text-med-text/55">{hint}</p> : null}
+            </div>
           </div>
         ) : (
           <>
@@ -280,7 +340,7 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
                 </span>
               </button>
               <p className="mt-5 max-w-xs text-center text-[11px] leading-relaxed text-med-text/40">
-                Press and hold until the ring completes to request closure.
+                {hint ?? 'Press and hold until the ring completes to request closure.'}
               </p>
             </div>
 

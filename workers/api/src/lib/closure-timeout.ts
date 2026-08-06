@@ -96,8 +96,28 @@ export async function runEscalation(env: Env, workerOrigin: string): Promise<voi
       // required at the guardian tier), clear the user's first assent so they must
       // request a SECOND time, and clear the coordinator's (non-)assent. Keep
       // tamperingAt — the guardian inherits the disposition.
+      // ═══ P0 — THIS USED TO UN-CLAIM THE EVENT, AND THAT RE-ARMED THE CASCADE. ═══════════════
+      //
+      // The old statement also set `coordinatorClaimedAt = NULL` and `coordinatorKey = NULL`.
+      // Measured on a live incident (93ebe889): coordinator claimed at 7.7s, survivor requested
+      // closure at 88s, this branch fired at 307s — and because the cascade halt is
+      // `WHERE coordinatorClaimedAt IS NULL`, the whole contact cascade RESUMED. The secondary
+      // was notified at 315s and was offered TAKE COORDINATION on an event that had been
+      // coordinated for five minutes. The claimable guard was correct; it was reading a column
+      // this statement had just falsified.
+      //
+      // Escalating the CONFIRMER TIER is not the same as nobody having responded. Someone did
+      // respond — they simply did not confirm a closure in time. So the claim STANDS as the
+      // record that coordination was taken, `coordinatorPathFailedAt` records that the
+      // coordinator's confirming authority has lapsed, and the claim route lets a fresh claim
+      // through on that basis (see index.ts). The cascade stays halted, because it was halted for
+      // a true reason that has not stopped being true.
+      //
+      // `closeRequestStatus` is still cleared: the guardian is a NEW confirmer and consent does
+      // not transfer between confirmers. What changed is that the survivor can now ask again —
+      // her control used to lock itself the moment she asked once (ClosureControl).
       await env.DB.prepare(
-        'UPDATE events SET coordinatorPathFailedAt = ?, escalationTier = ?, coordinatorClaimedAt = NULL, coordinatorKey = NULL, closeRequestStatus = NULL, closeRequestedAt = NULL, closeRequestDuress = 0, supportAssentAt = NULL, supportAssentBy = NULL WHERE id = ?',
+        'UPDATE events SET coordinatorPathFailedAt = ?, escalationTier = ?, closeRequestStatus = NULL, closeRequestedAt = NULL, closeRequestDuress = 0, supportAssentAt = NULL, supportAssentBy = NULL WHERE id = ?',
       )
         .bind(now, 'guardian', row.id)
         .run();

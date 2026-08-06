@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rhezia — Brand Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#071A2B;
+  --brass:#C79A42;
+  --parchment:#F5F1E8;
+  --ink-70:rgba(7,26,43,.70);
+  --ink-45:rgba(7,26,43,.45);
+  --ink-12:rgba(7,26,43,.12);
+  --true-black:#000000;
+  --amber:#e89a00;
+  --teal:#4fd1a5;
+  --alert:#D6453C;
+  --display:'Jost',system-ui,sans-serif;
+  --body:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --gut:clamp(20px,5vw,64px);
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--parchment);color:var(--ink);
+  font-family:var(--body);font-size:16px;line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:960px;margin:0 auto;padding:0 var(--gut)}
+
+/* ---------- structural mark: the terminus square ---------- */
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-45);
+  display:flex;align-items:center;gap:10px;margin:0 0 18px;
+}
+.eyebrow::before{
+  content:'';width:8px;height:8px;background:var(--brass);flex:none;
+}
+
+h1,h2,h3{font-family:var(--display);font-weight:400;margin:0}
+h1{font-size:clamp(38px,9vw,76px);letter-spacing:.14em;line-height:1.02}
+h2{font-size:clamp(24px,5vw,34px);letter-spacing:.06em;line-height:1.15;margin-bottom:6px}
+h3{font-size:15px;letter-spacing:.11em;text-transform:uppercase;font-weight:500;margin-bottom:10px}
+p{margin:0 0 16px;max-width:62ch}
+.lede{font-size:clamp(17px,2.4vw,20px);line-height:1.55;color:var(--ink-70)}
+.note{font-size:14px;color:var(--ink-45);max-width:58ch}
+strong{font-weight:600}
+
+section{padding:clamp(48px,9vw,88px) 0;border-top:1px solid var(--ink-12)}
+section:first-of-type{border-top:none}
+
+/* ---------- hero ---------- */
+.hero{padding:clamp(52px,11vw,110px) 0 clamp(40px,8vw,72px)}
+.heromark{width:clamp(84px,17vw,132px);height:auto;display:block;margin-bottom:clamp(28px,6vw,44px)}
+.pron{font-family:var(--mono);font-size:13px;color:var(--ink-45);letter-spacing:.04em;margin-top:18px}
+.etym{
+  margin-top:clamp(28px,6vw,44px);padding-left:18px;
+  border-left:2px solid var(--brass);max-width:56ch;
+}
+.etym p{font-size:16px;color:var(--ink-70);margin:0}
+.etym em{font-style:normal;color:var(--ink);font-weight:600}
+
+/* ---------- color ---------- */
+.swatches{display:grid;grid-template-columns:1fr;gap:0;margin:26px 0 0;border:1px solid var(--ink-12)}
+.sw{display:flex;align-items:stretch;border-bottom:1px solid var(--ink-12)}
+.sw:last-child{border-bottom:none}
+.sw .chip{width:88px;flex:none}
+.sw .meta{padding:14px 16px;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.sw .nm{font-family:var(--display);letter-spacing:.07em;font-size:15px}
+.sw .hex{font-family:var(--mono);font-size:12px;color:var(--ink-45)}
+.sw .use{font-size:13px;color:var(--ink-70);margin-top:3px;max-width:44ch}
+
+.split{display:grid;grid-template-columns:1fr;gap:clamp(28px,5vw,44px)}
+@media(min-width:760px){.split{grid-template-columns:1fr 1fr}}
+
+/* ---------- logo usage ---------- */
+.lockups{display:grid;grid-template-columns:1fr;gap:14px;margin-top:26px}
+@media(min-width:640px){.lockups{grid-template-columns:repeat(3,1fr)}}
+.tile{
+  border:1px solid var(--ink-12);padding:26px;display:flex;
+  align-items:center;justify-content:center;min-height:132px;
+}
+.tile.dark{background:var(--ink);border-color:var(--ink)}
+.tile.black{background:#000;border-color:#000}
+.tile svg{width:64px;height:auto}
+.tilecap{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-45);margin-top:8px;display:block}
+
+.rules{margin-top:30px;padding:0;list-style:none}
+.rules li{
+  padding:12px 0 12px 26px;border-top:1px solid var(--ink-12);
+  position:relative;font-size:15px;max-width:64ch;
+}
+.rules li::before{
+  content:'';position:absolute;left:0;top:19px;width:7px;height:7px;background:var(--brass);
+}
+.rules li.no::before{background:var(--alert)}
+
+/* ---------- type ---------- */
+.typerow{border-top:1px solid var(--ink-12);padding:20px 0}
+.typerow:first-child{border-top:none}
+.spec{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-45);margin-bottom:8px}
+.sampleD{font-family:var(--display);font-size:clamp(26px,6vw,42px);letter-spacing:.14em;font-weight:400}
+.sampleB{font-family:var(--body);font-size:17px;max-width:56ch}
+.sampleM{font-family:var(--mono);font-size:14px;letter-spacing:.02em}
+
+/* ---------- voice ---------- */
+.vgrid{display:grid;grid-template-columns:1fr;gap:0;margin-top:24px;border:1px solid var(--ink-12)}
+.vrow{display:grid;grid-template-columns:1fr;border-bottom:1px solid var(--ink-12)}
+.vrow:last-child{border-bottom:none}
+@media(min-width:640px){.vrow{grid-template-columns:1fr 1fr}}
+.vcell{padding:16px 18px}
+.vcell+.vcell{border-top:1px solid var(--ink-12)}
+@media(min-width:640px){.vcell+.vcell{border-top:none;border-left:1px solid var(--ink-12)}}
+.vlab{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-45);margin-bottom:6px}
+.vno .vlab{color:var(--alert)}
+.vcell p{margin:0;font-size:15px}
+
+/* ---------- site copy ---------- */
+.copyblock{
+  background:var(--ink);color:var(--parchment);
+  padding:clamp(26px,5vw,40px);margin-top:26px;
+}
+.copyblock h3{color:var(--brass)}
+.copyblock p{color:rgba(245,241,232,.78);max-width:60ch}
+.copyblock .big{
+  font-family:var(--display);font-size:clamp(22px,5vw,34px);
+  letter-spacing:.05em;line-height:1.25;color:var(--parchment);margin:0 0 14px;
+}
+.copyblock hr{border:none;border-top:1px solid rgba(245,241,232,.16);margin:28px 0}
+.copyblock .sub{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(245,241,232,.45);margin:0 0 10px}
+
+table{width:100%;border-collapse:collapse;margin-top:20px;font-size:14px}
+th,td{text-align:left;padding:11px 10px 11px 0;border-bottom:1px solid var(--ink-12);vertical-align:top}
+th{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-45);font-weight:400}
+td:first-child{font-weight:600;white-space:nowrap;padding-right:18px}
+
+footer{padding:40px 0 64px;border-top:1px solid var(--ink-12);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-45)}
+
+@media (prefers-reduced-motion:no-preference){
+  .heromark{animation:draw .9s cubic-bezier(.16,1,.3,1) both}
+  @keyframes draw{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<div class="hero">
+  <svg class="heromark" viewBox="0 0 100 100" role="img" aria-label="Rhezia">
+    <path d="M 12 22 L 54 22 A 12.5 12.5 0 0 1 54 47 L 27 47 L 60 78 L 74 78" fill="none" stroke="#071A2B" stroke-width="8.5" stroke-linecap="butt" stroke-linejoin="round"/>
+    <rect x="78.5" y="73.5" width="9" height="9" fill="#C79A42"/>
+  </svg>
+  <h1>RHEZIA</h1>
+  <p class="pron">ray-ZEE-ah &nbsp;·&nbsp; n. &nbsp;·&nbsp; from Gk. παρρησία</p>
+  <div class="etym">
+    <p><em>Parrhesia</em> — the ancient right to speak the truth without fear, even to the person who holds power over you. Rhezia is that right, made operational, for people whose truth is dangerous to say out loud.</p>
+  </div>
+</div>
+
+<section>
+  <p class="eyebrow">One</p>
+  <h2>The palette</h2>
+  <p class="lede">Three colors carry the brand. A fourth set governs the app, and they are deliberately different — the app is dark because it runs at night, on a low battery, in a pocket.</p>
+
+  <h3 style="margin-top:34px">Brand</h3>
+  <div class="swatches">
+    <div class="sw">
+      <div class="chip" style="background:#071A2B"></div>
+      <div class="meta">
+        <span class="nm">Midnight Ink</span>
+        <span class="hex">#071A2B</span>
+        <span class="use">Primary. Type, the mark, dark surfaces. Never pure black in brand contexts — the blue keeps it human.</span>
+      </div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#C79A42"></div>
+      <div class="meta">
+        <span class="nm">Archival Brass</span>
+        <span class="hex">#C79A42</span>
+        <span class="use">The record. Marks a terminus, a seal, a thing kept. Never used for warnings.</span>
+      </div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#F5F1E8;box-shadow:inset 0 0 0 1px rgba(7,26,43,.12)"></div>
+      <div class="meta">
+        <span class="nm">Warm Parchment</span>
+        <span class="hex">#F5F1E8</span>
+        <span class="use">Ground. Paper, not screen. Everything the public sees sits on this.</span>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:38px">Product</h3>
+  <div class="swatches">
+    <div class="sw">
+      <div class="chip" style="background:#000000"></div>
+      <div class="meta">
+        <span class="nm">True Black</span>
+        <span class="hex">#000000</span>
+        <span class="use">App ground. OLED-dark for battery and for a screen that does not light a room.</span>
+      </div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#e89a00"></div>
+      <div class="meta">
+        <span class="nm">Signal Amber</span>
+        <span class="hex">#e89a00</span>
+        <span class="use">The record, in-product. Capture, custody, evidence state.</span>
+      </div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#D6453C"></div>
+      <div class="meta">
+        <span class="nm">Alert Red</span>
+        <span class="hex">#D6453C</span>
+        <span class="use">Warnings only. Separated from amber so a warning never reads as a record and a record never reads as a warning.</span>
+      </div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#4fd1a5"></div>
+      <div class="meta">
+        <span class="nm">Stillpoint Teal</span>
+        <span class="hex">#4fd1a5</span>
+        <span class="use">Facade only. Belongs to the covert presentation and must never appear in Rhezia brand material.</span>
+      </div>
+    </div>
+  </div>
+  <p class="note" style="margin-top:20px">Amber and red were one color. They are now two. The record is a comfort; a warning is not. Nothing should have to carry both meanings.</p>
+</section>
+
+<section>
+  <p class="eyebrow">Two</p>
+  <h2>The mark</h2>
+  <p class="lede">One continuous stroke. It starts, it travels, and it stops at a brass square. The stroke is the account; the square is the moment it becomes permanent.</p>
+
+  <div class="lockups">
+    <div>
+      <div class="tile">
+        <svg viewBox="0 0 100 100"><path d="M 12 22 L 54 22 A 12.5 12.5 0 0 1 54 47 L 27 47 L 60 78 L 74 78" fill="none" stroke="#071A2B" stroke-width="8.5" stroke-linejoin="round"/><rect x="78.5" y="73.5" width="9" height="9" fill="#C79A42"/></svg>
+      </div>
+      <span class="tilecap">Primary</span>
+    </div>
+    <div>
+      <div class="tile dark">
+        <svg viewBox="0 0 100 100"><path d="M 12 22 L 54 22 A 12.5 12.5 0 0 1 54 47 L 27 47 L 60 78 L 74 78" fill="none" stroke="#F5F1E8" stroke-width="8.5" stroke-linejoin="round"/><rect x="78.5" y="73.5" width="9" height="9" fill="#C79A42"/></svg>
+      </div>
+      <span class="tilecap">Reverse</span>
+    </div>
+    <div>
+      <div class="tile">
+        <svg viewBox="0 0 100 100"><path d="M 12 22 L 54 22 A 12.5 12.5 0 0 1 54 47 L 27 47 L 60 78 L 74 78" fill="none" stroke="#071A2B" stroke-width="8.5" stroke-linejoin="round"/><rect x="78.5" y="73.5" width="9" height="9" fill="#071A2B"/></svg>
+      </div>
+      <span class="tilecap">One color</span>
+    </div>
+  </div>
+
+  <ul class="rules">
+    <li><strong>Clearspace</strong> on all sides equals the height of the brass square.</li>
+    <li><strong>Minimum size</strong> 16px. Verified legible at that size; below it, use the icon.</li>
+    <li><strong>One color is a supported lockup</strong>, not a fallback. The mark reads as R without the brass.</li>
+    <li><strong>App icon</strong> is the reverse mark on Midnight Ink, 22.5% corner radius.</li>
+    <li class="no">Never add a ring, shield, lock, keyhole, or crosshair. Every safety product uses those and they all say fear.</li>
+    <li class="no">Never recolor the brass square to red. It marks a record, not an alarm.</li>
+    <li class="no">Never outline, emboss, gradient, or rotate the mark.</li>
+    <li class="no">Never place the mark on the Stillpoint facade, in any form, at any size.</li>
+  </ul>
+</section>
+
+<section>
+  <p class="eyebrow">Three</p>
+  <h2>Typography</h2>
+  <div class="typerow">
+    <p class="spec">Display · Jost · 400 · tracking .14em</p>
+    <p class="sampleD">RHEZIA</p>
+    <p class="note">Wordmark and headlines only. Wide tracking, sentence-length maximum. Never for body copy — it stops being readable past a line.</p>
+  </div>
+  <div class="typerow">
+    <p class="spec">Body · IBM Plex Sans · 400 / 600</p>
+    <p class="sampleB">The record belongs to the person it is about. We hold ciphertext we cannot open, and a signed proof that it existed.</p>
+  </div>
+  <div class="typerow">
+    <p class="spec">Utility · IBM Plex Mono · 400</p>
+    <p class="sampleM">042009Z AUG 2026 · 26.4173°, 127.7308° · ±6m</p>
+    <p class="note">Timestamps, coordinates, hex values, verification outcomes. Anything a person might read back aloud or copy exactly.</p>
+  </div>
+</section>
+
+<section>
+  <p class="eyebrow">Four</p>
+  <h2>Voice</h2>
+  <p class="lede">Plain. Certain. Never dramatic — the situation supplies the drama. State the facts once and let her decide.</p>
+  <div class="vgrid">
+    <div class="vrow">
+      <div class="vcell"><p class="vlab">Say</p><p>Your recording may not be saved.</p></div>
+      <div class="vcell vno"><p class="vlab">Not</p><p>Warning! Recording failure detected!</p></div>
+    </div>
+    <div class="vrow">
+      <div class="vcell"><p class="vlab">Say</p><p>No capture has reached us. Do not read silence as calm.</p></div>
+      <div class="vcell vno"><p class="vlab">Not</p><p>No activity detected.</p></div>
+    </div>
+    <div class="vrow">
+      <div class="vcell"><p class="vlab">Say</p><p>These recordings will be permanently deleted.</p></div>
+      <div class="vcell vno"><p class="vlab">Not</p><p>Are you absolutely sure? This cannot be undone!</p></div>
+    </div>
+    <div class="vrow">
+      <div class="vcell"><p class="vlab">Say</p><p>2 of 2 contacts were notified before you took coordination.</p></div>
+      <div class="vcell vno"><p class="vlab">Not</p><p>All contacts successfully alerted!</p></div>
+    </div>
+  </div>
+  <ul class="rules" style="margin-top:26px">
+    <li>Never <em>victim</em>. Never <em>panic</em>.</li>
+    <li>Never <em>survivor</em> in the interface — that is a word she chooses, not one we assign.</li>
+    <li>Never congratulate her for being brave. Never ask if she is sure twice.</li>
+    <li>Never state a status the system has not observed.</li>
+  </ul>
+</section>
+
+<section>
+  <p class="eyebrow">Five</p>
+  <h2>Naming</h2>
+  <table>
+    <tr><th>Layer</th><th>Name</th><th>Notes</th></tr>
+    <tr><td>Company</td><td>Summit Strategies Group</td><td>Unchanged</td></tr>
+    <tr><td>Product</td><td>Rhezia</td><td>Always capitalized. Never RHEZIA in body copy.</td></tr>
+    <tr><td>The alert</td><td>a Rhezia alert</td><td>"Sentinel" is retired everywhere.</td></tr>
+    <tr><td>Covert facade</td><td>Stillpoint</td><td>Must remain visibly unrelated. No shared color, type, or mark.</td></tr>
+    <tr><td>Verification tool</td><td>Rhezia Verify</td><td>Published standalone.</td></tr>
+    <tr><td>Domain</td><td>rhezia.com</td><td>App entry point never routes through marketing pages.</td></tr>
+  </table>
+  <p class="note" style="margin-top:20px"><strong>"Black box" survives as description, not as a name.</strong> It is still the clearest short explanation of what the product does — <em>a black box for people</em> — and it belongs in copy, not on the door.</p>
+</section>
+
+<section>
+  <p class="eyebrow">Six</p>
+  <h2>Site copy</h2>
+  <p class="lede">rhezia.com. Three pages. The app entry point is a separate origin and is never linked from here.</p>
+
+  <div class="copyblock">
+    <p class="sub">Home · hero</p>
+    <p class="big">She should not have to be the witness.</p>
+    <p>Rhezia records what happens, keeps it in a form a court can verify, and gets a real person moving — in the order most likely to reach her fastest.</p>
+    <hr>
+    <p class="sub">Home · the sequence</p>
+    <p><strong>Her support contact first.</strong> The person who knows her, knows the history, and can act without needing the situation explained.</p>
+    <p><strong>Then the next contact.</strong> Ten seconds apart, until someone takes coordination. The moment someone does, the rest are never alarmed.</p>
+    <p><strong>Then 911.</strong> Last, because it starts from zero. Not because it matters less.</p>
+    <p class="note" style="color:rgba(245,241,232,.5);max-width:58ch">In an emergency, deciding who is doing what is not a job she has the capacity for. It should not be hers even a little.</p>
+    <hr>
+    <p class="sub">Home · the record</p>
+    <p><strong>Encrypted before it leaves her phone.</strong> We hold ciphertext, a hash, and wrapped keys. We hold no key that opens any of it.</p>
+    <p><strong>Verifiable by someone who does not trust us.</strong> The verification tool is standalone and open. A record that vouches for itself proves nothing.</p>
+    <p><strong>Hers to destroy.</strong> If a recording on her phone is dangerous to her, she deletes it. The signed proof that it existed — and that its destruction was hers — survives. Nobody gets to argue it never happened.</p>
+    <hr>
+    <p class="sub">For organizations</p>
+    <p class="big">Survivors never pay.</p>
+    <p>Shelters and coalitions get Rhezia at no cost. Grant-funded institutions license it in tiers. Individuals pay once.</p>
+    <p>Per-organization data inventory, export, and deletion on termination. Reporting output that fits VAWA, VOCA, and FVPSA without an advocate rebuilding it by hand every quarter.</p>
+    <hr>
+    <p class="sub">Footer</p>
+    <p style="font-family:var(--mono);font-size:12px;letter-spacing:.06em">RHEZIA · from Gk. παρρησία — to speak the truth without fear</p>
+    <p style="font-family:var(--mono);font-size:12px;letter-spacing:.06em">Patent pending · U.S. 64/126,017</p>
+  </div>
+
+  <ul class="rules" style="margin-top:30px">
+    <li><strong>No countdown timers, no statistics banner, no stock photography of distressed women.</strong> Every DV product site opens that way and all of them read as fundraising.</li>
+    <li><strong>No link to the app from any marketing page.</strong> Browser history on a shared device. This is a locked constraint, not a preference.</li>
+    <li><strong>Say what is true and no more.</strong> Until arming is proven, the site does not claim capture is encrypted.</li>
+  </ul>
+</section>
+
+<footer class="wrap" style="padding-left:0;padding-right:0">
+  Rhezia · brand guide · v1 · 05 AUG 2026
+</footer>
+
+</div>
+</body>
+</html>

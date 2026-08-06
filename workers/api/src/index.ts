@@ -1841,7 +1841,10 @@ app.post('/v1/c/:id/claim-coordinator', async (c) => {
   // recorded here is exactly the one the halt acted on; a separate read could observe a different
   // value if a cascade step landed in between, and would then misreport how far word had spread.
   const claim = await c.env.DB.prepare(
-    "UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ?, cascadeStepAtClaim = cascadeStep WHERE id = ? AND coordinatorClaimedAt IS NULL AND status = 'active'",
+    // A fresh claim is allowed when the event is unclaimed, OR when the coordinator path has
+    // FAILED — the guardian tier needs to take over, and it can no longer do so by having the
+    // escalation null the claim out from under the cascade halt (see closure-timeout.ts).
+    "UPDATE events SET coordinatorClaimedAt = ?, coordinatorKey = ?, cascadeStepAtClaim = cascadeStep WHERE id = ? AND (coordinatorClaimedAt IS NULL OR coordinatorPathFailedAt IS NOT NULL) AND status = 'active'",
   )
     .bind(Date.now(), newKey, eventId)
     .run();

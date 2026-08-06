@@ -21,6 +21,24 @@ export function fuseThreatLevel(
   hasInput: boolean,
 ): ThreatLevel {
   const score = keywordWeight + toneWeight + (repetitionDetected ? 1 : 0);
+  // ═══ TONE ALONE IS NOT A JUDGEMENT. IT IS THE ABSENCE OF ONE. ══════════════════════════════
+  //
+  // Brief 52 §D made a ZERO score render as `unclassified` — "we heard something and could not
+  // read it" — instead of the reassuring green `low`. It only ever covered score === 0, and a
+  // tone signal is not zero: `whisper` weighs 0.5, so whispering with NO words recognised fell
+  // straight through to `low`.
+  //
+  // Measured on a live incident (93ebe889, +6.9s and +12.7s): threatLevel `low`,
+  // matchedCategories `[]`, toneIndicators `["whisper"]`. A coordinator saw a green LOW badge
+  // over a capture in which the classifier had understood not one word — beside a panel correctly
+  // reporting no audio had arrived yet. The fix did not hold because the hole was never at zero.
+  //
+  // The rule is about KNOWLEDGE, not loudness: if no keyword matched, we did not read the speech,
+  // whatever the microphone heard about its volume or pitch. `low` requires having understood
+  // something and judged it mild.
+  if (keywordWeight === 0 && hasInput) {
+    return 'unclassified';
+  }
   for (const [threshold, level] of LEVEL_THRESHOLDS) {
     if (score >= threshold) {
       return level;

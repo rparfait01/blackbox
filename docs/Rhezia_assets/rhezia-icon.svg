@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Rhezia">
+  <rect width="120" height="120" rx="27" fill="#071A2B"/>
+  <g transform="translate(10 10)">
+    <path d="M 12 22 L 54 22 A 12.5 12.5 0 0 1 54 47 L 27 47 L 60 78 L 74 78" fill="none" stroke="#F5F1E8" stroke-width="9.5" stroke-linecap="butt" stroke-linejoin="round"/>
+    <rect x="78.5" y="73.2" width="9.5" height="9.5" fill="#C79A42"/>
+  </g>
+</svg>
