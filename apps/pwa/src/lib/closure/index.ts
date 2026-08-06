@@ -1,6 +1,7 @@
 import { signRequest } from '@blackbox/shared';
 
 import { log } from '@/lib/log';
+import { api } from '@/lib/api';
 import { readBattery } from '@/lib/battery';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
 import { closeAllActiveSessions, getActiveSession } from '@/lib/storage';
@@ -84,4 +85,32 @@ export async function submitClosureGesture(sat: boolean, reasonSecured: string):
     }
   }
   return 'awaiting';
+}
+
+/**
+ * ═══ END IT DIRECTLY. THE PATH THAT NEEDS NO COORDINATOR AND NO GESTURE. ════════════════════
+ *
+ * Her session, her event, one POST. Built because she was locked inside a live alert twice in one
+ * afternoon and an operator with an admin token was the only way out both times.
+ *
+ * Deliberately NOT routed through the gesture machine: the whole point is that it depends on
+ * nothing that has failed. No hold, no ring, no dual consent, no confirmer.
+ */
+export async function endOwnEventDirectly(reason: string): Promise<'closed' | 'no-session' | 'failed'> {
+  const session = await getActiveSession();
+  if (!session?.eventId) return 'no-session';
+  try {
+    const res = await api<{ closed?: boolean }>(`/v1/me/events/${session.eventId}/close`, {
+      method: 'POST',
+      body: { reason },
+    });
+    if (res.data?.closed === true) {
+      await closeAllActiveSessions(Date.now());
+      return 'closed';
+    }
+    return 'failed';
+  } catch (error) {
+    log.error('direct close failed', error);
+    return 'failed';
+  }
 }

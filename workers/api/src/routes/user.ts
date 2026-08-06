@@ -7,6 +7,10 @@
 import { Hono } from 'hono';
 import { requireSession } from '../auth';
 import { purgeCaptureOnConsent } from '../lib/consented-purge';
+import { revokeEventCredentials } from '../lib/credential-revocation';
+import { enqueueSeal } from '../lib/seal';
+import { buildClosureReport } from '../lib/closure-report';
+import { broadcastEventChange } from '../event-channel';
 import { listDevices, registerDevice, revokeDevice } from '../lib/device-credential';
 import { destinationProblem, getInviteForUser, normalizeDestination, type PreferredChannel } from '../lib/guardians';
 import { pairingStatus, startLinePairing } from '../lib/line-pairing';
@@ -769,6 +773,70 @@ userRoutes.post('/guardian-enabled', async (c) => {
  * Refused while the event is active: mid-alert, "delete my recordings" is the aggressor's button,
  * and consent under duress is not consent.
  */
+/**
+ * ═══ SHE CAN ALWAYS END HER OWN EVENT. ══════════════════════════════════════════════════════
+ *
+ * The escape hatch that does not depend on the UI, on a coordinator, or on a gesture.
+ *
+ * Built because a survivor was locked inside her own live alert TWICE in one afternoon, on two
+ * different builds, and the only way out both times was an operator with an admin token. There
+ * must be a path that needs none of that. This is it: her session, her event, one POST.
+ *
+ * ═══ THE ANTI-COERCION TRADE, STATED ════════════════════════════════════════════════════════
+ *
+ * Dual consent exists because an aggressor holding her unlocked phone should not be able to
+ * silence an alert. This route weakens that, and the trade is deliberate: being TRAPPED in an
+ * alert she cannot end is the worse failure, and it has now happened twice while the protection
+ * against a hypothetical aggressor held perfectly.
+ *
+ * What softens it is that this is LOUD rather than silent. Every engaged party is told the
+ * survivor ended it directly, so a coerced close is visible to the people watching instead of
+ * looking like a normal resolution. That is the same reasoning as the duress signal: the system
+ * cannot prevent a forced action, so it makes sure the action leaves a mark.
+ *
+ * NOT blocked by `lockedDuringAlert`. That guard exists to stop settings changing mid-alert; this
+ * route only exists during an alert, and gating it on the alert being over would be the same
+ * "instructs an action it has removed the means to perform" shape that caused this.
+ */
+userRoutes.post('/events/:id/close', async (c) => {
+  const userId = c.get('userId');
+  const eventId = c.req.param('id');
+  const body = ((await boundedJson<{ reason?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? {});
+
+  const user = await getUserById(c.env, userId);
+  const ev = await c.env.DB.prepare('SELECT id, userId, userHash, status FROM events WHERE id = ?')
+    .bind(eventId)
+    .first<{ id: string; userId: string | null; userHash: string | null; status: string }>();
+  if (!ev) return c.json({ error: 'not_found' }, 404);
+
+  // Ownership from the SESSION, never the body. Same pairing as the consented purge.
+  const owns = ev.userId
+    ? ev.userId === userId
+    : !!(user as { userHash?: string } | null)?.userHash && ev.userHash === (user as { userHash?: string }).userHash;
+  if (!owns) return c.json({ error: 'not_owner' }, 403);
+
+  if (ev.status !== 'active') {
+    // Already closed is SUCCESS from her side: she asked for it to be over and it is over.
+    return c.json({ ok: true, closed: true, alreadyClosed: true }, 200);
+  }
+
+  const now = Date.now();
+  await c.env.DB.prepare(
+    "UPDATE events SET status = 'closed', closedAt = ?, closedBy = ?, securedAt = ?, securedBy = ? WHERE id = ? AND status = 'active'",
+  )
+    .bind(now, 'survivor_direct', now, 'survivor', eventId)
+    .run();
+
+  await audit(c.env, eventId, 'closed_by_survivor_direct', userId, {
+    reason: (body.reason ?? '').slice(0, 200) || null,
+  });
+  await revokeEventCredentials(c.env, eventId);
+  await enqueueSeal(c.env, eventId, 'survivor_direct');
+  await buildClosureReport(c.env, eventId);
+  await broadcastEventChange(c.env, eventId, 'closed');
+  return c.json({ ok: true, closed: true }, 200);
+});
+
 userRoutes.post('/events/:id/purge-capture', async (c) => {
   const userId = c.get('userId');
   const body = ((await boundedJson<{ confirm?: boolean; restorePoint?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { confirm?: boolean; restorePoint?: string }));

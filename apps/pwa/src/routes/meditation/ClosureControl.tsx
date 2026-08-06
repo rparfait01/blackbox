@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 
-import { submitClosureGesture } from '@/lib/closure';
+import { endOwnEventDirectly, submitClosureGesture } from '@/lib/closure';
 import {
-  TAP_MS,
   holdTo,
   idleGesture,
   interrupt,
+  outcomeForRelease,
   press,
   progressOf,
   release,
@@ -45,8 +45,21 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [pressing, setPressing] = useState(false);
-  /** A one-line nudge when a press was too short to be a gesture. Never says why. */
-  const [hint, setHint] = useState<string | null>(null);
+  /**
+   * The answer to a press that did not submit. Never says what an early release MEANS — only what
+   * to do — so a tap, an interrupted hold and a duress release stay indistinguishable (§E2).
+   *
+   * `nonce` forces a re-render even when the same text is shown twice in a row, so a second
+   * identical tap still visibly pulses. A message that appears once and then looks static is how
+   * the first version of this failed.
+   */
+  const [hint, setHint] = useState<{ text: string; nonce: number } | null>(null);
+  const hintTimer = useRef<number | null>(null);
+  function showHint(text: string): void {
+    if (hintTimer.current !== null) window.clearTimeout(hintTimer.current);
+    setHint({ text, nonce: Date.now() });
+    hintTimer.current = window.setTimeout(() => setHint(null), 5000);
+  }
 
   const rafRef = useRef<number | null>(null);
   // The whole gesture, as one value. Brief 56 moved the decision into `@/lib/closure/gesture`
@@ -101,6 +114,22 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
   // returned. The `sat` boolean is the only difference that leaves this function, and
   // the model never reads it (decideConsent branches on ENGAGEMENT, not on the gesture)
   // — so at any moment both gestures produce the identical screen. §E2 invariant intact.
+  /** The direct close. One tap, no gesture, no confirmer. */
+  async function endDirectly(): Promise<void> {
+    if (busy) {
+      showHint('Sending your request…');
+      return;
+    }
+    setBusy(true);
+    const result = await endOwnEventDirectly(reason.trim());
+    setBusy(false);
+    if (result === 'closed' || result === 'no-session') {
+      setSecured(true);
+      return;
+    }
+    showHint('Could not reach the server. Your alert is still active — try again.');
+  }
+
   async function submit(sat: boolean): Promise<void> {
     // The gesture machine already guarantees one decision per press; this guards a second press
     // arriving while the first request is still in flight.
@@ -147,7 +176,8 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
     //
     // Only `busy` blocks now: that is one request genuinely in flight, and it clears in
     // milliseconds. Waiting for a coordinator is not a reason to stop listening to her.
-    if (busy) return;
+    // busy is NOT a reason to ignore her — it is a reason to tell her what is happening. The
+    // press is still registered so the release has something to answer.
     setProgress(0);
     gestureRef.current = press(performance.now());
     setPressing(true);
@@ -194,26 +224,15 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
    * revise — see the report accompanying this change for the one open question about it.
    */
   function onPointerUp(): void {
-    const held = gestureRef.current.startedAt === null ? 0 : performance.now() - gestureRef.current.startedAt;
-    const { state, decision } = release(gestureRef.current, performance.now());
+    const { state, outcome } = outcomeForRelease(gestureRef.current, performance.now(), { busy, awaiting });
     gestureRef.current = state;
     stopRaf();
-    // ═══ A SWALLOWED TAP MUST NOT BE SILENT. ════════════════════════════════════════════════
-    //
-    // Brief 56 added a 350ms floor so an accidental brush could not report duress — correct, and
-    // it fixed 18-for-18. What it did not add was any way to TELL. A survivor tapping "end alert"
-    // got nothing at all: no movement, no message, a control that looks broken at the moment she
-    // most needs to believe it works. She reported it as being unable to close her own alert, and
-    // she was right.
-    //
-    // The hint says only what to do. It says nothing about what an early release means, so the
-    // §E2 anti-coercion property is untouched — a tap and an interrupted hold look identical.
-    if (!decision && held > 0 && held < TAP_MS) {
-      setHint('Press and hold until the ring completes.');
-      window.setTimeout(() => setHint(null), 4000);
+    if (outcome.kind === 'submit') {
+      void submit(outcome.sat);
       return;
     }
-    applyDecision(decision);
+    // EVERY other press lands here. There is no silent path.
+    showHint(outcome.text);
   }
 
   /**
@@ -278,6 +297,19 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
             <p className="mt-4 max-w-xs text-xs leading-relaxed text-med-text/45">
               Your support contact will confirm. This may take a few minutes.
             </p>
+            {/* THE WAY OUT THAT DEPENDS ON NOTHING. No hold, no ring, no confirmer — one tap.
+                It exists because waiting for a confirmer is exactly where she got trapped, and
+                every other control on this screen goes through machinery that has failed. */}
+            <button
+              type="button"
+              onClick={() => void endDirectly()}
+              className="mt-6 rounded-full border border-status-armed/60 bg-status-armed/10 px-5 py-2.5 text-[13px] text-med-text"
+            >
+              End the alert now
+            </button>
+            <p className="mt-2 max-w-xs text-[11px] leading-relaxed text-med-text/40">
+              Ends it immediately without waiting. Your contacts are told you ended it yourself.
+            </p>
             <div className="mt-8 flex flex-col items-center">
               <button
                 type="button"
@@ -285,7 +317,6 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
                 onPointerUp={onPointerUp}
                 onPointerCancel={onPointerInterrupted}
                 onLostPointerCapture={onPointerInterrupted}
-                disabled={busy}
                 aria-label="Hold to request closure again"
                 className="relative flex h-28 w-28 touch-none select-none items-center justify-center rounded-full border border-med-text/30 [-webkit-touch-callout:none] [-webkit-user-select:none]"
               >
@@ -298,7 +329,16 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
                   {busy ? '…' : 'Ask again'}
                 </span>
               </button>
-              {hint ? <p className="mt-3 max-w-xs text-[11px] text-med-text/55">{hint}</p> : null}
+              {hint ? (
+                <p
+                  key={hint.nonce}
+                  role="status"
+                  aria-live="assertive"
+                  className="mt-4 max-w-xs animate-pulse rounded-lg border border-status-armed/60 bg-status-armed/10 px-3 py-2 text-center text-[13px] leading-snug text-med-text"
+                >
+                  {hint.text}
+                </p>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -326,7 +366,6 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
                 // An interruption is not a signal. See onPointerInterrupted.
                 onPointerCancel={onPointerInterrupted}
                 onLostPointerCapture={onPointerInterrupted}
-                disabled={busy}
                 aria-label="Hold to request closure"
                 className="relative flex h-40 w-40 touch-none select-none items-center justify-center rounded-full border border-med-text/30 [-webkit-touch-callout:none] [-webkit-user-select:none]"
               >
@@ -340,8 +379,21 @@ export function ClosureControl({ open, onClose }: { open: boolean; onClose: () =
                 </span>
               </button>
               <p className="mt-5 max-w-xs text-center text-[11px] leading-relaxed text-med-text/40">
-                {hint ?? 'Press and hold until the ring completes to request closure.'}
+                Press and hold until the ring completes to request closure.
               </p>
+              {/* The ANSWER to a press, distinct from the standing instruction above it. The first
+                  version of this swapped one 11px grey sentence for a nearly identical one, which
+                  is indistinguishable from nothing happening — which is what she reported. */}
+              {hint ? (
+                <p
+                  key={hint.nonce}
+                  role="status"
+                  aria-live="assertive"
+                  className="mt-4 max-w-xs animate-pulse rounded-lg border border-status-armed/60 bg-status-armed/10 px-3 py-2 text-center text-[13px] leading-snug text-med-text"
+                >
+                  {hint.text}
+                </p>
+              ) : null}
             </div>
 
             <button

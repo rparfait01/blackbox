@@ -145,3 +145,72 @@ export function progressOf(state: GestureState, now: number): number {
   if (state.startedAt === null) return 0;
   return Math.min((now - state.startedAt) / HOLD_MS, 1);
 }
+
+/**
+ * ═══ EVERY PRESS PRODUCES AN ANSWER. ════════════════════════════════════════════════════════
+ *
+ * A survivor pressed "end alert" and nothing happened — twice, on two different builds, while
+ * trapped in a live event. The second time the code was correct and the FEEDBACK was not: a
+ * swallowed tap swapped one 11px grey sentence for a nearly identical one, and the button carried
+ * `disabled` whenever a request was in flight, so some presses were never delivered to any
+ * handler at all.
+ *
+ * So the decision is no longer "submit or return". It is a TOTAL function: every release yields
+ * either a submission or a sentence, and the caller is obliged to render whichever it gets. There
+ * is no path through this that produces silence.
+ *
+ * It lives here rather than in the component because the component cannot be tested — no DOM, no
+ * renderer — and this is exactly the property that must be proven rather than reviewed.
+ */
+export type PressOutcome =
+  | { kind: 'submit'; sat: boolean }
+  | { kind: 'message'; text: string };
+
+export interface PressContext {
+  /** A closure request is already in flight. */
+  busy: boolean;
+  /** She has already asked and is waiting on a confirmer. */
+  awaiting: boolean;
+}
+
+/**
+ * What a release means, in every state. Never returns null.
+ *
+ * The messages say what to DO and never what an early release signals, so a tap, an interrupted
+ * hold and a duress release remain indistinguishable on screen (§E2).
+ */
+export function outcomeForRelease(
+  state: GestureState,
+  now: number,
+  ctx: PressContext,
+): { state: GestureState; outcome: PressOutcome } {
+  if (ctx.busy) {
+    // The press WAS received — that is the point. `disabled` used to swallow it entirely.
+    return { state, outcome: { kind: 'message', text: 'Sending your request…' } };
+  }
+  const startedAt = state.startedAt;
+  const { state: next, decision } = release(state, now);
+  if (decision) {
+    return { state: next, outcome: { kind: 'submit', sat: decision.sat } };
+  }
+  if (startedAt === null) {
+    // No press was ever registered — a stray release, or a press the handler refused. Still
+    // answered, because from her side a finger went down and came up.
+    return { state: next, outcome: { kind: 'message', text: 'Hold the circle until the ring fills.' } };
+  }
+  const held = now - startedAt;
+  if (held < TAP_MS) {
+    return {
+      state: next,
+      outcome: {
+        kind: 'message',
+        text: ctx.awaiting
+          ? 'Still waiting. Hold the circle until the ring fills to ask again.'
+          : 'Hold the circle until the ring fills.',
+      },
+    };
+  }
+  // A press long enough to be deliberate always produces a decision, so this is unreachable in
+  // practice. It is here because a total function has no gaps, not because anything reaches it.
+  return { state: next, outcome: { kind: 'message', text: 'Hold the circle until the ring fills.' } };
+}
