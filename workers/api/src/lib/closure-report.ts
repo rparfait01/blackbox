@@ -50,6 +50,21 @@ export interface ClosureReport {
     contactsTotal: number;
     notifiedBeforeClaim: number | null;
   };
+  /**
+   * Brief 59 — WHAT THE EVENT COST THE PHONE.
+   *
+   * Two readings and a duration, from which a rate falls out. Null is the NORMAL case, never 0:
+   * Firefox and every iOS browser have no battery API, and a stored null means not reported.
+   * `perHourPct` is only computed when both readings exist AND the level fell — a charging phone
+   * produces a meaningless or negative rate, and reporting one would be inventing the number this
+   * instrument was built to stop inventing.
+   */
+  battery: {
+    atTriggerPct: number | null;
+    atClosePct: number | null;
+    chargingAtTrigger: boolean | null;
+    perHourPct: number | null;
+  };
 }
 
 /** Assemble + persist the write-once closure report. Idempotent per event. */
@@ -58,7 +73,7 @@ export async function buildClosureReport(
   eventId: string,
 ): Promise<{ report: ClosureReport; packageHash: string } | null> {
   const event = await env.DB.prepare(
-    'SELECT createdAt, closeRequestStatus, reasonSecured, reasonTriggered, securedAt, tamperingAt, feedLostAt, tzOffsetMinutes FROM events WHERE id = ?',
+    'SELECT createdAt, closeRequestStatus, reasonSecured, reasonTriggered, securedAt, tamperingAt, feedLostAt, tzOffsetMinutes, batteryAtTrigger, batteryAtClose, batteryChargingAtTrigger FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -70,6 +85,9 @@ export async function buildClosureReport(
       tamperingAt: number | null;
       feedLostAt: number | null;
       tzOffsetMinutes: number | null;
+      batteryAtTrigger: number | null;
+      batteryAtClose: number | null;
+      batteryChargingAtTrigger: number | null;
     }>();
   if (!event) {
     return null;
@@ -87,8 +105,24 @@ export async function buildClosureReport(
   const pin: ClosureReport['pin'] =
     event.closeRequestStatus === 'sat' ? 'sat' : event.closeRequestStatus === 'unsat' ? 'unsat' : 'unknown';
   const disp = disposition(event.closeRequestStatus, event.tamperingAt, event.feedLostAt);
+  const durationHours = Math.max(0, now - event.createdAt) / 3_600_000;
+  const bTrig = event.batteryAtTrigger;
+  const bClose = event.batteryAtClose;
+  const drained = bTrig != null && bClose != null && bClose < bTrig;
   const report: ClosureReport = {
     version: 'blackbox-closure-1',
+    battery: {
+      atTriggerPct: bTrig == null ? null : Math.round(bTrig * 100),
+      atClosePct: bClose == null ? null : Math.round(bClose * 100),
+      chargingAtTrigger: event.batteryChargingAtTrigger == null ? null : event.batteryChargingAtTrigger === 1,
+      // Only when it actually fell, and only over a duration long enough for the arithmetic to
+      // mean anything. A 40-second event extrapolated to an hour is a number with a decimal point
+      // and no information in it.
+      perHourPct:
+        drained && durationHours >= 1 / 60
+          ? Math.round(((bTrig - bClose) * 100) / durationHours)
+          : null,
+    },
     cascade: {
       contactsNotified: state?.cascade.dispatched ?? 0,
       contactsTotal: state?.cascade.total ?? 0,

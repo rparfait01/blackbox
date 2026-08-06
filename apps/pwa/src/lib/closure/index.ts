@@ -1,6 +1,7 @@
 import { signRequest } from '@blackbox/shared';
 
 import { log } from '@/lib/log';
+import { readBattery } from '@/lib/battery';
 import { API_BASE_URL, uploadsEnabled } from '@/lib/env';
 import { closeAllActiveSessions, getActiveSession } from '@/lib/storage';
 
@@ -39,7 +40,12 @@ async function postClosureRequest(
 ): Promise<{ closed: boolean }> {
   const path = `/v1/events/${eventId}/closure-request`;
   const timestamp = Date.now();
-  const body = new TextEncoder().encode(JSON.stringify({ status, reasonSecured }));
+  // Brief 59 — the second of the two readings. Read HERE rather than held, because closure can
+  // happen minutes after the trigger and the whole point is the delta.
+  const battery = await readBattery();
+  const body = new TextEncoder().encode(
+    JSON.stringify({ status, reasonSecured, battery: battery ? { level: battery.level } : null }),
+  );
   const signed = await signRequest({ secret, eventId, method: 'POST', path, timestamp, body });
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',

@@ -78,4 +78,5 @@ export const MIGRATIONS_AT_BUILD: readonly string[] = [
   '0063_transcription_state',
   '0064_cascade_step_at_claim',
   '0065_credential_revocation',
+  '0066_battery_reading',
 ];

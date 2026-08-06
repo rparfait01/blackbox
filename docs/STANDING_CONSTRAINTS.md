@@ -626,3 +626,28 @@ and self-fetches. The route in question was returning 401 to every single one of
 *The number that DID settle it was `subrequests`: a Worker self-fetching 66,000 times an hour
 produces 66,000 subrequests, and it produced zero. That refuted the batch-job hypothesis in one
 figure and pointed straight back at an external client.)*
+
+## A COLUMN THAT RECORDS A FACT MUST NOT ALSO GATE A BEHAVIOUR (ratified 2026-08-06)
+
+**"A column that records a fact must not also gate a behaviour. `coordinatorClaimedAt` recorded
+that coordination was taken AND gated the cascade halt, so clearing it to escalate the confirmer
+tier restarted notification on an event that had a coordinator. Where a state change means two
+things, it needs two columns."**
+
+*(Origin: a live incident. The 180s coordinator-path-failure branch cleared `coordinatorClaimedAt`
+so a guardian could claim — a correct intention — and the cascade halt is
+`WHERE coordinatorClaimedAt IS NULL`. The secondary contact was notified that nobody had
+responded, five minutes after someone had, and was offered TAKE COORDINATION on a coordinated
+event. The "never offer coordination on a claimed event" guard was present and correct; it was
+reading a column that had just been falsified to mean something else.)*
+
+## A STATE MUST NOT INSTRUCT AN ACTION IT HAS REMOVED THE MEANS TO PERFORM (ratified 2026-08-06)
+
+**"The design said ask again and made it impossible. That is the shape to watch for: a state that
+instructs an action it has removed the means to perform."**
+
+*(Origin: the same incident. The server cleared the survivor's closure assent so that she "must
+request a SECOND time" — its own comment — while the client's `awaiting` view had both blocked the
+press handler and replaced the control with a message. Two reasonable local decisions composing
+into a survivor locked inside her own alert for eleven minutes. Neither half is wrong on its own,
+which is why this needs naming rather than fixing once.)*

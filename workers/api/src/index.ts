@@ -2466,7 +2466,8 @@ app.post('/v1/events/:id/standdown', async (c) => {
 // reason — NEVER the pin. This does NOT close the event; the coordinator secures.
 app.post('/v1/events/:id/closure-request', async (c) => {
   const eventId = c.req.param('id');
-  const body = ((await boundedJson<{ status?: string; reasonSecured?: string }>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as { status?: string; reasonSecured?: string }));
+  type ClosureBody = { status?: string; reasonSecured?: string; battery?: { level?: number } | null };
+  const body = ((await boundedJson<ClosureBody>(c.req, LIMITS.jsonBodyBytes)).value ?? ({} as ClosureBody));
   const status = body.status === 'unsat' ? 'unsat' : body.status === 'sat' ? 'sat' : null;
   if (!status) {
     return c.json({ error: 'status must be sat or unsat' }, 400);
@@ -2477,6 +2478,12 @@ app.post('/v1/events/:id/closure-request', async (c) => {
   if (!event) {
     return c.json({ error: 'not found' }, 404);
   }
+  // Brief 59 — battery at close. Same validation as the trigger reading, same reason.
+  const closeLvl = body.battery?.level;
+  if (typeof closeLvl === 'number' && Number.isFinite(closeLvl) && closeLvl >= 0 && closeLvl <= 1) {
+    await c.env.DB.prepare('UPDATE events SET batteryAtClose = ? WHERE id = ?').bind(closeLvl, eventId).run();
+  }
+
   // §2: record the USER's assent (gesture-derived status).
   await recordUserAssent(c.env, eventId, status, body.reasonSecured ?? null);
   const waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
@@ -3013,6 +3020,8 @@ interface OriginPayload {
   categories?: string[];
   threatLevel?: string;
   voiceCount?: number;
+  /** Brief 59 — battery at activation, 0-1. Absent on Firefox and every iOS browser. */
+  battery?: { level?: number; charging?: boolean } | null;
 }
 app.post('/v1/events/:id/origin', async (c) => {
   const eventId = c.req.param('id');
@@ -3026,6 +3035,19 @@ app.post('/v1/events/:id/origin', async (c) => {
     .bind(eventId)
     .first<{ createdAt: number }>();
   const dtgStart = ev?.createdAt ?? b.dtgStart ?? Date.now();
+  // Brief 59 — battery at activation. Written to the EVENT rather than event_origin because the
+  // closure record reads it, and because event_origin is write-once frozen at 12s while this is a
+  // pair whose second half arrives at closure. A value outside 0-1 is discarded rather than
+  // clamped: it means the client sent something we do not understand, and a made-up percentage is
+  // exactly what this instrument exists to replace.
+  const lvl = b.battery?.level;
+  if (typeof lvl === 'number' && Number.isFinite(lvl) && lvl >= 0 && lvl <= 1) {
+    await c.env.DB.prepare(
+      'UPDATE events SET batteryAtTrigger = ?, batteryChargingAtTrigger = ? WHERE id = ? AND batteryAtTrigger IS NULL',
+    )
+      .bind(lvl, b.battery?.charging === true ? 1 : 0, eventId)
+      .run();
+  }
   await c.env.DB.prepare(
     'INSERT OR IGNORE INTO event_origin (eventId, triggerType, dtgStart, tzOffsetMinutes, lat, lon, accuracyM, audioFromSeq, audioToSeq, initialCategoriesJson, initialThreatLevel, initialVoiceCount, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )

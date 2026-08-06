@@ -28,6 +28,7 @@ import {
   uploadTranscriptionState,
 } from '@/lib/upload';
 import { markDegradation } from '@/lib/upload/encryption-state';
+import { clearTriggerBattery, getTriggerBattery, readBattery, rememberTriggerBattery } from '@/lib/battery';
 import type { Classification } from '@blackbox/classifier';
 import { acquireWakeLock, isWakeLockHeld, releaseWakeLock } from './wake-lock';
 import { fetchEventStatus, startSessionMonitor, stopSessionMonitor } from './session-monitor';
@@ -382,6 +383,11 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
     // `transcription.start()` runs on the very next synchronous line, still inside the tap.
     // Capture still asks first — which is all the rule requires — and both acquisitions happen
     // while the gesture is alive. The `await` moves to where the RESULT is actually needed.
+    // Brief 59 — one battery read, fired and not awaited. It has a 400ms internal ceiling and
+    // nothing waits on it: an instrument that can delay a trigger is not one we are willing to
+    // carry on this path.
+    void readBattery().then(rememberTriggerBattery);
+
     const capturePromise = startCaptureWithRetry(capture);
 
     // STILL INSIDE THE USER GESTURE. Nothing may be awaited between the line above and this one.
@@ -432,6 +438,9 @@ export async function triggerAlert(source: ActivationSource): Promise<string | n
       const fc = session.firstClassification;
       uploadOrigin(session.sessionId, {
         triggerType: triggerTypeForSource(source),
+        // Brief 59 — captured at ACTIVATION and carried here, not read now: this snapshot fires
+        // ~12s in, and the question is what the battery was when the alert began.
+        battery: getTriggerBattery(),
         dtgStart: startTime,
         tzOffsetMinutes: new Date().getTimezoneOffset(),
         location: fix ? { lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy } : null,
@@ -503,6 +512,8 @@ export async function stopActivation(): Promise<void> {
     log.error('tracker stop failed', error);
   }
   await releaseWakeLock();
+  // A later event must never inherit an earlier event's reading.
+  clearTriggerBattery();
   await updateSessionStatus(sessionId, 'closed', Date.now());
 }
 
