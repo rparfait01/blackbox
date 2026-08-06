@@ -549,7 +549,14 @@ export function renderNotifiedPage(opts: {
   </section>
 
   <div class="actions">
-    ${claimable ? '<button id="takeCoord" class="btn btn-respond">TAKE COORDINATION</button>' : ''}
+    <!-- Brief 60 — ALWAYS EMITTED, visibility driven by state. Emitting it conditionally made
+         its presence a page-load decision, which is exactly how a secondary was offered
+         coordination on an event that already had a coordinator. The hidden attribute is only
+         an initial value; applyClaimable() owns it from the first poll onward. -->
+    <button id="takeCoord" class="btn btn-respond"${claimable ? '' : ' hidden'}>TAKE COORDINATION</button>
+    <div class="muted" id="takeCoordNote"${claimable ? ' hidden' : ''}>${
+      claimable ? '' : 'Someone has already taken coordination for this alert.'
+    }</div>
     <a class="btn btn-call" href="tel:${state.emergency.police}">CALL EMERGENCY (${state.emergency.police})</a>
   </div>
 </main>
@@ -610,6 +617,19 @@ const NOTIFIED_JS = `
     var n=document.getElementById('notifiedEnded');
     if(n){ n.textContent='This session has expired. Reload to reconnect.'; n.hidden=false; }
   }
+  /** Show or hide the claim affordance from CURRENT server state. */
+  function applyClaimable(st){
+    var btn=document.getElementById('takeCoord');
+    var note=document.getElementById('takeCoordNote');
+    if(!btn) return;
+    var claimed = st && st.coordinatorClaimed === true;
+    btn.hidden = !!claimed;
+    if(note){
+      note.hidden = !claimed;
+      note.textContent = claimed ? 'Someone has already taken coordination for this alert.' : '';
+    }
+  }
+
   function poll(){
     if(stopped) return;
     fetch(CFG.base+'/v1/c/'+CFG.eventId+'/state'+location.search).then(function(r){
@@ -620,6 +640,13 @@ const NOTIFIED_JS = `
       if(!st){ return; }
       fails=0;
       if(st.location){ var c=document.getElementById('coords'); if(c){ c.textContent=st.location.lat.toFixed(4)+'°, '+st.location.lon.toFixed(4)+'°'; } }
+      // ═══ THE CLAIM BUTTON IS SERVER STATE, NOT A PAGE-LOAD DECISION. ═════════════════════
+      //
+      // This was rendered once, from the claimable flag at page open. A secondary contact was
+      // offered TAKE COORDINATION on an event that had had a coordinator for five minutes,
+      // because the escalation had briefly un-claimed it and this page never asked again. It
+      // now reflects the server on every poll, so it stops offering within one tick of a claim.
+      applyClaimable(st);
       if(st.terminal===true||st.active===false){ stop(st); return; }
       schedule();
     }).catch(function(){ failed(); });
@@ -940,6 +967,7 @@ const CLIENT_JS = `
   // Brief 55 §D — EMITTED from the server's own tables, never retyped. Two hand-kept copies of a
   // vocabulary are two chances to disagree, and they did.
   var SIT_LBL=${JSON.stringify(CATEGORY_LABEL)};
+  var TRIGGER_LBL=${JSON.stringify(TRIGGER_LABEL)};
   var TH_BADGE=${JSON.stringify(THREAT_BADGE)};
   function sitEsc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function thBadge(l){ return TH_BADGE[l]||{cls:'th-low',label:String(l).toUpperCase()}; }
@@ -961,6 +989,99 @@ const CLIENT_JS = `
     if(capReceived()) return CAP_COPY.received;
     return active ? CAP_COPY.activeNone : CAP_COPY.closedNone;
   }
+  // ═══ BRIEF 60 — ONE RENDERING SYSTEM. ═══════════════════════════════════════════════════════
+  //
+  // This page had two: a server render for everything, and a client poll that updated seven of
+  // them. Every other value was a photograph taken when the page opened, and three separate
+  // incidents came out of that — "no camera feed" beside 53 uploaded chunks, "NO AUDIO RECEIVED"
+  // beside a live transcript, and a secondary contact offered TAKE COORDINATION on an event that
+  // had had a coordinator for five minutes.
+  //
+  // Every applyX below is paired with the server function that emits the same element, and
+  // render(st) calls all of them on every poll. A guard fails the build if the server emits an
+  // element that render() does not touch — see dashboard-one-renderer.guard.test.ts. The rule is
+  // that no value on this page survives a poll it was not in.
+
+  /** ORIGIN — frozen server-side at ~12s, so a page opened before that MUST pick it up later. */
+  function applyOrigin(st){
+    var n=el('origin'); if(!n) return;
+    var o=st&&st.origin;
+    if(!o){ n.innerHTML='<div class="muted">Capturing initial-contact snapshot…</div>'; return; }
+    var rows=[['Trigger', TRIGGER_LBL[o.triggerType]||o.triggerType], ['Start (DTG)', st.originDtg||'—']];
+    if(o.location){ rows.push(['Where', o.location.lat.toFixed(4)+'°, '+o.location.lon.toFixed(4)+'°']); }
+    if(o.voiceCount!=null){ rows.push(['Voices at start', o.voiceCount>1 ? (o.voiceCount+' (inferred)') : String(o.voiceCount)]); }
+    if(o.categories && o.categories.length){ rows.push(['Initial signals', o.categories.map(function(c){ return SIT_LBL[c]||c; }).join(', ')]); }
+    if(o.audioFromSeq!=null){ rows.push(['First audio', 'segments '+o.audioFromSeq+'–'+(o.audioToSeq!=null?o.audioToSeq:o.audioFromSeq)]); }
+    n.innerHTML=rows.map(function(r){ return '<div class="kv"><span class="kv-k">'+sitEsc(r[0])+'</span><span class="kv-v">'+sitEsc(r[1])+'</span></div>'; }).join('');
+  }
+
+  /** CASCADE REACH — how far word travelled. Changes as the cascade advances and on a claim. */
+  function applyCascadeReach(st){
+    var n=el('cascadeReach'); if(!n) return;
+    var c=st&&st.cascade; if(!c||!c.total){ n.innerHTML=''; return; }
+    if(c.notifiedBeforeClaim==null){
+      n.innerHTML='<div class="muted">'+c.dispatched+' of '+c.total+' contacts notified. No one has taken coordination yet — the cascade is still running.</div>';
+      return;
+    }
+    var extra=c.dispatched>c.notifiedBeforeClaim ? (' ('+c.dispatched+' in total; the rest could not be halted — see the operator log.)') : '';
+    n.innerHTML='<div class="muted"><b>'+c.notifiedBeforeClaim+' of '+c.total+'</b> contacts were notified before you took coordination. The remaining '+Math.max(0,c.total-c.notifiedBeforeClaim)+' were not contacted.'+extra+'</div>';
+  }
+
+  /** The location stream badge. The media and transcript badges are owned by their own paths. */
+  function applyLocationState(st){
+    if(!st) return;
+    var n=el('locationState'); if(!n||n.dataset.live==='1') return;
+    setState('locationState', st.location?'live':'degraded', st.location?'LIVE':'NO FIX YET');
+  }
+
+  /** The transcript badge, from the DEVICE's own reported state rather than from emptiness. */
+  function applyTranscriptState(st){
+    var t=st&&st.transcription;
+    if(!t) return;
+    if(t.state==='active') setState('transcriptState','live','LIVE');
+    else if(t.state==='degraded') setState('transcriptState','degraded','DEGRADED');
+    else if(t.state==='unavailable') setState('transcriptState','stopped','NOT TRANSCRIBED');
+    else setState('transcriptState','degraded','UNREPORTED');
+  }
+
+  /**
+   * The media stream badges, from SERVER truth, until the pipeline takes ownership.
+   *
+   * These were written once — at media initialisation — so a page opened before any chunk landed
+   * kept an em-dash badge forever, and one opened during a live stream kept LIVE after the stream
+   * ended. Once mediaReady is set the pipeline owns them (it knows about decode failures and
+   * reconnects, which the server does not), and before that the server is the only thing that
+   * knows whether anything has arrived at all.
+   */
+  function applyStreamBadges(st){
+    if(mediaReady) return;
+    var received = st && st.audio && st.audio.latestSequence!=null;
+    // LITERAL ids, deliberately. Writing these through a variable is what let the guard — and
+    // every reader — lose track of which elements this function actually owns.
+    setState('audioState', received?'degraded':'stopped', received?'ARRIVING':'NO AUDIO RECEIVED');
+    if(el('camState')){
+      var vid = st && st.hasVideo;
+      setState('camState', vid?'degraded':'stopped', vid?'ARRIVING':'NO VIDEO RECEIVED');
+    }
+  }
+
+  /** ONE ENTRY POINT. Every value on this page is written from st, on every poll. */
+  function render(st){
+    if(!st) return;
+    S.closure=st.closure; S.active=st.active;
+    applyOrigin(st);
+    applySituation(st.situation);
+    applyCascadeReach(st);
+    applyTranscript(st.latestTranscriptFragments);
+    applyTranscriptState(st);
+    applyLocationState(st);
+    applyClosure(st.closure);
+    applyMedia(st);
+    applyStreamBadges(st);
+    applyCaptureSource();
+    applyStatus(st);
+  }
+
   function applySituation(s){
     var node=el('situation'); if(!node||!s) return;
     if(!s.hasSignal){ node.innerHTML='<div class="'+(capReceived()?'muted':'muted cap-warn')+'">No specific indicators detected yet. '+capLine()+'</div>'; return; }
@@ -972,8 +1093,8 @@ const CLIENT_JS = `
     if(!capReceived()){ html+='<div class="muted cap-warn">'+capLine()+'</div>'; }
     node.innerHTML=html;
   }
-  applyTranscript(S.latestTranscriptFragments);
-  applySituation(S.situation);
+  // First paint uses the SAME renderer as every poll, so nothing can be true only at load.
+  render(S);
 
   // Coordinator closure window (Brief 9 Phase D): shows the user's closure
   // request — PIN sat/unsat (duress unmistakable), reason — and the SECURE
@@ -1402,15 +1523,10 @@ const CLIENT_JS = `
     }).then(function(st){
       if(!st){ return; }
       pollFails=0;
-      S.closure=st.closure; S.active=st.active; // keep S fresh for the closure control
       durationMs=st.durationMs; baseNow=Date.now();
       if(st.location){ lastLoc=st.location; lastTrail=st.trail; applyLocation(st.location, st.trail); }
-      applyTranscript(st.latestTranscriptFragments);
-      applySituation(st.situation);
-      applyClosure(st.closure);
-      applyMedia(st);
-      applyCaptureSource();
-      applyStatus(st);
+      // ONE ENTRY POINT. Every panel, every poll — see render().
+      render(st);
       // §E2 — the server can declare the view terminal explicitly, not only by active:false.
       // A client that understands this stops for any terminal reason the server names,
       // including one added later, without needing its own copy of the rules.

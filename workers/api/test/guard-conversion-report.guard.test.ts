@@ -35,7 +35,14 @@ const REPO = join(HERE, '..', '..', '..');
  * model. Lower it as files convert; raising it is the thing this exists to make somebody
  * argue for.
  */
-const MAX_TEXT_READING_GUARDS = 61;
+// RAISED to 62, deliberately and with the argument, on 2026-08-06.
+//
+// `dashboard-one-renderer.guard.test.ts` asserts over the coordinator page's CLIENT SCRIPT, which
+// lives inside a TypeScript template literal. To the TS parser that whole script is one string —
+// the AST hands back the characters and nothing else — so there is no parsed structure to assert
+// against and text is the only available tool. That is a genuine exception rather than a shortcut,
+// and raising the ceiling in the commit that states why is the mechanism working, not failing.
+const MAX_TEXT_READING_GUARDS = 62;
 
 function guardFiles(): string[] {
   const out: string[] = [];

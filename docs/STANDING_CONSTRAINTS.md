@@ -651,3 +651,37 @@ request a SECOND time" — its own comment — while the client's `awaiting` vie
 press handler and replaced the control with a message. Two reasonable local decisions composing
 into a survivor locked inside her own alert for eleven minutes. Neither half is wrong on its own,
 which is why this needs naming rather than fixing once.)*
+
+## A PAGE HAS ONE RENDERING SYSTEM (ratified 2026-08-06)
+
+**"A page has one rendering system. Where a server render and a client poll both write the same
+page, every value the server emits is emitted by a function the poll also calls. Two systems means
+the values only one of them updates are photographs, and a coordinator deciding whether to send
+help is reading them."**
+
+*(Origin: the coordinator dashboard had a server render for everything and a client poll that
+updated seven values. Three separate incidents came out of the gap — "No camera feed" beside 53
+uploaded video chunks, "NO AUDIO RECEIVED" beside a live scrolling transcript, and a secondary
+contact offered TAKE COORDINATION on an event that had had a coordinator for five minutes. Each
+was fixed individually; the third proved that fixing them individually was the wrong shape of
+response.*
+
+*Enforced by `dashboard-one-renderer.guard.test.ts`: every id the server emits must be written by
+a function `render(st)` calls, and the failure names the specific element — "the dashboard is
+stale" is not actionable, "cascadeReach is emitted by SSR and never updated" is.)*
+
+## FEEDBACK MUST BE DISTINGUISHABLE FROM SILENCE (ratified 2026-08-06)
+
+**"Feedback must be distinguishable from silence. A message swapped for a near-identical message
+in the same size and opacity is not feedback."**
+
+*(Origin: a survivor pressed "end alert" and nothing happened. The fix swapped "Press and hold
+until the ring completes to request closure." for "Press and hold until the ring completes." — the
+same 11px, the same 40% opacity — and she reported being unable to close her alert a second time,
+on the build that was supposed to fix it. Compounding it, the button carried `disabled` whenever a
+request was in flight, so some presses were never delivered to any handler at all.*
+
+*The answer was not a better sentence. It was making the press decision a TOTAL function —
+`outcomeForRelease` returns either a submission or a message, for every state — so the caller is
+obliged to render something, and an exhaustive test asserts no combination of inputs yields
+silence.)*

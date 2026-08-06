@@ -65,6 +65,12 @@ export interface ContactState {
   transcription: { state: 'active' | 'degraded' | 'unavailable' | null; detail: string | null };
   /** Frozen ORIGIN snapshot — immutable initial-contact anchor. Fix Brief 5 D1. */
   origin: OriginSnapshot | null;
+  /**
+   * Brief 60 — the origin DTG, preformatted server-side, for the same reason `closedDtg` is:
+   * the poll renderer is inline browser JS, and a second DTG formatter written there is free to
+   * drift from `formatDtg`. Reuse, never re-implement.
+   */
+  originDtg: string | null;
   /** Latched, monotonic situation summary assembled from detected facts. D2/D3. */
   situation: Situation;
   /**
@@ -80,6 +86,15 @@ export interface ContactState {
    * rather than one being derived from the other.
    */
   cascade: { dispatched: number; total: number; notifiedBeforeClaim: number | null };
+  /**
+   * Brief 60 — HAS ANYONE TAKEN COORDINATION?
+   *
+   * The notified view renders a TAKE COORDINATION button from this, and it used to be decided
+   * once at page render. A secondary contact was offered coordination on an event that had had a
+   * coordinator for five minutes, because their page was a photograph. Every value this page
+   * shows must be re-derivable from a poll, and this one was not exposed at all.
+   */
+  coordinatorClaimed: boolean;
   /** Closure request the coordinator reviews (Brief 9 Phase D). */
   closure: {
     requested: boolean;
@@ -292,7 +307,7 @@ function safeParse(json: string | null): unknown[] {
 
 export async function getContactState(env: Env, eventId: string): Promise<ContactState | null> {
   const event = await env.DB.prepare(
-    'SELECT userId, userHash, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt, transcriptionState, transcriptionDetail, cascadeStep, cascadeStepAtClaim FROM events WHERE id = ?',
+    'SELECT userId, userHash, createdAt, status, closedAt, locale, tzOffsetMinutes, lastHeartbeatAt, lostAt, escalatedAt, closeRequestStatus, reasonSecured, reasonTriggered, closureLockoutAt, tamperingAt, escalationTier, coordinatorPathFailedAt, coordinatorClaimedAt, transcriptionState, transcriptionDetail, cascadeStep, cascadeStepAtClaim FROM events WHERE id = ?',
   )
     .bind(eventId)
     .first<{
@@ -308,6 +323,7 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
       userHash: string | null;
       cascadeStep: number | null;
       cascadeStepAtClaim: number | null;
+      coordinatorClaimedAt: number | null;
       closeRequestStatus: string | null;
       tamperingAt: number | null;
       escalationTier: string | null;
@@ -418,6 +434,8 @@ export async function getContactState(env: Env, eventId: string): Promise<Contac
 
   const active = event.status === 'active';
   return {
+    coordinatorClaimed: event.coordinatorClaimedAt != null,
+    originDtg: origin ? formatDtg(origin.dtgStart) : null,
     cascade: {
       dispatched: event.cascadeStep ?? 0,
       total: cascadeContacts.length,
