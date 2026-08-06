@@ -39,12 +39,16 @@ around 20 seconds.
 | **5** | **Cascade timing.** Let it run past 40 seconds without claiming. | Which contacts received an alert, and roughly how far apart. |
 | **6** | **Claim, and note the time.** Now open the link and press **TAKE COORDINATION**. Then read the *Who else was notified* panel. | The exact line it prints: "N of M contacts were notified before you took coordination." |
 
-**Then close the event: press and HOLD the closure control until the ring completes.**
+**Then close the event. THREE separate things to test here — the closure flow changed after you
+were locked in twice.**
 
 | # | Check | What to record |
 |---|---|---|
-| **7** | **Closure reads SAT, not DURESS.** Coordinator dashboard, closure window. | `SAT` or `UNSAT · DURESS`. **This is the 18-for-18 defect.** |
-| **8** | **Now do it again on the next trigger with a deliberate TAP** (press and release immediately). | Expected: **nothing is sent at all** — the sheet stays open. Record what happens. |
+| **7a** | **TAP the closure control once** (press and release immediately). | Expected: **a visible amber message appears** — "Hold the circle until the ring fills." NOT silence. If nothing appears, stop and tell me: that is the defect that trapped you, twice. |
+| **7b** | **Now press and HOLD until the ring completes.** | Coordinator dashboard closure window: `SAT` or `UNSAT · DURESS`. Expected **SAT**. |
+| **7c** | **On the awaiting screen, confirm two things are present:** the "Ask again" circle AND an **"End the alert now"** button. | Both present? The awaiting screen used to have NO control at all — that is what locked you in. |
+| **8** | **Do NOT confirm from the coordinator.** Wait ~6 minutes. | Expected: the secondary is **NOT** notified, and their page does **NOT** offer TAKE COORDINATION. Previously the 180s escalation un-claimed the event and restarted the cascade. |
+| **8b** | **Then press "End the alert now."** | Expected: closes immediately, no coordinator needed. Coordinator sees it closed, attributed to you directly. |
 
 ---
 
@@ -57,7 +61,7 @@ Switch to Hidden. Double-tap to activate **within 30 seconds of closing trigger 
 | **9** | **Both devices acquire.** Coordinator dashboard. | Does capture start? Camera *and* microphone, or one, or neither? *(Brief 55 §C — the release race. Trigger 1's tracks must have been freed.)* |
 | **10** | **Hidden captures video.** Same panel. | Video present in Hidden? *(It must be — the posture gate was deleted. Hidden and Visible now capture identically.)* |
 | **11** | **The facade is intact.** Look at the survivor phone screen during the alert. | Anything visible at all? Any indicator, banner, preview, colour change? **Expected: nothing. It is a meditation app.** |
-| **12** | **Close with a TAP** (item 8's test). | What the sheet does, and what the coordinator sees. |
+| **12** | **Close with a TAP first, then a HOLD.** | Tap → visible message (same as 7a). Hold → SAT. Both surfaces share one gesture machine, so these must behave identically to Visible. |
 
 ---
 
@@ -74,7 +78,8 @@ Switch to Hidden. Double-tap to activate **within 30 seconds of closing trigger 
 
 | # | Do | Why |
 |---|---|---|
-| A1 | **Leave every tab open for 5 minutes, then close them all.** | I will check the telemetry for what each surface cost. First real per-route data. |
+| A1 | **Leave every tab open for 5 minutes, then close them all.** | Per-route telemetry is now recording, so this is the first real measurement of what each surface costs. |
+| A3 | **Note your battery % at trigger and at close** if you can. | The instrument now records both automatically — this is to check the recorded numbers against reality. |
 | A2 | **Do NOT delete the recordings yet.** | Items 13/14 need them, and the §C purge is a separate deliberate pass. |
 
 ---
@@ -82,7 +87,7 @@ Switch to Hidden. Double-tap to activate **within 30 seconds of closing trigger 
 ## RESULT TEMPLATE — paste this back filled in
 
 ```
-BUILD (P2):            ______________
+BUILD (P2):            ______________   (must be 8dcfc13 or later)
 SURVIVOR DEVICE:       ______________   COORDINATOR DEVICE: ______________
 
 TRIGGER 1 — VISIBLE
@@ -92,7 +97,12 @@ TRIGGER 1 — VISIBLE
  4 ?diag=1 block           (paste or photo)
  5 cascade                 contacts reached: ______  spacing: ______
  6 N of M line             "________________________________________"
- 7 closure (HOLD)          [ SAT / UNSAT·DURESS ]
+7a tap feedback            [ message appeared / NOTHING ]   text: ______
+7b closure (HOLD)          [ SAT / UNSAT·DURESS ]
+7c awaiting screen         [ "Ask again" present? Y/N ]  [ "End the alert now" present? Y/N ]
+ 8 after ~6 min            secondary notified? [ Y / N ]   offered coordination? [ Y / N ]
+8b end-alert-now           [ closed / failed ]
+   ORIGIN panel filled in without reloading? [ Y / N ]
 
 TRIGGER 2 — HIDDEN
  9 acquisition             [ audio+video / audio only / neither ]
@@ -119,9 +129,12 @@ ANYTHING THAT SURPRISED YOU:
 | 1 | Brief 55 §A transcription regression — the one I introduced |
 | 2 | Brief 55 §A2 honest capture status |
 | 3, 10 | Brief 56 §3 video panel; Brief 50 §D Hidden-video correction |
+| 2, 3, 5, 6 | Brief 60 — one rendering system. **Every panel should now update without reloading.** Watch the ORIGIN panel in particular: open the link fast and it should fill in by itself around 12s. |
 | 4, 13 | The LL-HLS vs ManagedMediaSource decision; Brief 55 §B codec fix |
 | 5, 6 | Brief 56 §A2 cascade reach reporting |
-| 7, 8, 12 | Brief 56 §1 duress — 18 of 18, the tap threshold |
+| 7a, 7c, 12 | The lockout that trapped you twice — tap feedback, and a control that never disappears |
+| 7b | Brief 56 §1 duress — 18 of 18, the tap threshold |
+| 8, 8b | The escalation that re-armed the cascade; the escape route that needs no coordinator |
 | 9 | Brief 55 §C track release |
 | 11 | §0a facade — the floor under everything |
 | 14 | Brief 55 §D summary vocabulary; Brief 52 classifier output as she sees it |
